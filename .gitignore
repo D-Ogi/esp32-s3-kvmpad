@@ -1,0 +1,47 @@
+# --- ESP-IDF build output ---
+build/
+build-*/
+managed_components/
+# Local sdkconfig is never committed: CI builds from sdkconfig.defaults +
+# dependencies.lock only (spec 02 §11.1). dependencies.lock IS committed.
+sdkconfig
+sdkconfig.old
+
+# --- Host / simulator builds ---
+simulator/**/build/
+test/**/build/
+*.o
+*.a
+*.gcda
+*.gcno
+coverage/
+
+# --- Fuzzing: keep corpus + reproducers, drop raw crash dumps ---
+test/fuzz/**/crash-*
+test/fuzz/**/oom-*
+test/fuzz/**/timeout-*
+
+# --- Secrets: signing keys, certs, pairing material (spec TECH-056) ---
+*.pem
+*.key
+*.p12
+*.pfx
+secure_boot_signing_key*
+flash_encryption_key*
+.env
+.env.*
+
+# --- Python / local files ---
+__pycache__/
+*.pyc
+.venv/
+.tools/
+*.local.md
+
+# --- Editors / OS ---
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

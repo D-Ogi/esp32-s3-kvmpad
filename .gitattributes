@@ -1,0 +1,18 @@
+# Default: normalize text to LF in the repository.
+* text=auto eol=lf
+
+# The frozen specification package (docs/spec/**, AGENTS*.md, reference/**) is
+# LF like everything else and is verified by tools/verify_spec_manifest.py.
+
+# Windows-only scripts keep CRLF.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# Binary assets.
+*.png    binary
+*.jpg    binary
+*.bin    binary
+*.elf    binary
+*.pcapng binary
+*.zip    binary

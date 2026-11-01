@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<title>KVM Essential — 800 × 480 touch UI</title>
+<style>
+  :root {
+    --bg: #f5f5f7;
+    --surface: #ffffff;
+    --ink: #1d1d1f;
+    --muted: #777982;
+    --subtle: #a0a3ac;
+    --rule: #e5e5e9;
+    --well: #ededf0;
+    --accent: #007aff;
+    --green: #27af77;
+    --red: #ef5b5b;
+    --shadow: 0 1px 2px rgba(20,20,28,.035), 0 4px 15px rgba(20,20,28,.035);
+    --ease: cubic-bezier(.2,.7,.2,1);
+  }
+  * { box-sizing:border-box; }
+  html, body { padding:0; margin:0; min-height:100%; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Inter, Arial, sans-serif; background:#e9e9ed; color:var(--ink); -webkit-font-smoothing:antialiased; user-select:none; }
+  button { font:inherit; cursor:pointer; touch-action:manipulation; -webkit-tap-highlight-color: transparent; border:0; color:inherit; }
+  button:focus-visible, [tabindex]:focus-visible { outline:3px solid #007aff; outline-offset:2px; }
+  button:active { transform:scale(.982); }
+  svg { flex-shrink:0; }
+  .showroom { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; padding:24px 18px 34px; gap:22px; }
+  .showroom-intro { text-align:center; }
+  .showroom-eyebrow { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.21em; color:#747784; margin-bottom:7px; }
+  .showroom-title { margin:0; font-size:27px; letter-spacing:-.055em; font-weight:680; }
+  .showroom-copy { margin:7px 0 0; font-size:14px; color:#6f727b; }
+  .device-stage { position:relative; width:840px; height:520px; flex-shrink:0; }
+  .device { position:absolute; left:0; top:0; width:840px; height:520px; padding:20px; background:#111115; border:2px solid #37383d; border-radius:42px; box-shadow:0 0 0 2px #151519, 0 18px 40px rgba(23,23,28,.22), 0 40px 90px rgba(23,23,28,.17); transform-origin:top left; }
+  .screen { position:relative; background:var(--bg); width:800px; height:480px; overflow:hidden; border-radius:21px; isolation:isolate; }
+  .topbar { height:65px; padding:7px 16px 6px 20px; display:flex; align-items:center; gap:8px; width:100%; position:relative; z-index:10; }
+  .brand { width:96px; flex:none; display:flex; align-items:center; gap:9px; font-size:21px; font-weight:750; letter-spacing:-.065em; }
+  .brand-glyph { width:21px; height:21px; background:#1d1d1f; border-radius:6px; display:flex; align-items:center; justify-content:center; }
+  .brand-glyph:after { content:""; background:#fff; width:8px; height:8px; border-radius:2px; transform:rotate(-14deg); }
+  .modes { flex:none; display:flex; align-items:stretch; width:357px; height:52px; padding:3px; background:#e8e8eb; border-radius:15px; gap:1px; }
+  .mode { flex:1; min-width:0; border-radius:11px; color:#73757d; background:transparent; display:flex; align-items:center; justify-content:center; gap:6px; font-weight:640; font-size:13px; transition:background .15s var(--ease), color .15s var(--ease); }
+  .mode svg { width:17px; height:17px; stroke-width:2; }
+  .mode[aria-selected="true"] { background:#fff; color:#1d1d1f; box-shadow:0 1px 4px rgba(0,0,0,.085); }
+  .header-spacer { flex:1; min-width:0; }
+  .status { padding:0 4px; height:46px; display:flex; gap:5px; align-items:center; justify-content:center; background:transparent; white-space:nowrap; color:#51545d; font-size:13px; font-weight:630; }
+  .status-dot { width:8px; height:8px; background:var(--green); border-radius:50%; box-shadow:0 0 0 3px rgba(39,175,119,.08); }
+  .status-dot.down { background:var(--red); box-shadow:0 0 0 3px rgba(239,91,91,.08); }
+  .settings-trigger { height:46px; width:42px; background:transparent; color:#7b7d85; display:flex; align-items:center; justify-content:center; border-radius:12px; }
+  .settings-trigger svg { width:22px; height:22px; }
+  .view { position:absolute; top:65px; left:0; right:0; bottom:0; display:none; }
+  .view.visible { display:block; }
+  /* PAD — the actual primary product */
+  .pad-view { padding:5px 16px 14px; }
+  .pad-column { display:flex; height:100%; flex-direction:column; gap:10px; }
+  .trackpad { flex:1; min-height:0; border:1px solid #e0e2e6; border-radius:22px; overflow:hidden; background:linear-gradient(142deg,#e8e9ec 0%,#f1f1f3 45%,#e9eaee 100%); position:relative; touch-action:none; cursor:crosshair; outline:none; }
+  .trackpad::before { content:""; position:absolute; inset:1px; border-radius:21px; pointer-events:none; box-shadow:inset 0 1px rgba(255,255,255,.75),inset 0 -1px 3px rgba(0,0,0,.015); }
+  .pad-intro { pointer-events:none; position:absolute; inset:0; display:flex; justify-content:center; align-items:center; flex-direction:column; transition:opacity .3s; }
+  .pad-intro.hidden { opacity:0; }
+  .pad-title { font-size:29px; font-weight:640; letter-spacing:-.057em; margin:0; color:#3b3c43; }
+  .pad-subtitle { font-size:15px; font-weight:450; color:#838691; margin-top:9px; }
+  .pad-swipe { display:flex; gap:8px; align-items:center; color:#9396a0; font-size:12px; margin-top:24px; }
+  .pad-swipe svg { width:17px;height:17px;stroke-width:1.8; }
+  .pad-tag { position:absolute; left:17px; top:16px; font-size:10px; text-transform:uppercase; color:#9d9fa9; letter-spacing:.17em; font-weight:750; }
+  .pad-live { position:absolute; right:18px; top:16px; font-size:11px; color:#91949c; }
+  .pad-live.active { color:#007aff; font-weight:650; }
+  .touch-dot { position:absolute; z-index:3; width:35px; height:35px; background:rgba(0,122,255,.13); border:1px solid rgba(0,122,255,.3); border-radius:50%; pointer-events:none; transform:translate(-50%,-50%) scale(.35); opacity:0; transition:opacity .18s, transform .18s; }
+  .touch-dot.touched { opacity:1; transform:translate(-50%,-50%) scale(1); }
+  .pad-offline { display:none; align-items:center; justify-content:center; flex-direction:column; gap:9px; position:absolute; z-index:5; inset:0; background:rgba(245,245,247,.92); text-align:center; }
+  .pad-offline.show { display:flex; }
+  .pad-offline strong { font-size:21px; font-weight:650; letter-spacing:-.04em; }
+  .pad-offline span { color:#81838c; font-size:14px; }
+  .pad-foot { display:flex; align-items:center; height:54px; gap:10px; flex:none; }
+  .pad-instruction { flex:1; font-size:13px; color:#92949d; padding-left:11px; white-space:nowrap; }
+  .foot-btn { min-width:141px; height:53px; padding:0 15px; display:flex; justify-content:center; align-items:center; gap:9px; font-size:15px; background:#fff; color:#34363d; border:1px solid #e6e7eb; border-radius:15px; font-weight:610; box-shadow:var(--shadow); }
+  .foot-btn svg { width:20px; height:20px; }
+  .foot-btn.is-active { color:#006de4; background:#e1f0ff; border-color:#b8dcff; }
+  .foot-btn.primary { background:#202126; color:#fff; border-color:#202126; }
+  .foot-btn:disabled { opacity:.45; cursor:default; }
+  .foot-btn:disabled:active { transform:none; }
+  /* Keyboard: no fake image of a keyboard — actual tap targets */
+  .keyboard-view { padding:3px 16px 13px; }
+  .keyboard { display:flex; flex-direction:column; gap:5px; height:100%; }
+  .keyrow { display:flex; width:100%; gap:5px; flex:1 1 0; min-height:0; }
+  .keyrow.utility { flex:0 0 43px; margin-bottom:2px; }
+  .key { flex:var(--key-flex, 1) 1 0; min-width:0; height:100%; padding:0 2px; border-radius:11px; background:#fff; border:1px solid #e2e3e8; box-shadow:0 2px 0 #dcdde1; display:flex; align-items:center; justify-content:center; position:relative; font-size:23px; font-weight:490; letter-spacing:-.025em; transition:background .08s,transform .08s; }
+  .key.utility-key { font-size:14px; font-weight:620; background:#eaeaed; border-color:#e1e2e7; box-shadow:0 2px 0 #dcdde1; }
+  .key.special { background:#e6e7eb; color:#555861; font-size:17px; font-weight:630; }
+  .key.space { font-size:14px; font-weight:530; color:#8a8c94; }
+  .key.selected { background:#d7eaff; border-color:#bedcf8; box-shadow:0 2px 0 #b4d8f8; color:#006acb; }
+  .key.just-pressed { background:#cfe6ff; transform:translateY(1px); }
+  .key .key-sub { position:absolute; right:7px; top:4px; font-size:11px; color:#a9abb2; font-weight:450; }
+  .keyrow.utility .key:first-child { background:#25262a; color:#fff; box-shadow:0 2px 0 #141519; }
+  .key.disabled-key { color:#b4b6bc; }
+  /* Shortcuts: six actions, no menus, no tiny buttons */
+  .commands-view { padding:6px 16px 16px; }
+  .commands-grid { display:grid; width:100%; height:100%; grid-template-columns:repeat(3,minmax(0,1fr)); grid-template-rows:repeat(2,minmax(0,1fr)); gap:12px; }
+  .command { border:1px solid #e4e5e8; background:#fff; border-radius:20px; padding:23px 20px; text-align:left; box-shadow:var(--shadow); display:flex; flex-direction:column; align-items:flex-start; justify-content:space-between; }
+  .command:active { background:#f3f6fa; }
+  .command-symbol { width:36px; height:36px; background:#eef0f3; border-radius:11px; display:flex; align-items:center; justify-content:center; font-size:19px; color:#545861; }
+  .command.featured { background:#1d1d1f; color:#fff; border-color:#1d1d1f; }
+  .command.featured .command-symbol { background:#424249; color:#fff; }
+  .command-name { font-size:19px; line-height:1.15; font-weight:670; letter-spacing:-.043em; }
+  .command-sub { color:#8b8d97; font-size:12px; font-weight:440; margin-top:6px; }
+  .command.featured .command-sub { color:#c7c8cf; }
+  /* Floating layers */
+  .popover { position:absolute; display:none; top:63px; right:17px; width:300px; z-index:40; background:#fff; border:1px solid #e2e3e8; padding:18px; border-radius:20px; box-shadow:0 18px 55px rgba(25,26,32,.16); }
+  .popover.show { display:block; }
+  .popover-title { font-size:19px; font-weight:670; letter-spacing:-.04em; margin-bottom:4px; }
+  .popover-help { font-size:12px; color:#858892; line-height:1.35; margin-bottom:15px; }
+  .popover-line { display:flex; align-items:center; justify-content:space-between; height:45px; border-top:1px solid #f0f0f3; font-size:13px; }
+  .popover-line strong { font-weight:670; }
+  .popover-line .online { color:#158652; }
+  .popover-line .offline { color:#d3474e; }
+  .popover-actions { display:flex; gap:8px; margin-top:13px; }
+  .popover-actions button { flex:1; padding:12px 9px; font-size:13px; font-weight:650; border-radius:12px; background:#f1f1f4; }
+  .popover-actions button:first-child { background:#202126; color:#fff; }
+  .toast { pointer-events:none; position:absolute; bottom:27px; left:50%; transform:translate(-50%,14px); opacity:0; z-index:60; border-radius:14px; background:rgba(30,31,35,.9); color:#fff; padding:12px 19px; font-size:14px; font-weight:600; box-shadow:0 8px 28px rgba(0,0,0,.16); transition:opacity .15s,transform .15s; white-space:nowrap; }
+  .toast.show { opacity:1; transform:translate(-50%,0); }
+  .showroom-footer { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:10px; font-size:12px; color:#70737d; }
+  .showroom-footer kbd { background:#fff; padding:4px 8px; border-radius:7px; color:#51535b; border:1px solid #dedfe4; font-family:inherit; }
+  .debug-last { background:#fff; border-radius:10px; border:1px solid #dedfe4; padding:7px 12px; min-width:180px; max-width:340px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  body.render { width:800px; height:480px; min-height:0; padding:0; margin:0; overflow:hidden; background:var(--bg); }
+  body.render .showroom { padding:0; margin:0; gap:0; min-height:0; display:block; }
+  body.render .showroom-intro, body.render .showroom-footer { display:none; }
+  body.render .device-stage { width:800px!important; height:480px!important; }
+  body.render .device { width:800px; height:480px; padding:0; margin:0; border:0; border-radius:0; box-shadow:none; transform:none!important; }
+  body.render .screen { border-radius:0; }
+  @media (prefers-reduced-motion: reduce) { * { transition:none!important; animation:none!important; } }
+</style>
+</head>
+<body>
+<!-- All viewport content below is pixel-exact 800 × 480. The surrounding chassis is a browser-only mockup. -->
+<div class="showroom">
+  <div class="showroom-intro">
+    <div class="showroom-eyebrow">Human interface / ESP32-S3</div>
+    <h1 class="showroom-title">KVM Essential</h1>
+    <p class="showroom-copy">Nothing between your finger and the computer. A touch-first 800 × 480 concept.</p>
+  </div>
+  <div class="device-stage" id="stage">
+    <div class="device" id="device">
+      <div class="screen" id="screen">
+        <header class="topbar">
+          <div class="brand" aria-label="KVM"><span class="brand-glyph" aria-hidden="true"></span> KVM</div>
+          <nav class="modes" role="tablist" aria-label="Input modes">
+            <button class="mode" role="tab" data-view="mouse" aria-selected="true" aria-controls="mouse-view">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v16l4.6-4.2 3.2 6 3-1.5-3.2-6.1 6.2-.5z"/></svg> Mouse
+            </button>
+            <button class="mode" role="tab" data-view="keyboard" aria-selected="false" aria-controls="keyboard-view">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h1m3 0h1m3 0h1m3 0h1M6 13h1m3 0h1m3 0h1m3 0h1M7 16h10"/></svg> Keyboard
+            </button>
+            <button class="mode" role="tab" data-view="commands" aria-selected="false" aria-controls="commands-view">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg> Shortcuts
+            </button>
+          </nav>
+          <div class="header-spacer"></div>
+          <button class="status" id="hostStatus" aria-label="Host status; show connection details"><span class="status-dot" id="hostDot"></span>Host</button>
+          <button class="status" id="clientStatus" aria-label="Client status; show connection details"><span class="status-dot" id="clientDot"></span>Client</button>
+          <button class="settings-trigger" id="settings" aria-label="More options">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><path d="M12 5v14M5 12h14" transform="rotate(45 12 12)"/><circle cx="12" cy="12" r="8.6"/></svg>
+          </button>
+        </header>
+        <main>
+          <section class="view pad-view visible" id="mouse-view" role="tabpanel" aria-label="Mouse trackpad">
+            <div class="pad-column">
+              <div class="trackpad" id="trackpad" tabindex="0" role="application" aria-label="Touchpad: move finger to control pointer, tap to click, long press to right-click, two fingers to scroll">
+                <div class="pad-tag">TOUCH SURFACE</div>
+                <div class="pad-live" id="padLive">Ready</div>
+                <div class="pad-intro" id="padIntro">
+                  <div class="pad-title">Just move.</div>
+                  <div class="pad-subtitle">Move your finger to control the host.</div>
+                  <div class="pad-swipe">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M8 16V6a2 2 0 0 1 4 0v6M12 12V9a2 2 0 0 1 4 0v3M16 12v-1a2 2 0 0 1 4 0v5c0 4-3 6-7 6h-2c-2 0-4-1-5-3l-3-5a2 2 0 0 1 3-2l2 2"/></svg>
+                    Tap to click <span style="opacity:.4">·</span> Two fingers to scroll
+                  </div>
+                </div>
+                <div class="touch-dot" id="touchDot"></div>
+                <div class="pad-offline" id="padOffline"><strong>Host disconnected</strong><span>Input will resume when the connection returns.</span></div>
+              </div>
+              <div class="pad-foot">
+                <div class="pad-instruction" id="padFootHint">Tap to click. Hold for a right-click.</div>
+                <button class="foot-btn" id="rightClick">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="5" y="2.5" width="14" height="19" rx="6"/><path d="M12 2.5v8h7M5 10.5h14"/></svg>
+                  Right-click
+                </button>
+                <button class="foot-btn" id="dragLock" aria-pressed="false">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="m8 6 4-4 4 4M12 2v13M5 12a7 7 0 1 0 14 0"/></svg>
+                  Drag lock
+                </button>
+              </div>
+            </div>
+          </section>
+          <section class="view keyboard-view" id="keyboard-view" role="tabpanel" aria-label="On-screen keyboard">
+            <div class="keyboard" id="keyboard"></div>
+          </section>
+          <section class="view commands-view" id="commands-view" role="tabpanel" aria-label="Common shortcuts">
+            <div class="commands-grid" id="commandsGrid"></div>
+          </section>
+        </main>
+        <div class="popover" id="popover" role="dialog" aria-modal="false"></div>
+        <div class="toast" id="toast" role="status" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+  <div class="showroom-footer">
+    <span>Interactive prototype · No HID connection</span>
+    <span>·</span>
+    <span>Touch or mouse input</span>
+    <span>·</span>
+    <span>800 × 480 native pixels</span>
+    <span class="debug-last" id="debugLast">Last action: none</span>
+  </div>
+</div>
+<script>
+(() => {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const $$ = (s) => [...document.querySelectorAll(s)];
+  const state = { view:'mouse',host:true,client:true,drag:false,shift:false,shiftLock:false,caps:false,ctrl:false,alt:false,meta:false,altgr:false,fn:false,precision:1,touches:new Map(),tap:null,ignoreTap:false,initiated:false,log:[] };
+  const params = new URLSearchParams(location.search);
+  const renderMode = params.get('render')==='1';
+  if (renderMode) document.body.classList.add('render');
+  const popup = $('#popover');
+  const toast = $('#toast');
+  let toastTimer=null, holdTimer=null, dragGesture=false, suppressClick=false;
+  const glyph = {return:'↵',shift:'⇧',back:'⌫',win:'⊞'};
+
+  function fitStage(){
+    if (renderMode) return;
+    const availableWidth = window.innerWidth-48;
+    const availableHeight = window.innerHeight-207;
+    const scale = Math.max(.30,Math.min(1.0,availableWidth/840,availableHeight/520));
+    $('#stage').style.width = `${840*scale}px`;
+    $('#stage').style.height = `${520*scale}px`;
+    $('#device').style.transform = `scale(${scale})`;
+  }
+  window.addEventListener('resize', fitStage);
+  fitStage();
+  function logEvent(action,details={}){
+    const row={time:performance.now(),action,...details};
+    state.log.push(row); if(state.log.length>80)state.log.shift();
+    $('#debugLast').textContent='Last action: '+action+(details.key?' '+details.key:'');
+    document.dispatchEvent(new CustomEvent('kvm:input',{detail:row}));
+    // A firmware implementation should translate these events to USB/BLE HID reports.
+    // This browser-only prototype never tries to control the actual computer.
+  }
+  window.KVMDemo={state,events:()=>state.log.slice(),showView, setConnection:(name,connected)=>{state[name]=!!connected;updateConnectionUI();}};
+  function message(text,duration=950){
+    clearTimeout(toastTimer);toast.textContent=text;toast.classList.add('show');
+    toastTimer=setTimeout(()=>toast.classList.remove('show'),duration);
+  }
+  function sendAction(name,details){
+    if (!state.host){message('Host is disconnected');return false;}
+    logEvent(name,details);return true;
+  }
+  function showView(name){
+    if(!['mouse','keyboard','commands'].includes(name)) return;
+    state.view=name;
+    $$('.mode').forEach(el=>el.setAttribute('aria-selected',String(el.dataset.view===name)));
+    $$('.view').forEach(el=>el.classList.toggle('visible',el.id===name+'-view'));
+    popup.classList.remove('show');
+    if (name==='keyboard')renderKeyboard();
+    if (name==='mouse') updateMouseUI();
+  }
+  $$('.mode').forEach(el=>el.addEventListener('click',()=>showView(el.dataset.view)));
+
+  function updateConnectionUI(){
+    $('#hostDot').classList.toggle('down',!state.host);
+    $('#clientDot').classList.toggle('down',!state.client);
+    $('#padOffline').classList.toggle('show',!state.host);
+    $('#rightClick').disabled=!state.host;
+    $('#dragLock').disabled=!state.host;
+    if (!state.host && state.drag){state.drag=false;updateMouseUI();}
+  }
+  function showConnectionPanel(){
+    if(popup.classList.contains('show')&&popup.dataset.kind==='connections'){popup.classList.remove('show');return;}
+    popup.dataset.kind='connections';
+    popup.innerHTML=`<div class="popover-title">Connections</div>
+      <div class="popover-help">Two independent connections. Statuses are simulated for this interactive design demo.</div>
+      <div class="popover-line"><span>Host · USB HID</span><strong class="${state.host?'online':'offline'}">${state.host?'Connected':'Disconnected'}</strong></div>
+      <div class="popover-line"><span>Client · remote session</span><strong class="${state.client?'online':'offline'}">${state.client?'Connected':'Disconnected'}</strong></div>
+      <div class="popover-actions"><button data-toggle="host">Toggle host</button><button data-toggle="client">Toggle client</button></div>`;
+    popup.classList.add('show');
+    popup.querySelectorAll('[data-toggle]').forEach(btn=>btn.addEventListener('click',()=>{const key=btn.dataset.toggle;state[key]=!state[key];updateConnectionUI();popup.classList.remove('show');showConnectionPanel();}));
+  }
+  $('#hostStatus').addEventListener('click',showConnectionPanel);
+  $('#clientStatus').addEventListener('click',showConnectionPanel);
+  $('#settings').addEventListener('click',()=>{
+    if(popup.classList.contains('show')&&popup.dataset.kind==='settings'){popup.classList.remove('show');return;}
+    popup.dataset.kind='settings';
+    popup.innerHTML=`<div class="popover-title">Preferences</div>
+       <div class="popover-help">Everything unnecessary is hidden here. Prototype controls are local only.</div>
+       <div class="popover-line"><span>Pointer sensitivity</span><strong id="sensName">${state.precision.toFixed(1)}×</strong></div>
+       <input id="sens" type="range" min="0.4" max="2.0" step="0.2" value="${state.precision}" style="accent-color:#007aff;width:100%;height:36px;">
+       <div class="popover-line"><span>Display</span><strong>800 × 480</strong></div>
+       <div class="popover-line"><span>Input mode</span><strong>Touch · relative</strong></div>
+       <div class="popover-actions"><button id="resetDemo">Reset demo</button><button id="closePopup">Done</button></div>`;
+    popup.classList.add('show');
+    $('#sens').addEventListener('input',e=>{state.precision=Number(e.target.value);$('#sensName').textContent=state.precision.toFixed(1)+'×';});
+    $('#resetDemo').addEventListener('click',()=>{state.host=true;state.client=true;state.drag=false;state.precision=1;state.initiated=false;$('#padIntro').classList.remove('hidden');updateConnectionUI();updateMouseUI();popup.classList.remove('show');showView('mouse');});
+    $('#closePopup').addEventListener('click',()=>popup.classList.remove('show'));
+  });
+
+  function updateMouseUI(){
+    $('#dragLock').classList.toggle('is-active',state.drag);
+    $('#dragLock').setAttribute('aria-pressed',String(state.drag));
+    $('#padFootHint').textContent=state.drag?'Drag lock is on — move to drag.':'Tap to click. Hold for a right-click.';
+    $('#padLive').textContent=state.drag?'Dragging':'Ready';
+    $('#padLive').classList.toggle('active',state.drag);
+  }
+  $('#rightClick').addEventListener('click',()=>{if(sendAction('mouse_right_click'))message('Right-click');});
+  $('#dragLock').addEventListener('click',()=>{
+    state.drag=!state.drag;updateMouseUI();
+    sendAction(state.drag?'mouse_button_down':'mouse_button_up',{button:'left'});
+    message(state.drag?'Drag lock on':'Drag lock off');
+  });
+
+  const pad=$('#trackpad');
+  const touchDot=$('#touchDot');
+  function point(e){const r=pad.getBoundingClientRect();return {x:(e.clientX-r.left)/r.width*pad.clientWidth,y:(e.clientY-r.top)/r.height*pad.clientHeight};}
+  function showTouchDot(p){touchDot.style.left=p.x+'px';touchDot.style.top=p.y+'px';touchDot.classList.add('touched');}
+  function concealTouchDot(){touchDot.classList.remove('touched');}
+  function clearHold(){if(holdTimer!==null){clearTimeout(holdTimer);holdTimer=null;}}
+  pad.addEventListener('contextmenu',e=>e.preventDefault());
+  pad.addEventListener('pointerdown',e=>{
+    if(!state.host)return;
+    e.preventDefault();
+    if(e.pointerType==='mouse'&&e.button===2){sendAction('mouse_right_click');message('Right-click');return;}
+    if(e.pointerType==='mouse'&&e.button!==0)return;
+    try{pad.setPointerCapture(e.pointerId)}catch(_){}
+    popup.classList.remove('show');
+    const p=point(e), t=performance.now();
+    state.touches.set(e.pointerId,{...p,sx:p.x,sy:p.y,at:t,moved:false,held:false,scrolling:false});
+    if(!state.initiated){state.initiated=true;$('#padIntro').classList.add('hidden');}
+    if(state.touches.size===1){
+      showTouchDot(p);suppressClick=false;
+      clearHold();
+      holdTimer=setTimeout(()=>{
+        const touch=state.touches.get(e.pointerId);
+        if(touch&&!touch.moved&&!touch.scrolling&&!state.drag){
+          touch.held=true;sendAction('mouse_right_click');message('Right-click');
+          concealTouchDot();suppressClick=true;
+        }
+      },580);
+    } else {
+      clearHold();concealTouchDot();
+      for(const v of state.touches.values())v.scrolling=true;
+    }
+  });
+  pad.addEventListener('pointermove',e=>{
+    const t=state.touches.get(e.pointerId);
+    if(!t||!state.host)return;
+    e.preventDefault();const p=point(e);
+    const dx=p.x-t.x,dy=p.y-t.y;
+    t.x=p.x;t.y=p.y;
+    if(Math.hypot(p.x-t.sx,p.y-t.sy)>9){t.moved=true;clearHold();}
+    if(state.touches.size>=2){
+      if(Math.abs(dy)>1.8)sendAction('mouse_wheel',{vertical:Math.round(-dy*state.precision*2)});
+    } else if(Math.abs(dx)+Math.abs(dy)>.3){
+      showTouchDot(p);
+      sendAction('mouse_move',{dx:Math.round(dx*state.precision*10)/10,dy:Math.round(dy*state.precision*10)/10,leftHeld:state.drag});
+    }
+  });
+  function padRelease(e){
+    const t=state.touches.get(e.pointerId);if(!t)return;
+    clearHold();state.touches.delete(e.pointerId);
+    if(state.touches.size===0) concealTouchDot();
+    if(t.scrolling||t.held||suppressClick||t.moved)return;
+    if(performance.now()-t.at<470){sendAction('mouse_left_click');}
+  }
+  pad.addEventListener('pointerup',padRelease);
+  pad.addEventListener('pointercancel',padRelease);
+
+  // The layout is native-width (800px) and intentionally uses fixed-size physical touch targets.
+  const util = [
+    {id:'Escape',label:'Esc',weight:1},
+    {id:'Fn',label:'F1–F12',weight:1.42},
+    {id:'Insert',label:'Insert',weight:1.05},
+    {id:'Delete',label:'Delete',weight:1.05},
+    {id:'Home',label:'Home',weight:1},
+    {id:'End',label:'End',weight:1},
+    {id:'PageUp',label:'PgUp',weight:1},
+    {id:'PageDown',label:'PgDn',weight:1}
+  ];
+  const numberRow=['1','2','3','4','5','6','7','8','9','0','-','=','Backspace'];
+  const shiftLegends={'1':'!','2':'@','3':'#','4':'$','5':'%','6':'^','7':'&','8':'*','9':'(','0':')','-':'_','=':'+'};
+  const topRow=[{id:'Tab',label:'Tab',weight:1.25}, ...'QWERTYUIOP'.split('').map(x=>({id:x.toLowerCase(),label:x})), {id:'\\',label:'\\',weight:1.06}];
+  const midRow=[{id:'CapsLock',label:'Caps',weight:1.47},...'ASDFGHJKL'.split('').map(x=>({id:x.toLowerCase(),label:x})),{id:'Enter',label:'Enter',weight:1.65}];
+  const lowRow=[{id:'Shift',label:'⇧',weight:1.72},...'ZXCVBNM'.split('').map(x=>({id:x.toLowerCase(),label:x})),{id:',',label:','},{id:'.',label:'.'},{id:'Backspace',label:'⌫',weight:1.42}];
+  const bottomRow=[{id:'Control',label:'Ctrl',weight:1.12},{id:'Alt',label:'Alt',weight:1.12},{id:'Meta',label:'⊞',weight:1.09},{id:' ',label:'space',weight:4.15},{id:'AltGraph',label:'AltGr',weight:1.17},{id:'ArrowLeft',label:'←'},{id:'ArrowUp',label:'↑'},{id:'ArrowDown',label:'↓'},{id:'ArrowRight',label:'→'}];
+  function keyConfig(code){
+    let selected=false;
+    if(code==='Shift') selected=state.shift||state.shiftLock;
+    if(code==='CapsLock') selected=state.caps;
+    if(code==='Control') selected=state.ctrl;
+    if(code==='Alt') selected=state.alt;
+    if(code==='Meta') selected=state.meta;
+    if(code==='AltGraph') selected=state.altgr;
+    if(code==='Fn') selected=state.fn;
+    return selected;
+  }
+  function keyEl(k,isUtility){
+    const btn=document.createElement('button');
+    btn.type='button';btn.className='key'+(isUtility?' utility-key':'')+((['Tab','CapsLock','Enter','Backspace','Shift','Control','Alt','Meta','AltGraph','Fn'].includes(k.id)||k.id.startsWith('Arrow'))?' special':'')+(k.id===' '?' space':'');
+    if(keyConfig(k.id))btn.classList.add('selected');
+    btn.style.setProperty('--key-flex',String(k.weight||1));
+    btn.setAttribute('aria-label',k.id===' '?'Space':k.id);
+    const main=document.createElement('span'); main.textContent=k.label;btn.appendChild(main);
+    if(k.sub){const sub=document.createElement('span');sub.className='key-sub';sub.textContent=k.sub;btn.appendChild(sub);}
+    btn.addEventListener('pointerdown',()=>btn.classList.add('just-pressed'));
+    btn.addEventListener('pointerup',()=>setTimeout(()=>btn.classList.remove('just-pressed'),70));
+    btn.addEventListener('pointercancel',()=>btn.classList.remove('just-pressed'));
+    btn.addEventListener('click',()=>pressKey(k.id));
+    return btn;
+  }
+  function renderKeyboard(){
+    const kb=$('#keyboard');kb.textContent='';
+    const rows=[util,
+      state.fn?[...Array(12)].map((_,i)=>({id:'F'+(i+1),label:'F'+(i+1)})).concat({id:'Backspace',label:'⌫',weight:1.2}):numberRow.map(x=>({id:x,label:x==='Backspace'?'⌫':x,weight:x==='Backspace'?1.45:1,sub:shiftLegends[x]})),
+      topRow, midRow, lowRow, bottomRow];
+    rows.forEach((keys,i)=>{
+      const row=document.createElement('div');row.className='keyrow'+(i===0?' utility':'');
+      keys.forEach(k=>row.appendChild(keyEl(k,i===0)));
+      kb.appendChild(row);
+    });
+  }
+  function pressKey(code){
+    if(code==='Fn'){state.fn=!state.fn;renderKeyboard();return;}
+    if(code==='CapsLock'){state.caps=!state.caps;renderKeyboard();sendAction('key_toggle',{key:'CapsLock'});return;}
+    const modifierState={Shift:'shift',Control:'ctrl',Alt:'alt',Meta:'meta',AltGraph:'altgr'};
+    if(modifierState[code]){
+      let prop=modifierState[code];state[prop]=!state[prop];
+      renderKeyboard();return;
+    }
+    const mods=[];
+    if(state.ctrl)mods.push('Ctrl');if(state.alt)mods.push('Alt');if(state.meta)mods.push('Win');if(state.altgr)mods.push('AltGr');if(state.shift)mods.push('Shift');
+    const label=code===' '?'Space':code;
+    sendAction('key_press',{key:label,modifiers:mods,scanCodeIntent:code});
+    state.shift=false;state.ctrl=false;state.alt=false;state.meta=false;state.altgr=false;
+    // CapsLock state persists; as on a physical keyboard, the host layout decides characters.
+    renderKeyboard();
+  }
+  const commands=[
+    {symbol:'⌘',name:'Secure attention',subtitle:'Ctrl + Alt + Del',chord:['Control','Alt','Delete'],featured:true},
+    {symbol:'⇥',name:'Switch window',subtitle:'Alt + Tab',chord:['Alt','Tab']},
+    {symbol:'▦',name:'Task manager',subtitle:'Ctrl + Shift + Esc',chord:['Control','Shift','Escape']},
+    {symbol:'▣',name:'Desktop',subtitle:'Win + D',chord:['Meta','d']},
+    {symbol:'×',name:'Close window',subtitle:'Alt + F4',chord:['Alt','F4']},
+    {symbol:'□',name:'Screenshot',subtitle:'Print Screen',chord:['PrintScreen']}
+  ];
+  function renderCommands(){
+    $('#commandsGrid').innerHTML='';
+    commands.forEach(c=>{
+      const btn=document.createElement('button');btn.type='button';btn.className='command'+(c.featured?' featured':'');
+      btn.innerHTML=`<span class="command-symbol" aria-hidden="true">${c.symbol}</span><span><span class="command-name" style="display:block">${c.name}</span><span class="command-sub" style="display:block">${c.subtitle}</span></span>`;
+      btn.addEventListener('click',()=>{if(sendAction('key_chord',{key:c.chord.join('+'),keys:c.chord}))message('Sent: '+c.subtitle,1400);});
+      $('#commandsGrid').appendChild(btn);
+    });
+  }
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape'&&popup.classList.contains('show'))popup.classList.remove('show');
+  });
+  updateConnectionUI();updateMouseUI();renderKeyboard();renderCommands();
+  showView(params.get('view')||'mouse');
+})();
+</script>
+</body>
+</html>
