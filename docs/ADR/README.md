@@ -31,6 +31,8 @@ The specification is frozen — **new decisions and status changes** go here as 
 | ADR-021 | Native Windows CLIENT → ADR-002 variant A | **ACCEPTED** 2026-11-01 | [ADR-021-native-windows-client.md](ADR-021-native-windows-client.md) |
 | ADR-022 | Pairing: 6-digit code + PAKE, no other typing in | **ACCEPTED** 2026-11-01; PAKE algorithm to be confirmed in TASK-100 | [ADR-022-pairing-6-digit-pake.md](ADR-022-pairing-6-digit-pake.md) |
 | ADR-023 | Approval policies configurable from the device UI; hard invariants without a switch | **ACCEPTED** 2026-11-01 | [ADR-023-user-configurable-approval-policies.md](ADR-023-user-configurable-approval-policies.md) |
+| ADR-024 | Keyboard layouts from xkeyboard-config + on-device IME (JP/zh/ko) with per-OS Unicode delivery | **ACCEPTED** 2026-11-01; IME footprint PENDING-HW (TASK-072 spike) | [ADR-024-keyboard-layouts-xkeyboard-config.md](ADR-024-keyboard-layouts-xkeyboard-config.md) |
+| ADR-025 | License notices: three-line header in every source file, checker in CI, notice embedded in firmware and CLIENT, `Settings → About` | **ACCEPTED** 2026-11-02 | [ADR-025-license-notices.md](ADR-025-license-notices.md) |
 
 New requirements from ADR-017 onwards (ID, task, component, tests): [`../EXTENSIONS.md`](../EXTENSIONS.md).
 The ADR-015/016 gaps are described in [`../REPO-LAYOUT.md`](../REPO-LAYOUT.md).
@@ -40,7 +42,7 @@ ADR-001/002/004/012 **are not changed** without the owner's approval (spec/06 §
 
 ## Decisions awaiting the owner
 
-_None — as of 2026-11-01. ADR-009 resolved by a measurement of board unit #1 (`hardware/boards.md`)._
+_None — as of 2026-11-02. ADR-009 resolved by a measurement of board unit #1 (`hardware/boards.md`); ADR-024 accepted 2026-11-01, ADR-025 2026-11-02._
 
 ## Template — `ADR-<num>-<slug>.md`
 

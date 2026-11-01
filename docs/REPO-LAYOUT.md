@@ -8,6 +8,7 @@ esp32-s3-kvmpad/
 ├── AGENTS.md, AGENTS-UI.md   # work contract (part of the spec package, not modified)
 ├── CONTRIBUTING.md           # rules for working in the repo: paths, ADRs, PRs, license, tools
 ├── LICENSE.md                # PolyForm Noncommercial 1.0.0 (+ Required Notice)
+├── THIRD_PARTY_NOTICES.md    # vendored third-party paths + licenses (read by the header checker, rendered in About)
 ├── docs/
 │   ├── spec/                 # specification v1.1.0 01–07 + README + MANIFEST (frozen, SHA256)
 │   ├── ADR/                  # new ADRs (ADR-014+); ADR-001..013 are in spec/06
@@ -29,6 +30,8 @@ esp32-s3-kvmpad/
 │   ├── ui_components/        # status item, topbar, action key, modal, toast [TASK-060D]
 │   ├── ui_touch_bridge/      # 1 GT911 sample → LVGL indev + GestureFSM      [TASK-060E]
 │   ├── ui_views/             # Mouse / Keyboard / Shortcuts / Settings       [TASK-070A–C]
+│   ├── kbd_layouts/          # generated layout tables, Unicode delivery     [TASK-071]
+│   ├── ime_engine/           # JP/zh/ko composition (ADR-024)                [TASK-072]
 │   ├── config_store/         # NVS schema + migrations                       [TASK-090]
 │   ├── remote_protocol/      # CLIENT v1: parser, validation, sessions       [TASK-100] 🔒
 │   ├── secure_remote/        # TLS/WSS, pairing, leases                      [TASK-100] 🔒
@@ -39,7 +42,7 @@ esp32-s3-kvmpad/
 │   ├── ui_store/  ui_nav/  ui_touch/    # UI Core tests (AGENTS-UI)
 │   └── reports/                          # test reports (04 §12 format)
 ├── simulator/{lvgl_sdl,fixtures,golden}/ # LVGL 9.6 SDL 800×480     [TASK-070D]
-└── tools/                    # verify_spec_manifest.py, flash, statistics
+└── tools/                    # verify_spec_manifest.py, check_license_headers.py, kbd_layouts/ generator, flash, statistics
 ```
 
 🔒 = blocked until a working `release_all`/epoch + HIL USB (05 §4). ADR-002 resolved by ADR-021 (native Windows CLIENT).
@@ -89,7 +92,7 @@ The name "KVM Essential" in the spec = KVMpad; the `kvm-essential/` tree in 02 �
 | Item | When | Why not now |
 |---|---|---|
 | `CMakeLists.txt`, `main/CMakeLists.txt`, `sdkconfig.defaults`, `idf_component.yml`, `dependencies.lock` | TASK-000 | TECH-002: they arise from a **working** `idf.py build` (ESP-IDF v6.1), not "from memory" |
-| `partitions.csv` | TASK-000 | ADR-009 resolved: 16 MiB Flash, 8 MiB PSRAM (`hardware/boards.md`); a table with ≥ 2 OTA slots is created once the real binary size is known |
+| `partitions.csv` | TASK-000 | ADR-009 resolved: 16 MiB Flash, 8 MiB PSRAM (`hardware/boards.md`); a table with ≥ 2 OTA slots plus a read-only `ime_data` partition for IME dictionaries (ADR-024 TECH-081) is created once the real binary size is known |
 | `.github/workflows/` | TASK-000 | CI requires a settled toolchain |
 | `clients/windows/` | TASK-105 | native CLIENT (ADR-021); only after TASK-100 and the 05 §4 gate |
 

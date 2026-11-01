@@ -24,5 +24,7 @@
 - ADR-022: new types `pair.hello/round1/round2/confirm/accepted/rejected` — whitelist, validation, fuzz (AT-EXT-17);
   outside an open pairing window, only `ERR_PAIRING_EXPIRED` (SEC-103).
 - ADR-023: no `settings.*` exists in protocol v1; such frames → `ERR_BAD_FRAME` + counter; the snapshot does not contain policies (SEC-107).
+- ADR-024: the status snapshot (03 §6.6) gains the read-only field `host_layout` — an enumerated id from the generated list,
+  validated and fuzzed (AT-EXT-25); it is not settable from the CLIENT (FR-745, 03 §9 item 3).
 
 Governing documents: `AGENTS.md`.

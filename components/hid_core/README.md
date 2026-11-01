@@ -23,5 +23,7 @@
 
 - ADR-018: Consumer usage in the ledger, allowlist, `RELEASE_ALL` clears Consumer (TECH-074/075); new intents `KVM_HID_CONSUMER_DOWN/UP`.
 - ADR-020: `KVM_HID_KEEPALIVE` (origin SYSTEM) — the only exception to TECH-064, conditions of FR-713 (TECH-076).
+- ADR-024: composed text (IME / Unicode delivery) arrives as a cancellable burst of ordinary key intents from `LOCAL`, paced
+  within the 03 §6.5 budget; no new HID source, no new report; cancel / mode switch / USB or owner loss → `RELEASE_ALL` (FR-748).
 
 Governing documents: `AGENTS.md`.

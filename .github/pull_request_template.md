@@ -21,6 +21,7 @@ NEXT: <one specific task or ADR>
 - [ ] All `UP` and `RELEASE_ALL` paths listed and tested
 - [ ] Traceability, tests and API documentation updated
 - [ ] No keyboard logs, pairing secrets, tokens or keys in the diff
+- [ ] `python -I tools/check_license_headers.py` → 0 missing, 0 unlisted; third-party code listed in `THIRD_PARTY_NOTICES.md` (ADR-025)
 - [ ] Without a physical board: no `PASS_HW`
 
 <!-- UI (AGENTS-UI.md): attach an SDL screenshot, an observer lifecycle test and a list of AT-UIFW PASS/FAIL/NOT_RUN_HW. -->

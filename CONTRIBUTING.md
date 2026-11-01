@@ -33,6 +33,8 @@ The `AGENTS*.md` documents refer to specification files without a directory. In 
 | 021 | ADR-002 → variant A: the only v1 CLIENT is a native Windows application with certificate pinning |
 | 022 | Pairing: mDNS + 6-digit code + PAKE; the user types in only 6 digits; the whole window ≤ 180 s |
 | 023 | Approval policies (accept on pairing, control approval, Alt+F4 confirmation) configurable locally in Settings; hard security invariants have no toggle; the CLIENT cannot change settings |
+| 024 | Keyboard layouts generated from xkeyboard-config ("Host layout" mirroring: legends, ANSI/ISO/JIS/ABNT2/KR geometry, IME keys); on-device IME for Japanese / Simplified Chinese / Korean in the main release, Unicode delivered through per-OS input modes |
+| 025 | Three-line license header (SPDX + copyright + Required Notice) in every authored source file, verified by `tools/check_license_headers.py` in CI; the notice embedded in the firmware image and the CLIENT binary; `Settings → About` with third-party notices |
 
 Treat the new requirement IDs (`FR-311`, `FR-7xx`, `TECH-07x`, `SEC-10x`) and test IDs (`AT-EXT-xx`) as part of the specification.
 
@@ -45,8 +47,20 @@ Treat the new requirement IDs (`FR-311`, `FR-7xx`, `TECH-07x`, `SEC-10x`) and te
 - One PR = one `TASK-xxx`. Describe the PR with the template (`.github/pull_request_template.md`): requirement IDs
   (`FR-/TECH-/SEC-`), test IDs (`AT-`) and the commands that were **actually** run. Without a physical board, hardware results
   are always `NOT_RUN_HW`.
-- Every new source file starts with `// SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0`.
-  Third-party code keeps its own license header and is listed in `THIRD_PARTY_NOTICES.md`.
+- **License header (ADR-025).** Every authored source file — C/C++/C#, Python, CMake, YAML, shell, PowerShell, HTML/XML,
+  `sdkconfig.defaults`, `partitions.csv`, generated files included — starts with these three lines in the file's comment syntax
+  (after a shebang, if any):
+
+  ```c
+  // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+  // Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+  // Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+  ```
+
+  Exempt: the frozen package, Markdown, JSON/lock files, binary assets, dotfiles. Third-party code keeps its original header
+  untouched and is listed in `THIRD_PARTY_NOTICES.md` (path, upstream, version, license). Check before every PR:
+  `python -I tools/check_license_headers.py` must report 0 missing and 0 unlisted (`--fix` inserts missing headers).
+  The firmware and the CLIENT embed the same notice (TECH-084) and show it in About (FR-751).
 - Install tooling (virtual environments, esptool, ESP-IDF) in the workspace directory **above** the repository (`../.tools/`),
   never inside the repository.
 - Raw logs, screenshots and packet captures go to `../evidence/` outside the repository; the records (`hardware/boards.md`,

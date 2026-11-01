@@ -86,4 +86,6 @@ Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
   public-research, public-safety/health, environmental or government organizations.
 - ❌ Any commercial use, including selling devices or firmware, needs a separate commercial license from the author.
 
-Third-party components (ESP-IDF, LVGL, TinyUSB, Espressif components) keep their own licenses.
+Every authored source file carries this notice in its header, the firmware image and the CLIENT binary embed it, and
+`Settings → About` shows it on the device (ADR-025). Third-party components (ESP-IDF, LVGL, TinyUSB, Espressif components,
+keyboard layout data, IME engines, fonts) keep their own licenses — see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

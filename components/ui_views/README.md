@@ -28,5 +28,11 @@
   with the client name) and *Paired clients* (list, Remove, Remove all) — FR-722/725/726.
 - ADR-023: Settings → Remote: `Require accept when pairing` (ON), `Control approval: Always / Trusted clients / Auto` (Always),
   with a one-sentence description of the effect; Settings → Shortcuts: Alt+F4 confirmation (FR-731..734). The policy is visible in the status (FR-735).
+- ADR-024: the keyboard renders legends and geometry from `kbd_layouts` for the selected `Host layout` (FR-741/742) and shows the
+  layout label (FR-508) with the "set the same layout on the HOST" hint; composition mode with preview, candidate bar and the
+  Japanese flick grid (FR-746); Settings → Keyboard: `Host layout`, `Unicode input on HOST` with a setup hint per mode (FR-747);
+  SHORTCUTS: "Switch HOST layout" (FR-744).
+- ADR-025: `Settings → About` — firmware version, license + Required Notice, scrollable third-party notices generated from
+  `THIRD_PARTY_NOTICES.md` at build time (FR-751); a plain view without HID or network.
 
 Governing documents: `AGENTS.md`, `AGENTS-UI.md`.
