@@ -13,6 +13,7 @@ esp32-s3-kvmpad/
 │   ├── spec/                 # specification v1.1.0 01–07 + README + MANIFEST (frozen, SHA256)
 │   ├── ADR/                  # new ADRs (ADR-014+); ADR-001..013 are in spec/06
 │   ├── EXTENSIONS.md         # index of requirements added after spec v1.1.0 (ADR-017+)
+│   ├── ROADMAP.md            # milestones, gates, ADR-added tasks, current status (05 §2 + ADRs)
 │   ├── prior-art/            # analyses of other people's projects (what we take, what we do not)
 │   └── REPO-LAYOUT.md        # this file
 ├── reference/                # HTML mockup + PNG — UX reference, not firmware code

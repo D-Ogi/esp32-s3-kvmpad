@@ -12,7 +12,7 @@ Featuring native USB HID, a gesture-driven multi-touch trackpad, an on-screen ke
 
 > KVMpad provides keyboard and mouse control. It does not capture or stream the host's video output.
 
-**Project status:** Work in progress — firmware under development. The specification (v1.1.0) is complete; no firmware is implemented yet and no hardware tests have been run.
+**Project status:** Work in progress — firmware under development. The specification (v1.1.0) is complete; no firmware is implemented yet and no hardware tests have been run. Milestones, gates and the current status of every task: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ![KVMpad UX overview](reference/kvm-essential-ux-overview.png)
 

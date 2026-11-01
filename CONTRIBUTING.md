@@ -6,6 +6,7 @@
 2. `docs/spec/README.md` — reading order of the specification and the precedence rule between documents.
 3. `docs/REPO-LAYOUT.md` — directory map, dependency rules, repository boundary, known gaps.
 4. `docs/ADR/README.md` and `docs/EXTENSIONS.md` — decisions and requirements added **after** the specification was frozen.
+5. `docs/ROADMAP.md` — milestones, gates, the tasks added by ADRs and the current status; pick work from there.
 
 ## Language
 
