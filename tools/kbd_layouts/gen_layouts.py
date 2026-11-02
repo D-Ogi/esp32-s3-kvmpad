@@ -270,31 +270,111 @@ class Layout:
     chars: dict[str, list[list[int]]]
 
 
-def classify(syms: dict[str, list[int]], has: dict[str, bool]) -> str:
-    every = {s for v in syms.values() for s in v}
-    if has.get("AE13") or every & JP_IME_KEYSYMS:
-        return "JIS"
-    if every & KR_KEYSYMS:
-        return "KR"
-    if has.get("AB11"):
-        return "ABNT2"
+# Keys whose definition by the layout's own symbols (not by the pc / inet sections the rules add to every layout)
+# selects the geometry family. Names as written in symbols/* (evdev aliases included).
+JIS_KEYS = {"HZTG", "AE13", "HENK", "XFER", "MUHE", "NFER", "HKTG"}
+KR_KEYS = {"HNGL", "HJCV"}
+# Slots that exist only in some geometry families; every other slot exists in all of them.
+GEOMETRY_SLOTS = {
+    "LSGT": {"ISO", "ABNT2"},
+    "AE13": {"JIS"},
+    "AB11": {"JIS", "ABNT2"},
+    "MUHE": {"JIS"}, "HENK": {"JIS"}, "HKTG": {"JIS"},
+    "HNGL": {"KR"}, "HJCV": {"KR"},
+}
+
+
+class SymbolsIndex:
+    """The key names each ``xkb_symbols`` section of symbols/* defines, following its includes (no keysyms)."""
+
+    _BLOCK = re.compile(r'((?:\w+\s+)*)xkb_symbols\s+"([^"]+)"\s*\{')
+    _INCLUDE = re.compile(r'\b(?:include|augment|override|replace)\s+"([^"]+)"')
+    _KEY = re.compile(r"\bkey\s*<([A-Za-z0-9_+\-]+)>")
+
+    def __init__(self, symbols_dir: Path):
+        self.dir = symbols_dir
+        self._files: dict[str, tuple[dict[str, str], str | None]] = {}
+        self._memo: dict[tuple[str, str], frozenset[str]] = {}
+
+    def _blocks(self, name: str) -> tuple[dict[str, str], str | None]:
+        if name not in self._files:
+            p = self.dir / name
+            text = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+            text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+            text = re.sub(r"//[^\n]*", " ", text)
+            blocks: dict[str, str] = {}
+            default = None
+            for m in self._BLOCK.finditer(text):
+                depth, i = 1, m.end()
+                while i < len(text) and depth:
+                    depth += {"{": 1, "}": -1}.get(text[i], 0)
+                    i += 1
+                blocks.setdefault(m.group(2), text[m.end():i])
+                if default is None and "default" in m.group(1).split():
+                    default = m.group(2)
+            if default is None and blocks:
+                default = next(iter(blocks))
+            self._files[name] = (blocks, default)
+        return self._files[name]
+
+    def defined_keys(self, file: str, variant: str, _stack: frozenset = frozenset()) -> frozenset[str]:
+        blocks, default = self._blocks(file)
+        section = variant or default or ""
+        memo_key = (file, section)
+        if memo_key in self._memo:
+            return self._memo[memo_key]
+        if memo_key in _stack or section not in blocks:
+            return frozenset()
+        body = blocks[section]
+        keys = set(self._KEY.findall(body))
+        for m in self._INCLUDE.finditer(body):
+            for part in re.split(r"[+|^]", m.group(1)):
+                part = part.split(":")[0].strip()
+                if not part:
+                    continue
+                f, _, v = part.partition("(")
+                keys |= self.defined_keys(f.strip(), v.rstrip(")").strip(), _stack | {memo_key})
+        out = frozenset(keys)
+        self._memo[memo_key] = out
+        return out
+
+
+def classify(syms: dict[str, list[int]], has: dict[str, bool], defined: frozenset[str] | None) -> str:
+    """Geometry family. `defined`: the keys the layout's own symbols define (None: judge by keysyms only)."""
+    if defined is not None:
+        own_kr = any(k in defined and k in syms and syms[k][0] in KR_KEYSYMS for k in ("RALT", "RCTL"))
+        if defined & JIS_KEYS:
+            return "JIS"
+        if defined & KR_KEYS or own_kr:
+            return "KR"
+        if "AB11" in defined:
+            return "ABNT2"
+    else:
+        every = {s for v in syms.values() for s in v}
+        if has.get("AE13") or every & JP_IME_KEYSYMS:
+            return "JIS"
+        if every & KR_KEYSYMS:
+            return "KR"
+        if has.get("AB11"):
+            return "ABNT2"
     if "BKSL" in syms and syms["BKSL"][0] not in (0, KS_BACKSLASH):
         return "ISO"
     return "ANSI"
 
 
-def build_layout(ref: LayoutRef, syms: dict[str, list[int]], usages: dict[str, int], xkb) -> tuple[Layout | None, str]:
+def build_layout(ref: LayoutRef, syms: dict[str, list[int]], usages: dict[str, int], xkb,
+                 defined: frozenset[str] | None = None) -> tuple[Layout | None, str]:
     altgr = "RALT" in syms and syms["RALT"][0] == KS_LEVEL3
     levels = LEVELS if altgr else 2
     has = {s: s in syms and syms[s][0] != 0 for s in SLOTS}
     for s in REQUIRED:
         if not has[s]:
             return None, f"no Base symbol on {s}"
-    geometry = classify({s: v for s, v in syms.items() if s in SLOTS or s in ("RALT", "RCTL")}, has)
+    geometry = classify({s: v for s, v in syms.items() if s in SLOTS or s in ("RALT", "RCTL")}, has, defined)
     keys: dict[str, Key] = {}
     best_effort = False
     for s in SLOTS:
-        if not has[s] or s not in usages:
+        if not has[s] or s not in usages or geometry not in GEOMETRY_SLOTS.get(s, {geometry}):
             continue
         usage = usages[s]
         if s == "BKSL" and geometry == "ISO":
@@ -486,6 +566,7 @@ def generate(refs: list[LayoutRef], usages: dict[str, int], xkb, symbols_dir: Pa
         raise SystemExit(f"keymaps.csv has no usage for {missing}")
     layouts: list[Layout] = []
     rejected: list[tuple[str, str]] = []
+    index = SymbolsIndex(symbols_dir) if symbols_dir is not None else None
     for ref in refs:
         if symbols_dir is not None:
             bad = sorted(reachable_symbol_files(symbols_dir, ref.layout) & EXCLUDED_SYMBOL_FILES.keys())
@@ -496,7 +577,8 @@ def generate(refs: list[LayoutRef], usages: dict[str, int], xkb, symbols_dir: Pa
         if syms is None:
             rejected.append((ref.id, "does not compile"))
             continue
-        lay, why = build_layout(ref, syms, usages, xkb)
+        defined = index.defined_keys(ref.layout, ref.variant) if index is not None else None
+        lay, why = build_layout(ref, syms, usages, xkb, defined)
         if lay is None:
             rejected.append((ref.id, why))
         else:

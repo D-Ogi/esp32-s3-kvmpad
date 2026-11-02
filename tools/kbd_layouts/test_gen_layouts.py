@@ -213,6 +213,48 @@ class InputTests(unittest.TestCase):
             self.assertEqual(gl.reachable_symbol_files(s, "aa"), {"aa", "bb", "lv", "cc"})
             self.assertEqual(gl.reachable_symbol_files(s, "dd"), {"dd", "cc"})
 
+    def test_symbols_index(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = Path(d)
+            (s / "us").write_text('// c\ndefault partial alphanumeric_keys\nxkb_symbols "basic" {\n'
+                                  '  key <AE01> { [ 1, exclam ] }; key <BKSL> { [ backslash, bar ] };\n};\n'
+                                  'partial xkb_symbols "intl" { include "us(basic)" key <AC01> { [ a ] }; };\n'
+                                  '/* key <MUHE> in a comment */\n', encoding="utf-8")
+            (s / "jp").write_text('default xkb_symbols "106" { include "jp(common)" key <AE13> { [ yen, bar ] }; };\n'
+                                  'xkb_symbols "common" { key <HZTG> { [ Zenkaku_Hankaku ] }; '
+                                  'include "jp(hztg_escape)+kpdl(dot)" };\n'
+                                  'xkb_symbols "hztg_escape" { key <HZTG> { [ Escape ] }; };\n', encoding="utf-8")
+            (s / "kr").write_text('default xkb_symbols "kr106" { include "us" include "kr(hw_keys)" };\n'
+                                  'xkb_symbols "hw_keys" { key <HNGL> { [ Hangul ] }; key <HJCV> { [ Hangul_Hanja ] }; };\n',
+                                  encoding="utf-8")
+            (s / "br").write_text('xkb_symbols "abnt2" { include "latin" key <AB11> { [ slash, question ] }; };\n',
+                                  encoding="utf-8")
+            (s / "loop").write_text('xkb_symbols "a" { include "loop(b)" key <AE02> {[2]}; };\n'
+                                    'xkb_symbols "b" { include "loop(a)" };\n', encoding="utf-8")
+            ix = gl.SymbolsIndex(s)
+            self.assertEqual(ix.defined_keys("us", ""), {"AE01", "BKSL"})
+            self.assertEqual(ix.defined_keys("us", "intl"), {"AE01", "BKSL", "AC01"})
+            self.assertEqual(ix.defined_keys("jp", ""), {"AE13", "HZTG"})
+            self.assertEqual(ix.defined_keys("kr", ""), {"AE01", "BKSL", "HNGL", "HJCV"})
+            self.assertEqual(ix.defined_keys("br", ""), {"AB11"})
+            self.assertEqual(ix.defined_keys("loop", "a"), {"AE02"})
+            self.assertEqual(ix.defined_keys("missing", ""), frozenset())
+
+    def test_geometry_from_defined_keys(self):
+        # inet(evdev) puts IME keysyms on every layout: the keys the layout itself defines decide, not the keysyms.
+        us = {k: v for k, v in _us().items()}
+        us.update({"MUHE": [0xFF22, 0, 0, 0], "HNGL": [0xFF31, 0, 0, 0]})
+        has = {s: s in us and us[s][0] != 0 for s in gl.SLOTS}
+        self.assertEqual(gl.classify(us, has, frozenset({"AE01", "BKSL"})), "ANSI")
+        self.assertEqual(gl.classify(us, has, frozenset({"AE01", "HNGL"})), "KR")
+        self.assertEqual(gl.classify(us, has, frozenset({"HZTG"})), "JIS")
+        self.assertEqual(gl.classify(us, has, frozenset({"AB11"})), "ABNT2")
+        lay, _ = gl.build_layout(gl.LayoutRef("us", "", "US"), us, USAGES, FakeXkb(), frozenset({"AE01"}))
+        self.assertEqual(lay.geometry, "ANSI")
+        self.assertNotIn("MUHE", lay.keys)
+        self.assertNotIn("HNGL", lay.keys)
+        self.assertNotIn("LSGT", lay.keys)
+
     def test_pins(self):
         self.assertEqual(len(gl.PINS["XKC_SHA256"]), 64)
         self.assertEqual(len(gl.PINS["XKBCOMMON_COMMIT"]), 40)
