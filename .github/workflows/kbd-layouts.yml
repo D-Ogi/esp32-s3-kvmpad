@@ -38,7 +38,11 @@ jobs:
       - name: Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends meson ninja-build bison clang cmake
+          sudo apt-get install -y --no-install-recommends ninja-build bison clang cmake
+          # libxkbcommon 1.13 needs meson >= 1.4; Ubuntu 24.04 ships 1.3.2. A pinned meson in a venv.
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet meson==1.7.0
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
 
       - name: Pins
         run: python3 tools/kbd_layouts/gen_layouts.py --print-pins | tee -a "$GITHUB_ENV"
