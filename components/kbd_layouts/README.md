@@ -1,8 +1,13 @@
 # `kbd_layouts`
 
-> **Status:** `DESIGNED` — directory created in the repository skeleton; no implementation yet.
-> Build files (`CMakeLists.txt`, `idf_component.yml`) are created in TASK-000 from a working
-> build — do not write them "from memory".
+> **Status:** `IN PROGRESS` — the Unicode delivery sequences (`include/kbd_unicode.h`, FR-747: `linux`, `macos`,
+> `windows-hex`, `wincompose`, cancel keys, UTF-16 surrogates) are implemented and host-tested (`test/ime`). The layout
+> accessors (`include/kbd_layouts.h`: list, find by xkb id, key per slot with usage / four legends / dead and IME flags,
+> geometry family, one-keystroke character lookup and a `kvm_uni_key_fn` adapter) and the generator
+> (`tools/kbd_layouts/gen_layouts.py`) are host-tested with fake tables (`test/kbd_layouts`). `generated/` comes from the
+> CI workflow `kbd-layouts` (libxkbcommon needs Linux); until it is committed the component builds with zero layouts and
+> `kvm_uni_key_us` stays the only resolver. Not yet: legend font subsets (TECH-078), the `host_layout` snapshot field,
+> the KEYBOARD view and Settings integration (FR-741/742).
 
 **Role:** generated keyboard layout data (ADR-024): for every `layout(variant)` from xkeyboard-config the key → HID usage map,
 legends per level, geometry family (ANSI / ISO / JIS / ABNT2 / KR), IME keys, the character → keystroke reverse index and the

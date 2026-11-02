@@ -1,0 +1,118 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# TASK-071 (ADR-024 TECH-077, AT-EXT-22): regenerate the keyboard layout tables from the pinned xkeyboard-config,
+# libxkbcommon and keycodemapdb on a Linux host, prove the generator deterministic, and require the committed outputs
+# to match (empty diff). The regenerated tree is always uploaded as an artifact, so a first run or a deliberate pin
+# bump can be reviewed and committed from it.
+name: kbd-layouts
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "tools/kbd_layouts/**"
+      - "components/kbd_layouts/**"
+      - "clients/windows/layouts/**"
+      - "test/kbd_layouts/**"
+      - ".github/workflows/kbd-layouts.yml"
+  pull_request:
+    paths:
+      - "tools/kbd_layouts/**"
+      - "components/kbd_layouts/**"
+      - "clients/windows/layouts/**"
+      - "test/kbd_layouts/**"
+      - ".github/workflows/kbd-layouts.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends meson ninja-build bison clang cmake
+
+      - name: Pins
+        run: python3 tools/kbd_layouts/gen_layouts.py --print-pins | tee -a "$GITHUB_ENV"
+
+      - name: Generator tests (no libxkbcommon)
+        run: python3 -I tools/kbd_layouts/test_gen_layouts.py
+
+      - name: xkeyboard-config (pinned tarball, SHA256 verified)
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl -fsSL -o xkc.tar.xz "$XKC_URL"
+          echo "$XKC_SHA256  xkc.tar.xz" | sha256sum -c -
+          tar -xf xkc.tar.xz
+          meson setup xkc-build "xkeyboard-config-$XKC_VERSION" --prefix "$RUNNER_TEMP/xkc" -Dnls=false
+          meson install -C xkc-build
+          ls "$RUNNER_TEMP/xkc/share/xkeyboard-config-2/rules/base.xml" "$RUNNER_TEMP/xkc/share/xkeyboard-config-2/rules/evdev"
+
+      - name: libxkbcommon (pinned commit)
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          git init -q xkbcommon && cd xkbcommon
+          git fetch -q --depth 1 "$XKBCOMMON_REPO" "$XKBCOMMON_COMMIT"
+          git checkout -q FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$XKBCOMMON_COMMIT"
+          meson setup build --prefix "$RUNNER_TEMP/xkbcommon-inst" -Denable-x11=false -Denable-wayland=false \
+            -Denable-docs=false -Denable-tools=false -Denable-xkbregistry=false -Denable-bash-completion=false \
+            "-Dxkb-config-root=$RUNNER_TEMP/xkc/share/xkeyboard-config-2"
+          meson install -C build
+          lib="$(find "$RUNNER_TEMP/xkbcommon-inst" -name 'libxkbcommon.so.0*' -type f | head -n1)"
+          test -n "$lib"
+          echo "XKBCOMMON_LIB=$lib" >> "$GITHUB_ENV"
+
+      - name: keycodemapdb (pinned commit)
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          git init -q keycodemapdb && cd keycodemapdb
+          git fetch -q --depth 1 "$KEYCODEMAPDB_REPO" "$KEYCODEMAPDB_COMMIT"
+          git checkout -q FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$KEYCODEMAPDB_COMMIT"
+
+      - name: Generate twice (determinism) and into the tree
+        run: |
+          set -euo pipefail
+          gen() {
+            python3 -I tools/kbd_layouts/gen_layouts.py --xkb-root "$RUNNER_TEMP/xkc/share/xkeyboard-config-2" \
+              --xkc-tarball "$RUNNER_TEMP/xkc.tar.xz" --keymaps-csv "$RUNNER_TEMP/keycodemapdb/data/keymaps.csv" \
+              --libxkbcommon "$XKBCOMMON_LIB" "$@"
+          }
+          gen --out-root "$RUNNER_TEMP/run1"
+          gen --out-root "$RUNNER_TEMP/run2"
+          diff -r "$RUNNER_TEMP/run1" "$RUNNER_TEMP/run2"
+          gen
+          head -n 20 components/kbd_layouts/generated/REPORT.md
+
+      - name: Host tests over the generated tables
+        run: |
+          cmake -S test/kbd_layouts -B "$RUNNER_TEMP/build-kbd" -G Ninja -DCMAKE_C_COMPILER=clang
+          cmake --build "$RUNNER_TEMP/build-kbd"
+          ctest --test-dir "$RUNNER_TEMP/build-kbd" --output-on-failure
+
+      - name: Upload the regenerated outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kbd-layouts-generated
+          path: |
+            components/kbd_layouts/generated/
+            clients/windows/layouts/
+          if-no-files-found: warn
+
+      - name: Committed outputs match (empty diff)
+        run: |
+          git add -N components/kbd_layouts/generated clients/windows/layouts
+          git diff --stat --exit-code -- components/kbd_layouts/generated clients/windows/layouts
