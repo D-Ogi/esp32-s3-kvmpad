@@ -482,7 +482,9 @@ def emit_c(layouts: list[Layout], usages: dict[str, int], provenance: list[str])
         "",
         f"const char kbd_layouts_legend_pool[{len(legends.data)}] =",
     ]
-    lines += chunk_bytes(legends.data)
+    # The pool ends with a NUL; the string literal's own terminator is that byte. Writing it out as well would make
+    # the literal one byte longer than the array (GCC: -Werror=unterminated-string-initialization).
+    lines += chunk_bytes(legends.data[:-1])
     lines += ["", f"const kbd_key_t kbd_layouts_keys[{len(recs)}] = {{"]
     for u, f, lg in recs:
         lines.append(f"    {{0x{u:02x}u, 0x{f:02x}u, {{{', '.join(f'{o}u' for o in lg)}}}}},")

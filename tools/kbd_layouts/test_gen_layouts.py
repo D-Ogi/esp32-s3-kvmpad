@@ -168,6 +168,13 @@ class GeneratorTests(unittest.TestCase):
         self.assertIn("_Static_assert(KBD_SLOT_COUNT == 56,", c)
         self.assertIn('{"de", "Fake de", KBD_GEOM_ISO, 0x01u, 1u}', c)
         self.assertNotIn("\r", c)
+        # The literal plus its implicit terminator fills the declared array exactly (GCC rejects one byte more).
+        import re
+        m = re.search(r"kbd_layouts_legend_pool\[(\d+)\] =\n((?:    \".*\"\n?)+?);", c + "\n")
+        self.assertIsNotNone(m)
+        lit = "".join(re.findall(r'"((?:[^"\\]|\\.)*)"', m.group(2)))
+        n = len(re.findall(r"\\[0-7]{3}|.", lit))
+        self.assertEqual(n + 1, int(m.group(1)))
 
     def test_deterministic(self):
         self.assertEqual(run_fake(), self.files)
