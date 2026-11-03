@@ -1,0 +1,24 @@
+{
+  "vector": "pair-cert-mismatch",
+  "format": "kvmpad-pairing-vectors/1",
+  "pake": "ecjpake-p256-sha256",
+  "wire_version": 1,
+  "note": "Deterministic run from a fixed test generator seed; a live DEVICE and CLIENT draw real randomness, so only the derivation of the tags, keys and sealed token from the recorded blobs is reproducible outside this fixture.",
+  "input": {
+    "generator_seed": 1263947091,
+    "require_accept": true,
+    "device_name": "KVMpad-7F3A",
+    "client_name": "DESK1",
+    "device_code": "286043",
+    "client_code": "286043",
+    "cert_text": "KVMpad interop vector DEVICE certificate (DER stand-in)",
+    "device_cert_sha256": "75d66aa14f84d3044b68f2ef4e6cd4906d03cf2a8e0612b0e68536cf4269dc62",
+    "client_cert_sha256": "7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e7e",
+    "client_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf"
+  },
+  "expect": {
+    "completed": false,
+    "failed_step": 1,
+    "failed_error": "BINDING"
+  }
+}

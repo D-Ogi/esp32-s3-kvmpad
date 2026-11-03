@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+
+menu "KVMpad secure remote"
+
+    config KVM_SRT_MAX_SOCKETS
+        int "Concurrent TLS sockets on the remote port"
+        range 2 5
+        default 3
+        help
+            Upper bound on sockets the WebSocket server accepts at once. One socket is needed for
+            the pairing endpoint while a window is open, the rest for control sessions; the session
+            glue refuses anything past its own limit with HTTP 503 regardless of this value.
+
+            Each TLS socket costs roughly 40 kB while the handshake runs, so this is the dominant
+            RAM knob of the whole feature. Raise it only if several CLIENTs really have to be
+            connected at the same time (FR-721 needs one).
+
+    config KVM_SRT_SOCKET_TIMEOUT_S
+        int "Socket send/receive timeout (s)"
+        range 1 10
+        default 2
+        help
+            How long a socket read or write may block the server task. It is also the bound on how
+            long a call from the UI task can wait for the transport lock, because the lock is held
+            across a frame write. Lower values make a stalled peer cheaper and a slow network more
+            likely to drop frames.
+
+    config KVM_SRT_ADVERTISE_MDNS
+        bool "Advertise _kvmpad._tcp over mDNS"
+        default y
+        help
+            FR-723 service discovery. Takes effect only when the managed `espressif/mdns` component
+            is part of the build; otherwise the advertisement is skipped and the CLIENT has to be
+            given an address. The TXT record carries the device name, the protocol version and
+            whether a pairing window is open -- never a code, a token or a certificate hash.
+
+endmenu

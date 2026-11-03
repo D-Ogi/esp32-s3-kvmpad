@@ -1,0 +1,34 @@
+{
+  "vector": "pair-success-auto-accept",
+  "format": "kvmpad-pairing-vectors/1",
+  "pake": "ecjpake-p256-sha256",
+  "wire_version": 1,
+  "note": "Deterministic run from a fixed test generator seed; a live DEVICE and CLIENT draw real randomness, so only the derivation of the tags, keys and sealed token from the recorded blobs is reproducible outside this fixture.",
+  "input": {
+    "generator_seed": 1263947089,
+    "require_accept": false,
+    "device_name": "KVMpad-7F3A",
+    "client_name": "DESK1",
+    "device_code": "572010",
+    "client_code": "572010",
+    "cert_text": "KVMpad interop vector DEVICE certificate (DER stand-in)",
+    "device_cert_sha256": "75d66aa14f84d3044b68f2ef4e6cd4906d03cf2a8e0612b0e68536cf4269dc62",
+    "client_cert_sha256": "75d66aa14f84d3044b68f2ef4e6cd4906d03cf2a8e0612b0e68536cf4269dc62",
+    "client_id": "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf"
+  },
+  "expect": {
+    "completed": true,
+    "failed_step": 0,
+    "failed_error": "OK",
+    "device_round1": "QQQL4xy92VEr3TzqzVvZPDqdCAC2kbrwATLvHmfVQFiGnJAtIzlSLwztrmrqDGTJO7suPw0GlXDsnILjNcBtuJcCQQRy5MWQsMG3uZOknSBVLA/mCtVuEhqdoyQrBIXzRI2VfrLaOZS1lsBgJo3hZBj1WwuYKld4hq/JHVatX9s7EmzrIEFwpEiuywBvQlgexvbZkYd4Wk+H+Fn2Em85K1BLj10kQQRtQWTCfyQoHhnL3megPm4iHrDAg/pmSbBkWHOQP+eQ1tc+wg80T8Zm66kNFIIJNesyLyEYz7WQ3IJyP3o//YVrQQQ3K62Oey/xYaer3VDSvLcml2TqvEB9lLoLwyaLOToZMMqU8bUigeDPVeKsxqzXRpvV4R0yzOP+ZtL3uk/hvWBmILjmOw/kASpt5TU8NgEiAX5ldjl15+19Lw1jkoTN2ev1",
+    "client_round1": "QQQN1bL+DrA2+ifFV+Y27/xit2MXgWUIeH+aSzge1S5wpwYK7auMZjTLyR/asdSSb4W7h769LbFunAToqNES3Fd0QQTAl/sFtIy8cLgwagGHWGRsUzph87pmR8Qd2CjsmuPPEXFmjzD1I/ZwqYm8J7o1k8Ee0qI9E2DRSljNUvwr8PemIKOZohW/L6Mq8e+eiN4AqTxfKWTkoYZaFYXeKBoS7M5qQQRge5HcAm5fPeDPevEKtJYcrA3ITvlEmP+4hUGhPCAESBdofDXZyU8301x2CXCLADT4oGpNtlF261HpHQtS4b5AQQRudAqrVwBzJ9oihzwoEWJiXOyhJ1+kaG7A/YqrlGWsxM0BcFz8D86HufxWJSv04n+r2hcWvMRVUfK4lpv3JwUZICGObbmTPXGSs7fIEediUqYjsHKI1NpLI67/D+4FbnPw",
+    "device_round2": "QQRmAetjNCKOk07qEt1p9OIfJpaeBUz6lx0osvGMSBH/JUeAhu24bm0hPybPOAmDcVxJrj5/cSE3am0yUztMBsChQQShtkv+vhYZEO7MiG0YmZQVP35vEk/xwn9ORDQS1J9M6LAiBUSEs0nIQ0kKC29B09ICc7Wz0bxXYp3D255G35UUIApgmYM6eK/i53n/zKApGb/gbT81ybwKdAHOjTMX7Mq8",
+    "client_round2": "QQQE2jsKoO58l928aAj7zxYFlCG0mO6Gkci0cWc7hcnSbJ2a7lQNM9KpYm83YWd8mad1GQ8g1OGrsiOrvxfCnw+FQQQSOh5gANvF6jhs9x3dGG0pRC8eFVrMrbdWabIv1aL+Se6renEuZDV8w/eUdqmrOBdmn7VuB/2Q36W3F0HgcgL6IIJpWvrDMZSGCXUU5Ovo0HBi/GK4EFvH7WzR42PrumS2",
+    "transcript_sha256": "4a519df895acec6cf175c38c8f5ab96014a614920c58467f0b53d3ff0e3d5004",
+    "client_confirm": "UgSPZklfh8KbCbJoXwg2ocMvnWfUnDacSzCo8mnTFJY=",
+    "device_confirm": "1UlSlaBV4gNEurBXVf/YoOSKwHcmr4RHQPJEr790660=",
+    "token_sealed": "13nQf0Mj49ELI+lvQtHH9yhOQFH86JLSKrnYX5tSCp5r6LYnv5KrXUFM5XC/zM6X",
+    "token": "76b77138b90fc7c9866ab394eadeb66429e0692819ee704720d50b8d6e43132e",
+    "token_sha256_stored": "c5c40bfce71493c26daf97d1444230e6488545783c5f6325c577712d36f07eee"
+  }
+}

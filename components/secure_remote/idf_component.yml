@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+description: "KVMpad secure_remote: WSS transport, device identity, pairing (TASK-100, ADR-029/032)"
+dependencies:
+  idf: ">=6.1,<6.2"
+  # FR-723 `_kvmpad._tcp` discovery; the version the isolated TASK-100 build was verified with.
+  espressif/mdns: "==1.14.1"
