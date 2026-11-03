@@ -1,8 +1,7 @@
 # `ui_theme`
 
-> **Status:** `DESIGNED` — directory created in the repository skeleton; no implementation yet.
-> Build files (`CMakeLists.txt`, `idf_component.yml`) are created in TASK-000 from a working
-> build — do not write them "from memory".
+> **Status:** `IMPLEMENTED_SW` (TASK-060D) — host tests pass against real LVGL 9.6; not yet built
+> into the firmware image and not yet seen on the panel (`NOT_RUN_HW`).
 
 **Role:** Tokens, fonts, LVGL styles, colors, spacing, minimum touch targets.
 
@@ -10,13 +9,101 @@
 |---|---|
 | Tasks | TASK-060D |
 | Specification | 07 §7; the `reference/kvm-essential-800x480.html` mockup (visually only) |
-| Tests | SDL snapshot (AT-UIFW-01) |
+| Tests | `test/ui_components` (host, real LVGL); SDL/HIL snapshot (AT-UIFW-01) `NOT_RUN_HW` |
 
-**Target files (07 §2):** `include/ui_tokens.h`, `ui_theme.c`
+**Files:** `include/ui_tokens.h`, `include/ui_theme.h`, `src/ui_theme.c`, `CMakeLists.txt`
+
+## What is where
+
+`ui_tokens.h` holds the values: panel geometry, spacing, radii, border widths, touch targets, the
+topbar slot budget, modal and toast geometry, the color set and the `ui_font_role_t`,
+`ui_severity_t`, `ui_key_variant_t`, `ui_btn_variant_t` enums. A view reads a token; it does not
+invent a number.
+
+`ui_theme.h` / `src/ui_theme.c` hold the shared `lv_style_t` objects. They are created once by
+`ui_theme_init()` and handed out by id; a widget references a style, it never copies one.
+
+```c
+bool              ui_theme_init(void);          // idempotent, returns false only on failure
+void              ui_theme_deinit(void);        // idempotent
+bool              ui_theme_is_ready(void);
+const lv_style_t *ui_theme_style(ui_style_id_t id);                 // NULL when out of range
+void              ui_theme_apply(lv_obj_t *obj, ui_style_id_t id, lv_style_selector_t sel);
+void              ui_theme_apply_button(lv_obj_t *btn, ui_btn_variant_t variant);
+void              ui_theme_apply_key(lv_obj_t *key, ui_key_variant_t variant);
+const lv_font_t  *ui_theme_font(ui_font_role_t role);               // never NULL
+lv_color_t        ui_theme_severity_color(ui_severity_t sev);       // text grade
+lv_color_t        ui_theme_severity_dot(ui_severity_t sev);         // glyph / dot grade
+const char       *ui_theme_severity_icon(ui_severity_t sev);        // FR-005: never color alone
+```
+
+Out-of-range input is never a crash: an unknown style id is a no-op, an unknown font role falls
+back to `UI_FONT_BODY`, and an unknown severity reads as `UI_SEVERITY_UNKNOWN`, never as `ok`.
+
+## Geometry scale
+
+The reference mockup is 800x480; the target panel is 1024x600 (ADR-026 TECH-087). Proportions
+scale by 1.28 horizontally and 1.25 vertically and are rounded to a multiple of 4. Accessibility
+floors do **not** scale: spacing 4/8/12/16 and the 44 px / 48 px touch targets of 07 §7 and FR-003
+are absolute minimums, not proportions.
+
+The topbar slot budget is fixed so that a long IP, SSID or status string can never push a slot out
+of the bar (07 §7). At 1024 px the inner width is 992; brand 96 + nav 392 + keep-awake 112 +
+2 x status 152 + button 56 = 960, plus 24 px of gaps, leaves an 8 px spacer.
+`test_ui_theme` asserts this arithmetic, so a token change that breaks the budget fails the build.
+
+## Typography
+
+Only the Montserrat sizes the firmware compiles in may be named: `sdkconfig.defaults` enables
+14/16/20/24. The four roles map one to one onto those sizes (`UI_FONT_LABEL` 14, `UI_FONT_BODY` 16,
+`UI_FONT_HEADING` 20, `UI_FONT_TITLE` 24).
+
+## Disabled state
+
+A disabled control keeps full coverage: it is read from `UI_COLOR_DISABLED_SURFACE`, `UI_COLOR_DISABLED_INK`
+and `UI_COLOR_DISABLED_EDGE`, never from a blanket `opa`. The mockup's `opacity: .45` over `#B4B6BC` leaves a
+legend at roughly 1.1:1 against the page — a disabled key field then reads as an empty screen, which FR-604
+(legible at low ambient contrast) and FR-005 (a state is never carried by one channel) both rule out. The ink
+is therefore `#9A9CA4`: about 2.5:1 on the disabled surface, clearly weaker than the 4:1 of an enabled muted
+legend and still readable. A widget whose children carry their own ink (the featured SHORTCUTS tile) must
+repaint them itself — LVGL does not hand a state down the tree.
+
+## Known gap
+
+The reference mockup has no amber. 07 §7 defines a `warning` status variant, so `UI_COLOR_WARN`
+(`0x8A5A00`, text grade) and `UI_COLOR_WARN_DOT` (`0xE8920C`, dot grade) were chosen for contrast
+on `UI_COLOR_BG` rather than taken from the reference. They are the only colors in `ui_tokens.h`
+that are not in the mockup; an owner decision can replace both values without touching any view.
 
 **Rules (MUST):**
 
-- No dependency on USB, networking or pairing logic.
-- Fonts/assets statically in flash.
+- No dependency on USB, networking or pairing logic. `REQUIRES` is `lvgl__lvgl` only.
+- Fonts/assets statically in flash; no allocation per frame and no gradients or shadow stacks
+  (07 §9).
+- `fonts/kvm_font_legend_{24,16,14}.c` (ADR-024 TECH-078, FR-742) are generated by `tools/fonts/gen_legend_font.py`
+  from Noto Sans (Latin, Greek, Cyrillic, OFL-1.1), subsetted to the legend code points of the generated HOST layout
+  tables. They are not handed out directly: `UI_FONT_TITLE`, `UI_FONT_BODY` and `UI_FONT_LABEL` return a copy of the
+  Montserrat of that size whose LVGL `fallback` is the legend font, so Montserrat still draws everything it has and
+  only the extra legends come from Noto. A legend no shipped font covers (the arrows and a few technical symbols of
+  some layouts) is drawn as `ui_theme_legend_fallback()`, U+FFFD. A build without the files compiles without them
+  (`KVM_HAVE_FONT_LEGEND`), and `ui_theme_has_legend_font()` reports which build this is.
+- `fonts/kvm_font_hangul_24.c` (role `UI_FONT_HANGUL`, ADR-024 TECH-078) is generated, never edited by hand:
+  `tools/fonts/gen_hangul_font.py` rasterizes compatibility jamo and the 2350 KS X 1001 syllables of Noto Sans KR
+  (OFL-1.1, `fonts/OFL-NotoSansKR.txt`, listed in `THIRD_PARTY_NOTICES.md`) at 24 px 4 bpp, uncompressed, with
+  Montserrat 24 as the fallback for Latin. About 0.6 MB of flash. A syllable outside KS X 1001 still composes and is
+  sent; only its preview glyph is missing.
+- `UI_FONT_HANZI` (TASK-072) is not in the app image: the 3.3 MB hanzi font (16 580 glyphs of Noto Sans SC, 24 px
+  4 bpp, LVGL-compressed, KVMFONT1 version 2) lives in the `ime_data` partition as a KVMFONT1 blob
+  (`tools/fonts/gen_hanzi_font_blob.py`). `UI_FONT_KANJI` is the same for the JA strip: 1.3 MB,
+  6 655 glyphs of Noto Sans JP (JIS X 0208), installed with `ui_theme_set_kanji_font()` (ADR-033). Version 2 needs
+  `LV_USE_FONT_COMPRESSED`; the loader walks every compressed glyph's RLE stream to its last pixel, so a stream that
+  would make LVGL read past its part's bitmap is refused before the font is used. The loader validates the whole blob
+  (header, parts, cmaps, every glyph's bitmap range, the `lv_font_fmt_txt_glyph_dsc_t` layout) in either of two modes:
+  `ui_font_blob_load()` reads a blob that is in memory in place (host tests, simulator); `ui_font_blob_open()`
+  (ADR-034, the firmware) reads it through a callback, copies the glyph tables and cmap lists into one block (about
+  156 KB for the hanzi font) and gives each part an LVGL glyph loader that reads one glyph bitmap from flash when it
+  is drawn, so no flash region stays memory-mapped. Neither calls LVGL (except `lv_mutex_init()` for the loaders), so
+  a worker task may run them; `ui_theme_set_hanzi_font()` then installs the font from the LVGL owner. Until then the
+  role returns Montserrat 24.
 
 Governing documents: `AGENTS.md`, `AGENTS-UI.md`.

@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+menu "KVMpad UI platform (TASK-060A)"
+
+    config KVM_UI_PLATFORM
+        bool "Start the LVGL UI platform at boot (replaces the M1 diagnostic display owner)"
+        default y
+        help
+            When enabled app_main hands the RGB panel to ui_platform after board_lcd_init() and the
+            diagnostic test-card task is not started. The `lcd <screen>` console commands are refused
+            while LVGL owns the panel.
+
+    choice KVM_UI_BACKEND
+        prompt "LVGL integration backend"
+        default KVM_UI_BACKEND_ADAPTER
+        depends on KVM_UI_PLATFORM
+        help
+            ADR-013: esp_lvgl_adapter 0.7.4 is the candidate, esp_lvgl_port 2.9.0 the controlled
+            fallback. One binary per backend; the choice is recorded in the ADR after the HIL benchmark.
+
+        config KVM_UI_BACKEND_ADAPTER
+            bool "espressif/esp_lvgl_adapter 0.7.4"
+        config KVM_UI_BACKEND_PORT
+            bool "espressif/esp_lvgl_port 2.9.0"
+    endchoice
+
+    choice KVM_UI_ADAPTER_TEAR_MODE
+        prompt "esp_lvgl_adapter tearing mode"
+        depends on KVM_UI_BACKEND_ADAPTER
+        default KVM_UI_ADAPTER_TEAR_DOUBLE_DIRECT
+        help
+            Decides the number of panel frame buffers board_lcd must allocate (1024x600x2 B each):
+            TRIPLE_PARTIAL 3 (adapter default for RGB), DOUBLE_DIRECT / DOUBLE_FULL 2, NONE 1.
+            ADR-027 (TASK-060A, board #1): DOUBLE_DIRECT is the default - same 32.8 fps on widget
+            updates as TRIPLE_PARTIAL, 8.2 instead of 11.6 fps on full-screen repaints, but 49 KB
+            more internal RAM free (112 KB vs 63 KB) and 1.2 MB more PSRAM; TRIPLE_PARTIAL stays one
+            Kconfig flip away if the UI ever needs faster full-screen transitions.
+
+        config KVM_UI_ADAPTER_TEAR_TRIPLE_PARTIAL
+            bool "TRIPLE_PARTIAL (3 frame buffers, internal partial draw buffer)"
+        config KVM_UI_ADAPTER_TEAR_DOUBLE_PARTIAL
+            bool "DOUBLE_PARTIAL (2 frame buffers, internal partial draw buffer)"
+            help
+                LVGL blends in an internal strip of KVM_UI_DRAW_BUF_LINES lines and the adapter copies each
+                finished strip into the back frame buffer. Keeps the per-pixel read-modify-write traffic off
+                PSRAM while a screen is drawn, which is what starves the RGB bounce-buffer interrupt in
+                DOUBLE_DIRECT (image shifts by one bounce buffer during full-screen redraws, board #1).
+        config KVM_UI_ADAPTER_TEAR_DOUBLE_DIRECT
+            bool "DOUBLE_DIRECT (2 frame buffers, LVGL draws into them)"
+        config KVM_UI_ADAPTER_TEAR_DOUBLE_FULL
+            bool "DOUBLE_FULL (2 frame buffers, full refresh)"
+        config KVM_UI_ADAPTER_TEAR_NONE
+            bool "NONE (1 frame buffer, partial draw buffer, tearing possible)"
+    endchoice
+
+    config KVM_UI_PORT_AVOID_TEARING
+        bool "esp_lvgl_port: use the two panel frame buffers as LVGL buffers (direct mode)"
+        depends on KVM_UI_BACKEND_PORT
+        default y
+
+    config KVM_UI_DRAW_BUF_LINES
+        int "Partial draw buffer height in lines (partial modes only)"
+        depends on KVM_UI_PLATFORM
+        range 10 600
+        default 24
+        help
+            Internal RAM (the adapter wants the partial buffer internal, 1024 px x lines x 2 B). 50 lines
+            (100 KB) did not fit next to TinyUSB + the GT911 sampler on board #1 (137 KB free, fragmented);
+            24 lines = 48 KB.
+
+    config KVM_UI_TASK_PRIORITY
+        int "LVGL task priority"
+        depends on KVM_UI_PLATFORM
+        range 1 20
+        default 4
+        help
+            Below the touch sampler (TASK-030) and the TinyUSB task: the UI never delays USB or GT911.
+
+    config KVM_UI_TASK_CORE
+        int "LVGL task core (-1 = no affinity)"
+        depends on KVM_UI_PLATFORM
+        range -1 1
+        default 1
+
+    config KVM_UI_TASK_STACK
+        int "LVGL task stack in bytes"
+        depends on KVM_UI_PLATFORM
+        range 4096 65536
+        default 12288
+        help
+            Measured on board #1 (2026-11-02): ~4.4 KiB peak with the bench scenes and the demo, ~6.5 KiB with
+            the product shell; 8 KiB overflowed when the Settings card (TASK-070C) was built, so 12 KiB.
+
+    config KVM_UI_BENCH
+        bool "Build the TASK-060A benchmark scenes and the `ui` console command"
+        depends on KVM_UI_PLATFORM
+        default y
+
+endmenu

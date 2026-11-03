@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+description: "KVMpad ui_platform: LVGL 9.6 <-> esp_lcd integration, the only owner of the LVGL context (TASK-060A)"
+dependencies:
+  idf: ">=6.1,<6.2"
+  # spec 07 §0 / ADR-013: LVGL 9.6 exactly; the registry build of 9.6.0 is 9.6.0~1
+  lvgl/lvgl:
+    version: "==9.6.0~1"
+    public: true
+  # TASK-060A spike: both integration components are pinned here, but ui_platform compiles and
+  # links exactly one of them (Kconfig choice KVM_UI_BACKEND_*, see CMakeLists.txt); the other one
+  # is built and dropped by the linker. A Kconfig-conditional dependency rule is not used because
+  # the component requirement is resolved before sdkconfig exists on a fresh configure. The losing
+  # backend is removed from this file when ADR-013 is decided.
+  espressif/esp_lvgl_adapter: "==0.7.4"
+  espressif/esp_lvgl_port: "==2.9.0"
