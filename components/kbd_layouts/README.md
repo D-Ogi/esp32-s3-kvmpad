@@ -6,8 +6,11 @@
 > geometry family, one-keystroke character lookup and a `kvm_uni_key_fn` adapter) and the generator
 > (`tools/kbd_layouts/gen_layouts.py`) are host-tested with fake tables (`test/kbd_layouts`). `generated/` comes from the
 > CI workflow `kbd-layouts` (libxkbcommon needs Linux); until it is committed the component builds with zero layouts and
-> `kvm_uni_key_us` stays the only resolver. Not yet: legend font subsets (TECH-078), the `host_layout` snapshot field,
-> the KEYBOARD view and Settings integration (FR-741/742).
+> `kvm_uni_key_us` stays the only resolver. The legend font subsets (TECH-078,
+> `components/ui_theme/fonts/kvm_font_legend_{24,16,14}.c`), the `host_layout` field of the Settings snapshot and the
+> KEYBOARD view and Settings integration (FR-741/742) are in place: `Settings → Keyboard → Host layout` picks an entry
+> of these tables and the KEYBOARD view draws its legends and geometry family from it, with the HID usage of each key
+> unchanged (FR-743).
 
 **Role:** generated keyboard layout data (ADR-024): for every `layout(variant)` from xkeyboard-config the key → HID usage map,
 legends per level, geometry family (ANSI / ISO / JIS / ABNT2 / KR), IME keys, the character → keystroke reverse index and the

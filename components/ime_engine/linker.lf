@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# The IME engines' static buffers (PinyinIME's 8 KiB prediction buffer, the singletons) go to PSRAM: internal RAM
+# is the scarce resource next to LVGL, TinyUSB and the RGB bounce buffers (sdkconfig.defaults). Only task code
+# touches them, never an ISR.
+[scheme:ime_extram_bss]
+entries:
+    bss -> extern_ram
+    common -> extern_ram
+
+[mapping:ime_engine]
+archive: libime_engine.a
+entries:
+    if SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY = y:
+        * (ime_extram_bss)
+    else:
+        * (default)
