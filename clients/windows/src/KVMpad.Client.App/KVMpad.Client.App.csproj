@@ -1,0 +1,39 @@
+<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+     Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+     Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad) -->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>KVMpad.Client</AssemblyName>
+    <RootNamespace>KVMpad.Client.App</RootNamespace>
+    <AssemblyTitle>KVMpad Client</AssemblyTitle>
+    <!-- x64 only: the Win32 interop below assumes the 64-bit RAWINPUT and CREDENTIAL layouts. -->
+    <Platforms>AnyCPU</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <!-- Required by the LibraryImport source generator, which emits the marshalling stubs for the P/Invokes
+         in Interop/NativeMethods.cs. No hand-written unsafe block exists in this project. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- ADR-025 TECH-084: the version resource carries the notice; GenerateAssemblyInfo maps
+         <Copyright> to LegalCopyright, and AssemblyInfo.cs adds the Required Notice line. -->
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\KVMpad.Client.Core\KVMpad.Client.Core.csproj" />
+  </ItemGroup>
+
+  <!-- The generated host layouts of ADR-024 (TASK-071): the same file the device compiles in, shipped beside
+       the executable and read at run time. Without it the client types nothing and says why (FR-702). -->
+  <ItemGroup>
+    <None Include="..\..\layouts\kbd_layouts.json">
+      <Link>layouts\kbd_layouts.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

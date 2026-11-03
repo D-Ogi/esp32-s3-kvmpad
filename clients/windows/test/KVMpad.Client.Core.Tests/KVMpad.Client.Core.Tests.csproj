@@ -1,0 +1,59 @@
+<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+     Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+     Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad) -->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>KVMpad.Client.Core.Tests</AssemblyName>
+    <RootNamespace>KVMpad.Client.Core.Tests</RootNamespace>
+    <!-- Nothing here touches a real device, a real network service or the user's credential store. The TLS
+         test binds a listener on the loopback interface with a certificate generated inside the test. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\KVMpad.Client.Core\KVMpad.Client.Core.csproj" />
+  </ItemGroup>
+
+  <!-- The native pairing library of ADR-029, built by clients/windows/native (see the README there).
+       Both DLLs are copied next to the test binary so P/Invoke can resolve them by name:
+       kvmpad_pairing.dll is the one the application ships, kvmpad_pairing_test.dll is the fixture that
+       adds the DEVICE state machine and the seeded generator the interop vectors need.
+       They are copied only if present, and the tests that need them say so plainly when they are not,
+       so the managed suite still builds on a machine where the native build has not been run. -->
+  <ItemGroup>
+    <None Include="..\..\native\bin\kvmpad_pairing.dll" Condition="Exists('..\..\native\bin\kvmpad_pairing.dll')">
+      <Link>kvmpad_pairing.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\..\native\bin\kvmpad_pairing_test.dll" Condition="Exists('..\..\native\bin\kvmpad_pairing_test.dll')">
+      <Link>kvmpad_pairing_test.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <!-- The generated host layouts of ADR-024 (TASK-071), the same file the device compiles in. The tests read
+       it exactly as the application does: from layouts/kbd_layouts.json beside the binary. -->
+  <ItemGroup>
+    <None Include="..\..\layouts\kbd_layouts.json">
+      <Link>layouts\kbd_layouts.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <!-- The interop vectors of ADR-029 §5, read by NativePairingTests and compared field by field. -->
+  <ItemGroup>
+    <None Include="..\..\..\..\test\pairing\vectors\*.json">
+      <Link>vectors\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

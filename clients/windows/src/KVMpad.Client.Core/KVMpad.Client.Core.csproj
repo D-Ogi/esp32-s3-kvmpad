@@ -1,0 +1,26 @@
+<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+     Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+     Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad) -->
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <AssemblyName>KVMpad.Client.Core</AssemblyName>
+    <RootNamespace>KVMpad.Client.Core</RootNamespace>
+    <!-- No UI and no NuGet dependency: everything here must be unit-testable on a plain .NET host
+         (ADR-028). Windows UI and window-message code lives in KVMpad.Client.App.
+         The one native dependency is the pairing core of ADR-029, reached through P/Invoke in
+         Pairing/PairingNative.cs; it is loaded by name, so this assembly still loads anywhere and
+         only the pairing path needs the library. -->
+    <!-- Required by the LibraryImport source generator, which emits unsafe marshalling stubs. No
+         hand-written unsafe block exists in this project. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The token-decryption layout and the base64url helper are internal because nothing outside the pairing
+         run may call them; the tests still need to pin their behavior. -->
+    <InternalsVisibleTo Include="KVMpad.Client.Core.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,29 @@
+<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+     Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+     Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad) -->
+<Project>
+
+  <PropertyGroup>
+    <LangVersion>13.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <Deterministic>true</Deterministic>
+    <NeutralLanguage>en-US</NeutralLanguage>
+  </PropertyGroup>
+
+  <!-- ADR-025 / TECH-084: the Required Notice travels with the binary. <Copyright> becomes both
+       AssemblyCopyrightAttribute and the Win32 version-resource field LegalCopyright. -->
+  <PropertyGroup>
+    <Product>KVMpad Client</Product>
+    <Company>D-Ogi</Company>
+    <Authors>D-Ogi</Authors>
+    <Copyright>Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.</Copyright>
+    <PackageLicenseExpression>PolyForm-Noncommercial-1.0.0</PackageLicenseExpression>
+    <VersionPrefix>0.1.0</VersionPrefix>
+  </PropertyGroup>
+
+</Project>
