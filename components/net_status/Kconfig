@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+menu "KVMpad network status (TASK-080)"
+
+    config KVM_NET_CONSOLE_JOIN
+        bool "Bench only: `wifi join` console command (HIL provisioning before the Settings screen exists)"
+        default n
+        help
+            Adds `wifi join <ssid> <password>` to the UART console so a bench unit can be put on a test network
+            before the local Settings screen (TASK-070C) exists. The console echoes what is typed, so the command
+            must be sent only by test/hil/wifi_provision.py, which never writes the exchange to a log. Never
+            enable it in a release build (ADR-015).
+
+endmenu

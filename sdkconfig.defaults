@@ -1,0 +1,161 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# KVMpad — ESP-IDF v6.1, Waveshare ESP32-S3-Touch-LCD-7B (ADR-026; board #1: 16 MiB flash, 8 MiB OPI
+# PSRAM, chip rev v0.2 — measured, hardware/boards.md). Every value differing from the IDF default is
+# listed here; the generated `sdkconfig` is never committed (spec 02 §11.1).
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# ---- Chip / flash / partitions (ADR-009, TECH-051, TECH-081) ----------------------------------
+CONFIG_ESP32S3_REV_MIN_2=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# ---- PSRAM: octal 80 MHz, as in the IDF rgb_panel example for ESP32-S3 (TECH-024: 120 MHz stays off;
+# it is experimental in ESP-IDF and not qualified on this revision) ---------------------------------
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+# Code and rodata executed from PSRAM ("XIP on PSRAM + RGB bounce buffer", the Espressif ESP-FAQ
+# recommendation for RGB panels with Wi-Fi / flash writes). Flash erase/program still stalls PSRAM, so
+# the scan-out may jump for the duration of a flash write (TECH-021; measured by `stress`).
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+# Wi-Fi and LWIP buffers in PSRAM (TASK-080, measured on board #1, 2026-11-02): esp_wifi_init in internal RAM
+# took ~56 KiB and left a 25 KiB lifetime minimum of internal heap next to LVGL, TinyUSB and the RGB bounce
+# buffers. The radio traffic is small next to the scan-out; checked with `stress`.
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# Internal RAM budget (measured on board #1, 2026-11-02: 58 KiB free at idle, 13.7 KiB minimum under `stress`).
+# Diagnostic buffers live in PSRAM (EXT_RAM_BSS_ATTR); mbedTLS (WPA3 SAE now, TLS in TASK-100) allocates
+# from PSRAM; the Wi-Fi driver code runs from PSRAM like the rest (XIP above) instead of IRAM: the IRAM
+# placement only buys throughput, and KVMpad moves a few kB/s over the radio.
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+# CONFIG_ESP_WIFI_IRAM_OPT is not set
+# CONFIG_ESP_WIFI_RX_IRAM_OPT is not set
+
+# ---- Caches (TECH-024, measured on board #1, 2026-11-02) --------------------------------------------
+# With 16 KiB I-cache and a 32 KiB / 32 B D-cache, real 5-finger touch on the touch screen (GT911 reads
+# + drawing, code running from PSRAM) lost 260 of 405 frames in 12 s: the bounce-buffer refill starved
+# on PSRAM. With 32 KiB I-cache and a 64 KiB / 64 B D-cache (64 B lines are what the ESP-FAQ asks for in
+# bounce-buffer mode): 0 of 404 lost, CPU1 load 28 % -> 14 %. Cost: ~49 KiB of internal RAM.
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+
+# ---- RGB LCD (TASK-020) ---------------------------------------------------------------------------
+CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
+# RESTART_IN_VSYNC stays OFF (IDF default). Measured on board #1 (TASK-020, 2026-11-02): with it ON the
+# driver never clears its bounce EOF counter, so one late refill (a long critical section, TECH-021)
+# flips the bounce-buffer parity for good and the picture stays shifted up by one bounce block
+# (10 lines). With it OFF the VSYNC handler resets the counter every frame and restarts the DMA only
+# after a missed EOF, so the scan-out recovers by itself.
+# CONFIG_LCD_RGB_RESTART_IN_VSYNC is not set
+
+# ---- FreeRTOS: 1 ms tick for HID timing, runtime stats for TECH-004 calibration --------------------
+CONFIG_FREERTOS_HZ=1000
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS=y
+CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID=y
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
+
+# ---- Console: UART0 through the CH343 bridge only. The OTG port belongs to the HID device; the
+# ESP32-S3 has 4 usable IN endpoints and 3 are HID (ADR-018) — no CDC, no USB-Serial-JTAG console. ---
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# ---- USB HID (TASK-050 USB part, ADR-018) -----------------------------------------------------------
+CONFIG_TINYUSB_HID_COUNT=3
+
+# ---- GT911 (TECH-014) -------------------------------------------------------------------------------
+CONFIG_ESP_LCD_TOUCH_MAX_POINTS=5
+
+# ---- Diagnostics (TECH-062) -------------------------------------------------------------------------
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y
+
+# ---- Reproducible build (TASK-000: "build clean + reproducible", 05) -------------------------------
+# No date, time or absolute paths in the image: the same tree and toolchain give the same kvmpad.bin
+# whatever the build directory (a clean build in another directory differed before this was set).
+CONFIG_APP_REPRODUCIBLE_BUILD=y
+
+# ---- LVGL 9.6 + ui_platform (TASK-060A, ADR-013 spike) ---------------------------------------------
+# RGB565; lv_malloc() = ui_platform/src/ui_lv_mem.c (ADR-027 TECH-088: LVGL heap in PSRAM, internal
+# RAM only as a fallback); C library string and sprintf;
+# FreeRTOS OS layer, two software draw units (one per core), 16 ms refresh period (the panel scans
+# out at 32.7 Hz, so LVGL renders at most two frames per scan-out period and never below it).
+CONFIG_LV_COLOR_DEPTH_16=y
+CONFIG_LV_USE_CUSTOM_MALLOC=y
+CONFIG_LV_USE_CLIB_STRING=y
+CONFIG_LV_USE_CLIB_SPRINTF=y
+CONFIG_LV_OS_FREERTOS=y
+CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2
+# Draw thread stack: ~1.6 KiB peak per draw unit on board #1 with the bench scenes and the demo (no
+# FreeType / ThorVG, which would need 32 KiB); the LVGL default is 8 KiB each.
+CONFIG_LV_DRAW_THREAD_STACK_SIZE=4096
+CONFIG_LV_DEF_REFR_PERIOD=16
+CONFIG_LV_OBJ_STYLE_CACHE=y
+CONFIG_LV_USE_OBSERVER=y
+CONFIG_LV_USE_SNAPSHOT=y
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_16=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+# TASK-072: the hanzi font in ime_data is a compressed KVMFONT1 blob (version 2), decoded by LVGL per glyph.
+CONFIG_LV_USE_FONT_COMPRESSED=y
+# TASK-060A benchmark only (turned off once ADR-013 is decided): LVGL's own benchmark demo and the
+# performance monitor in log mode (numbers for the summary, no label drawn over the scene).
+CONFIG_LV_BUILD_DEMOS=y
+CONFIG_LV_USE_DEMO_BENCHMARK=y
+CONFIG_LV_USE_SYSMON=y
+CONFIG_LV_USE_PERF_MONITOR=y
+CONFIG_LV_USE_PERF_MONITOR_LOG_MODE=y
+CONFIG_ESP_LVGL_ADAPTER_ENABLE_FPS_STATS=y
+# KVMpad UI platform defaults (components/ui_platform/Kconfig)
+CONFIG_KVM_UI_PLATFORM=y
+CONFIG_KVM_UI_BACKEND_ADAPTER=y
+# ADR-035: DOUBLE_PARTIAL with a 12-line internal strip (DOUBLE_DIRECT starved the bounce refill: 10-line jumps)
+CONFIG_KVM_UI_ADAPTER_TEAR_DOUBLE_PARTIAL=y
+CONFIG_KVM_UI_DRAW_BUF_LINES=12
+CONFIG_KVM_UI_BENCH=y
+CONFIG_KVM_UI_TASK_STACK=12288
+# Wi-Fi / lwIP receive buffers kept small in internal RAM (the board ran on these values through M6/M7; the Kconfig
+# defaults of 16 cost about 30 KiB of internal heap, which the TLS handshakes of OTA and the remote session need).
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=2
+CONFIG_ESP_WIFI_RX_BA_WIN=2
+CONFIG_WIFI_RMT_STATIC_RX_BUFFER_NUM=10
+CONFIG_WIFI_RMT_RX_BA_WIN=6
+CONFIG_LWIP_TCP_OOSEQ_MAX_PBUFS=4
+# ---- Signed OTA (TASK-110, ADR-031 TECH-095/099). No eFuse is programmed: hardware Secure Boot
+# (CONFIG_SECURE_BOOT) stays off and is the operator's decision under ADR-012/TECH-054. -------------
+# The key path is relative to the project directory: ../keys is the workspace, outside the repository
+# (TECH-096). It is the development key; a release build points at the offline release key instead.
+CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y
+CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
+CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
+CONFIG_SECURE_BOOT_SIGNING_KEY="../keys/kvmpad_ota_dev.pem"
+# Dictionary partition updates through the same signed path (TECH-081, TECH-100)
+CONFIG_SECURE_SIGNED_DATA_PARTITION=y
+# PENDING_VERIFY on the first boot of a new image, so the health check can roll back (bootloader
+# rebuild only, no eFuse - see Kconfig.app_rollback)
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+# CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK is deliberately NOT set: it burns the eFuse secure-version
+# field. The anti-rollback comparison lives in components/update_manager instead.
+# TASK-100 secure remote transport (ADR-032): WSS server with pre-handshake auth, per-device certificate,
+# EC-JPAKE pairing (ADR-029; the IDF preset turns ECJPAKE off), TLS 1.3.
+CONFIG_ESP_HTTPS_SERVER_ENABLE=y
+CONFIG_HTTPD_WS_SUPPORT=y
+CONFIG_HTTPD_WS_PRE_HANDSHAKE_CB_SUPPORT=y
+CONFIG_HTTPD_WS_POST_HANDSHAKE_CB_SUPPORT=y
+CONFIG_MBEDTLS_X509_CREATE_C=y
+CONFIG_MBEDTLS_ECJPAKE_C=y
+CONFIG_MBEDTLS_SSL_PROTO_TLS1_3=y

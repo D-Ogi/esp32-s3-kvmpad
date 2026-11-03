@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# KVMpad partition table for the 16 MiB flash measured on board #1 (ADR-009, hardware/boards.md).
+# Never flash this table onto an 8 MiB unit (TECH-051).
+# TECH-051: two OTA slots, NVS, key storage. TECH-081: ime_data shared by both slots; read-only at
+# runtime (written only by update_manager through the signed OTA path, so no `readonly` flag).
+# ADR-033: ime_data holds the pinyin and Japanese dictionaries and the two candidate fonts (7.7 MiB);
+# `spare` (flash stress diagnostic) keeps 128 KiB.
+# Name,     Type, SubType,  Offset,    Size,      Flags
+nvs,        data, nvs,      0x9000,    0x10000,
+otadata,    data, ota,      0x19000,   0x2000,
+phy_init,   data, phy,      0x1B000,   0x1000,
+nvs_keys,   data, nvs_keys, 0x1C000,   0x1000,    encrypted
+ota_0,      app,  ota_0,    0x20000,   0x400000,
+ota_1,      app,  ota_1,    0x420000,  0x400000,
+ime_data,   data, undefined,0x820000,  0x7B0000,
+coredump,   data, coredump, 0xFD0000,  0x10000,
+spare,      data, undefined,0xFE0000,  0x20000,

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+description: "KVMpad touch_input: the single GT911 reader (TASK-030)"
+dependencies:
+  idf: ">=6.1,<6.2"
+  # spec 02 §2: esp_lcd_touch_gt911 1.2.1 (pulls esp_lcd_touch ^1.2.0); exact pin, no wildcard (TASK-000 DoD)
+  espressif/esp_lcd_touch_gt911: "==1.2.1"

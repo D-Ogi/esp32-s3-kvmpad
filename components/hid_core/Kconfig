@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+menu "KVMpad HID core (TASK-050)"
+
+    config KVM_HID_BENCH_PROBE
+        bool "Bench only: `hid probe` console command (wire checks from the HOST side)"
+        default n
+        help
+            Adds `hid probe <keys|rollover|move|chords>` to the UART console. Each probe is a fixed sequence that
+            enters the normal LOCAL path (typed intents -> InputArbiter -> HidScheduler), so the HOST-side capture
+            script test/hil/hid_capture_windows.py can check what really arrives on the wire (AT-HID-02/03/04/06/08,
+            AT-KEY-07). keys / rollover / move are harmless: F13..F24 only (no default action on a desktop) and
+            mouse moves that return to the start point, never a click or a Consumer usage. `chords` acts on the
+            HOST desktop (Alt+Tab and Win+D twice each, Ctrl+Shift+Esc, then an Alt+Tab cut by RELEASE_ALL; never
+            Ctrl+Alt+Del) and is run only with the owner's go-ahead. The probe runs only while the HOST is
+            mounted and nobody else owns the input; it ends with RELEASE_ALL. Never enable it in a release build.
+
+endmenu

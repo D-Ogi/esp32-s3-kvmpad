@@ -16,3 +16,6 @@
 *.elf    binary
 *.pcapng binary
 *.zip    binary
+
+# Vendored AOSP PinyinIME raw dictionary: UTF-16 LE text, kept byte for byte.
+components/ime_engine/pinyinime/data/*.txt binary
