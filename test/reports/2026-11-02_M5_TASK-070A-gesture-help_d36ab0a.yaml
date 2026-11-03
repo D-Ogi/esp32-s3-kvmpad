@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M5 / TASK-070A: the "?" key of the MOUSE view and its gesture help card (owner request 2026-11-02: the touchpad
+# gestures were not described anywhere on the device). Host tests and the simulator only; the firmware image builds,
+# it was not flashed. Format: docs/spec/04 section 12.
+---
+host_common: &host
+  build_sha: "d36ab0a + uncommitted M0-M8 package"
+  board: "none (host only)"
+  host: "Windows 11, llvm-mingw clang (x86_64), real LVGL 9.6.0, ASan + UBSan"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-070A-gesture-help-host
+    <<: *host
+    result: PASS_SW
+    requirement: FR-101..FR-115 (gestures explained), AT-UIFW-08/09
+    steps: |
+      cmake --build ../build-host-views; every test_*.exe in ../build-host-views
+    observed: >-
+      7/7 pass. test_ui_view_mouse 2164 checks, 0 failures; new test_gesture_help: "?" opens UI_OVERLAY_GESTURE_HELP,
+      the overlay is blocking, ui_router_pad_area() is false while it is open (no touch reaches the gesture engine),
+      navigation is refused, a tap on the card body and Close send nothing to the HOST, Close >= 56 px, the card
+      (680x372) fits 1024x600, the pad and the footer work again after Close; teardown with the card open runs
+      on_close; without a bound router "?" is refused and counted; live LVGL allocations back to the baseline.
+      test_ui_app 1065 checks (the shell registers the overlay and dismisses it through UI_ACT_DISMISS_OVERLAY).
+  - test_id: TASK-070A-gesture-help-sim
+    <<: *host
+    result: PASS_SW
+    requirement: AT-UIFW-01/02/04/08/10
+    steps: |
+      cmake --build ../build-sim; ../build-sim/kvm_sim --update-golden
+      python -I -X utf8 simulator/tools/golden_manifest.py --lvgl 9.6.0; ../build-sim/kvm_sim
+    observed: >-
+      kvm_sim PASS, 44 fixtures match their goldens. New fixture mouse_help (step tap_mouse help). Regenerated on
+      purpose: every golden that shows the MOUSE footer (the "?" key at the left), including the cards and Settings
+      drawn over the MOUSE view; KEYBOARD and SHORTCUTS goldens unchanged in content (the CJK goldens rendered with
+      the hanzi and kanji blobs). Live LVGL allocations back to the baseline.
+  - test_id: TASK-070A-gesture-help-board
+    <<: *host
+    result: NOT_RUN_HW
+    requirement: FR-101..FR-115
+    steps: |
+      pwsh -File ../.tools/build.ps1 gesture-help   (kvmpad.bin 0x2c1000 B, 31% of the app slot free)
+    observed: >-
+      Firmware builds. Not flashed: the owner decides when the board is reflashed. Open: open the card on the panel,
+      check legibility at arm's length and that a tap on the card moves nothing on the HOST.

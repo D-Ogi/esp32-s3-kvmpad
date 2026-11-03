@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M5 / ADR-037: one language key on the KEYBOARD view instead of the KO / ZH / JA caps, and the input language list
+# in Settings -> Keyboard (owner decision 2026-11-02). Host tests, the config record and the simulator; the board was
+# not touched. Format: docs/spec/04 section 12.
+---
+host_common: &host
+  build_sha: "d36ab0a + uncommitted M0-M8 package"
+  board: "none (host only)"
+  host: "Windows 11, llvm-mingw clang (x86_64), real LVGL 9.6.0, ASan + UBSan"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: ADR-037-language-key-views
+    <<: *host
+    result: PASS_SW
+    requirement: FR-752, FR-746..748, AT-UIFW-01/08/09
+    steps: |
+      cmake --build ../build-host-views; every test_*.exe in ../build-host-views
+    observed: >-
+      7/7 pass. test_ui_view_keyboard 2699 checks, 0 failures: the cap carries the current code (EN/KO/ZH/JA); a tap
+      cycles only through the languages that Settings turned on and that are usable (a missing decoder, a host-ime
+      delivery mode and a lost HOST are each skipped); English alone shows the toast and switches nothing; a long
+      press opens UI_OVERLAY_KBD_LANG and is not also a tap (SHORT_CLICKED is suppressed once LONG_PRESSED fired);
+      a picker row switches and closes, an unusable row is disabled and names its reason; a language turned off in
+      Settings while active falls back to EN with the usual commit; the composer's TEXT_CANCEL / commit / discard
+      paths are unchanged; without a bound router the long press is refused and counted. test_ui_view_settings 9517
+      checks: the Input languages list reports one typed change per tap under the kbd.lang_ko / kbd.lang_zh /
+      kbd.lang_ja keys, never moves optimistically, shows Unknown before the first publish, and the English row has
+      no control. test_ui_app 1080 checks: the shell forwards the three flags to the view and dismisses the picker
+      through UI_ACT_DISMISS_OVERLAY. Live LVGL allocations back to the baseline in every case.
+  - test_id: ADR-037-language-key-record
+    <<: *host
+    result: PASS_SW
+    requirement: FR-752, FR-736 (migration never relaxes), TECH-082
+    steps: |
+      cmake --build ../build-host-config; test_config_record.exe; test_config_store.exe
+    observed: >-
+      config_record 2068 checks, 0 failures; config_store 669 checks, 0 failures. Record schema 3, fixed payload
+      44 bytes: the three language bytes are 0..1 with default 0, a value outside the range is repaired to the
+      default and reported in the field mask. A schema-2 record (41-byte payload) loads as MIGRATED with the three
+      languages off, its pairing entries intact, and is byte-for-byte equal to a schema-3 record with the languages
+      off; it is written back as schema 3. The alignment bytes before the pairing table are named (reserved[5]) and
+      zeroed by kvm_config_validate(), so a validated record is canonical.
+  - test_id: ADR-037-language-key-sim
+    <<: *host
+    result: PASS_SW
+    requirement: AT-UIFW-01/02/04/08/09/10
+    steps: |
+      cmake --build ../build-sim; ../build-sim/kvm_sim --update-golden
+      python -I -X utf8 simulator/tools/golden_manifest.py --lvgl 9.6.0; ../build-sim/kvm_sim
+    observed: >-
+      kvm_sim PASS, 45 fixtures match their goldens (44 before). New fixture keyboard_lang_picker (lang_ko / lang_zh /
+      lang_ja on, step tap_lang then hold_lang) shows the picker with Korean current and the two decoder-less rows
+      disabled with their reason; settings_keyboard now also shows the Input languages list. keyboard_ko, keyboard_zh,
+      keyboard_ja and keyboard_ja_flick reach their layer with the new step tap_lang instead of tap_key KO/ZH/JA; the
+      CJK goldens rendered with the hanzi and kanji blobs, so they compare rather than skip. Regenerated on purpose:
+      every golden that shows the KEYBOARD utility row. The whole set was rewritten in one --update-golden pass, so
+      settings_about also carries the TASK-071 section added to THIRD_PARTY_NOTICES.md, which Settings -> About
+      renders at build time (ADR-025 FR-751); the verification run matches all 45 against that content. AT-UIFW-01 clean on all 45 (no cap under 44 px, no overlap,
+      nothing outside 1024x600); AT-UIFW-02 2000 view switches with live allocations 2884 -> 2884 and observers
+      11 -> 11; AT-UIFW-10 200 open/close cycles 2468 -> 2468; run ends at the allocation baseline (133).
+  - test_id: ADR-037-language-key-board
+    <<: *host
+    result: NOT_RUN_HW
+    requirement: FR-752, FR-746, FR-747
+    steps: |
+      pwsh -File ../.tools/build.ps1 lang-key
+    observed: >-
+      BLOCKED on a file outside this change: components/kbd_layouts/generated/kbd_layouts_data.c:19 fails with
+      -Werror=unterminated-string-initialization (14359 chars into 14358 available). That directory is untracked
+      in-flight work of the layout generator task. A ninja -k 0 run over the whole tree under the ESP-IDF v6.1
+      environment reports that object as the only failure, so every file of this change compiles for the target
+      (ui_views, config_store, main/ui_shell.c, main/app_config.c); only the link is blocked. Not flashed. Open on
+      the board: turn Korean / Chinese / Japanese on in Settings, cycle with the key, hold it for the picker, and
+      confirm that a switch while a key is held releases that key on the HOST.

@@ -1,0 +1,169 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M7 / TASK-100: secure remote transport (ADR-032 PROPOSED) wired into the firmware (main/remote_glue.c), the DEVICE
+# pairing and control-approval prompts (ui_views), and the first board run over the LAN. Settings -> Remote stays
+# off (the default) and the owner's approval policy is unchanged (pair.require_accept=1, control.approval=2), so
+# every check below stops at the admission: no pairing, no token, no HID from the network.
+# Format: docs/spec/04 section 12. Raw logs are in ../evidence/hardware/ (SHA-256 below).
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M8 package"
+  board: "#1 ESP32-S3-Touch-LCD-7B, rev v0.2, 16 MB flash, 8 MB PSRAM (hardware/boards.md)"
+  firmware: "m7-remote-3 (0x20f420 B, 49% of the app partition free), IDF v6.1, espressif/mdns 1.14.1"
+  host_pc: "Windows 11 on the same LAN, several virtual adapters (Hyper-V, VMware) besides the LAN one"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-100-firmware-build
+    <<: *common
+    result: PASS
+    steps: |
+      pwsh -NoProfile -File ../.tools/build.ps1 m7-remote-2pre
+      pwsh -NoProfile -File ../.tools/flash.ps1 m7-remote-2
+      pwsh -NoProfile -File ../.tools/flash.ps1 m7-remote-3
+    observed: >-
+      exit=0, -Werror. remote_protocol and secure_remote are off EXCLUDE_COMPONENTS; main/remote_glue.c maps the
+      transport hooks onto hid_dispatch (REMOTE origin, sync request/grant, release that reads the new epoch), config_store
+      (paired register, policy) and NVS (identity). Two flashes = two resets in this run; boot_count 212 -> 214, no other
+      reset (reset_reason 1 after each flash).
+  - test_id: TASK-100-console-status
+    <<: *common
+    result: PASS_HW
+    steps: |
+      python -I test/hil/kvm_serial.py cmd --name m7-remote-status "remote status"
+    observed: >-
+      REMOTE running=1 port=8443 remote_enabled=0 require_accept=1 approval=2 mdns=1; device=KVMpad-229C,
+      cert_sha256=02c421d2...acdd233 (public pin), cert_len=390; every admission counter 0 at boot; LINK running=1
+      enabled=0 sessions 0/0. No code, token or payload is printed by the command.
+    evidence:
+      - {file: 20261102-103801-m7-remote-status.log, sha256: c57b2e4c6995d248300608b5036cb5710ccb4e5d82ab925945ac04392f191dee}
+      - {file: 20261102-104237-m7-remote3-status.log, sha256: c57b2e4c6995d248300608b5036cb5710ccb4e5d82ab925945ac04392f191dee}
+  - test_id: TASK-100-tls-pin
+    <<: *common
+    result: PASS_HW
+    steps: |
+      python -I test/hil/remote_probe.py tls --host <device> --expect-sha256 <console cert_sha256>
+    observed: >-
+      TLSv1.3, TLS_AES_256_GCM_SHA384, handshake about 550 ms; subject = issuer = CN=KVMpad-229C, P-256 key, validity
+      2026-01-01..2076-01-01; the SHA-256 of the presented certificate equals the console pin, before and after a reset
+      (the identity is loaded from NVS, not regenerated).
+    evidence:
+      - {file: 20261102_104026_m7_tls.log, sha256: 2ffe29e7c2d3af557add3e3597077422be371b23619cde4d02c964dcacc56b22}
+      - {file: 20261102_104254_m7r3_tls.log, sha256: d886f34be6c001f1c79b868070783d0fa0ff0c070c10eb0a94eda8a25fb13ca3}
+  - test_id: TASK-100-admission-refusals
+    <<: *common
+    result: PASS_HW
+    steps: |
+      python -I test/hil/remote_probe.py admit --host <device>
+    observed: >-
+      /v1/ws without a token -> 403; /v1/ws with a well-formed unknown bearer -> 403 (Remote off is checked first,
+      ADR-032 §2); /v1/ws and /v1/pair without the subprotocol -> 400 (ADR-032 §2a); /v1/pair with no window -> 403;
+      unknown URI -> 404. Upgraded: 0. Device counters afterwards: forbidden=3, conns opened 0/0.
+    evidence:
+      - {file: 20261102_104034_m7_admit.log, sha256: 0b02efc0a24b97232734635c2464d225c1f112171ae7c99ddc442641ec8742ce}
+      - {file: 20261102-104046-m7-after-probes.log, sha256: 0dc9c67ef18f4ab8f74fa36ae24e1bdd0f2ffe5ef509f156943c98e94a75b1a7}
+  - test_id: TASK-100-no-plain-listener
+    <<: *common
+    result: PASS_HW
+    steps: |
+      python -I test/hil/remote_probe.py plain --host <device>
+    observed: >-
+      tcp/80, 81, 8000, 8080: no connection. Plain HTTP sent to 8443 gets no HTTP answer (0 bytes). There is no ws://
+      listener in this build (TECH-040).
+    evidence:
+      - {file: 20261102_104045_m7_plain.log, sha256: cae6ca4b20ff5ab6ed1d99bb69b7e01c4f89d2ca41de27b0d3b68bc7b181ce23}
+  - test_id: AT-EXT-mdns-discovery
+    <<: *common
+    result: PASS_HW
+    steps: |
+      python -I test/hil/remote_probe.py mdns --iface <LAN address> --multicast
+      python -I test/hil/remote_probe.py mdns --iface <LAN address>
+    observed: >-
+      PTR _kvmpad._tcp.local -> KVMpad-229C._kvmpad._tcp.local, SRV port 8443 target KVMpad-229C.local, TXT
+      "pair=0 v=1 name=KVMpad-229C", A = the device address, plus the DNS-SD _services entry; answered both to a
+      multicast query and to a QU (unicast-response) query (FR-723, SEC-103: pair=0 with no window).
+    defect_found_and_fixed: >-
+      On m7-remote-2 the responder never left probing: the glue task re-set the TXT record every 200 ms, and in
+      espressif/mdns 1.14.1 every TXT update restarts a probe (mdns_pcb.c, mdns_priv_pcb_announce) and, once running,
+      sends a fresh announcement. Only probe packets (flags 0, authority section) were seen, several per second, and
+      no PTR answer. main/remote_glue.c now updates the pair= flag only when the window opens or closes.
+    evidence:
+      - {file: 20261102_103822_m7_mdns.log, sha256: 0bbc075f438c87e423fd59a4ab0aeb5622b8db114ea403a4ae8882dddf899277, note: "m7-remote-2, before the fix: 0 instances"}
+      - {file: 20261102_104244_m7r3_mdns.log, sha256: a0feadbe75456599f8473944cc901f2cf82d9196d29b075ed6bb28609669e5a7}
+      - {file: 20261102_104249_m7r3-qu_mdns.log, sha256: e065e11503ca2e4294c737bc30d9efecd394c08935cdca5619a01c373b325517}
+  - test_id: TASK-105-live-device
+    <<: *common
+    result: PASS_HW
+    steps: |
+      set KVMPAD_LIVE_HOST=<device> and KVMPAD_LIVE_PIN=<console cert_sha256>
+      dotnet test clients/windows/KVMpad.Client.sln -c Release --no-build --filter FullyQualifiedName~LiveDeviceTests
+    observed: >-
+      The shipping CLIENT code against the board, 3/3 passed: MdnsBrowser finds the device with port 8443, v=1 and
+      pair=0; ClientWebSocketTransport with the right pin completes TLS and gets 403 from the admission (pinner raised
+      no failure); a wrong pin is refused by the pinner before any request. Without the two variables the three tests
+      are skipped, so `dotnet test` stays offline (278 passed, 3 skipped).
+    defect_found_and_fixed: >-
+      MdnsBrowser joined the group on INADDR_ANY and sent the query through the default multicast interface, which on
+      this PC is a virtual adapter: 0 devices found. It now joins and sends on every IPv4 interface that is up.
+    evidence:
+      - {file: 20261102-m7r3-client-live-tests.log, sha256: ebfbb7e1424f54a96376f3d370e55e0caddee4c0a8208e85edc974e829410975}
+  - test_id: TASK-100-ui-client-card
+    <<: *common
+    result: PASS_HW
+    steps: |
+      python -I test/hil/kvm_serial.py cmd "ui open client"; ... cmd "ui snap 2"; ... cmd "ui close"
+      python -I test/hil/ui_snapshot.py <capture> m7r3_client_card.png
+    observed: >-
+      The CLIENT card on the board matches the pair_unavailable golden: client session Off, Wi-Fi Connected,
+      "Pair a client" disabled with the line "Pairing needs remote switched on and a Wi-Fi link" (SEC-106). The
+      top-bar CLIENT indicator reads Off: it is now projected from the transport (Off / network down / listening /
+      connecting / connected / control granted, the last one from the arbiter's owner), no longer fixed to DISABLED.
+      Opening the card is a local action; no HID was sent.
+    evidence:
+      - {file: 20261102-104407-m7r3-snap-client.log, sha256: 86942b82da3df5c2f5cc089d65344e83103e2e05a10ea0483b0d146f7abdbdb2}
+      - {file: m7r3_client_card.png, sha256: 176cb90f90534aec9efff725693a11fe7201f3572c2499971ee509268f78deff}
+  - test_id: TASK-100-ui-host
+    <<: *common
+    result: PASS_SW
+    steps: |
+      ctest --test-dir ../build-host-views ; ../build-host-uicomp ; ../build-host-nav ; ../build-sim
+    observed: >-
+      views 6/6 (test_ui_remote_view 212 checks, test_ui_app 1038), uicomp 4/4, nav 1/1, simulator 29/29 goldens.
+      The integrator fixed one layout defect before accepting: the two prompt buttons were 2 px wider than the card's
+      content box (the card border was not subtracted), so the end-aligned row clipped the left button's border;
+      approval_prompt, pair_accept and pair_code goldens were regenerated and the manifest rebuilt.
+  - test_id: TASK-100-heap
+    <<: *common
+    result: PASS_HW
+    observed: >-
+      Internal heap free 83.9-84.4 KB through the run (minimum since boot 45.4 KB), unchanged after 10+ TLS sessions;
+      PSRAM minimum 2.12 MB. The internal margin is the tightest resource of the build and is watched as a risk.
+    evidence:
+      - {file: 20261102-104638-m7r3-final.log, sha256: 262032449c56a579fcc714c43b9c815a4b2025601510ce0ff049bf2568e92d39}
+  - test_id: TASK-100-o2-build
+    <<: *common
+    result: PASS_SW
+    build_sha: "d36ab0a + uncommitted package, evening of 2026-11-02"
+    steps: |
+      idf.py -B ../build-perf "-DSDKCONFIG=../build-perf/sdkconfig" build   (CONFIG_COMPILER_OPTIMIZATION_PERF, -O2)
+      ninja -C ../build-perf -k 0
+      hosttest: build-host-pairing (4/4), build-host-views (7/7), build-host-ui (3/3)
+    observed: >-
+      The firmware had only been built with -Og. The -O2 build stopped on five -Werror diagnostics. One is a real
+      defect: kvm_pair_handle_confirm (and the other inbound pair.* handlers) did not refuse a NULL `out` although
+      they write the reply into it; the helpers treat `out` as optional, so a NULL `out` reached out->blob. All four
+      inbound handlers now return KVM_PAIR_ERR_ARG for a NULL `out` before touching the session (header documents
+      it; test_pairing_session checks all four and that the window stays closed). The other four were not defects:
+      an array zh_fixed() leaves unwritten when nothing is fixed (now zero-initialized) and three bounded strncpy
+      copies into zeroed buffers (now snprintf). Both builds are clean afterwards; host suites pass. The production
+      optimization level itself (TECH, drift on the RGB panel per the vendor FAQ) is decided on the board, not here.
+not_run_hw:
+  - id: AT-EXT-pairing-device
+    reason: "Needs the owner: Settings -> Remote on, Pair a client on the board, the code typed into the CLIENT, Accept tapped."
+  - id: AT-EXT-control-approval
+    reason: "Needs a paired CLIENT and an Allow tap on the board (control.approval=2 left as configured by the owner)."
+  - id: AT-CONN-remote-stuck-keys
+    reason: "RELEASE_ALL on a remote session loss with keys held needs a granted session (follows the two rows above)."
+  - id: TECH-042-cooldown-hw
+    reason: "The 401 cooldown needs Remote on; covered on the host (secure_remote auth suite)."

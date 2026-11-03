@@ -1,0 +1,78 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M5 / TASK-060B: UI contracts, bounded state mailbox, LVGL Subjects store, typed action gateway
+# (components/ui_core), firmware wiring (main/ui_glue.c) and the LVGL heap in PSRAM (ADR-027 TECH-091,
+# components/ui_platform/src/ui_lv_mem.c). Format: docs/spec/04 section 12. Raw logs in ../evidence/.
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M5 package"
+  hardware: "Waveshare ESP32-S3-Touch-LCD-7B (ADR-026), board unit #1"
+  usb_host_os: "Windows 11 Pro 10.0.26200"
+  idf: "v6.1"
+  lvgl: "9.6.0~1"
+  host_toolchain: "llvm-mingw 20261020 clang (ucrt x86_64), CMake 4.0.3, Ninja 1.12.1; ASan (LVGL + project) and UBSan (project)"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-060B-host
+    <<: *common
+    result: PASS
+    steps: |
+      cmake -S test/ui_store -B ../build-host-ui -G Ninja -DCMAKE_C_COMPILER=clang
+      cmake --build ../build-host-ui && ctest --test-dir ../build-host-ui --output-on-failure
+    observed: >-
+      3/3 suites passed: test_ui_mailbox 28052 checks 0 failures (4 seeds x 20000 random publish/take/event operations
+      converge to the model), test_ui_actions 1131 checks 0 failures, test_ui_store 90 checks 0 failures (LVGL 9.6.0
+      headless 1024x600). 10000 create/bind/delete cycles: live LVGL allocations 110 -> 110, bytes 10571 -> 10571,
+      160003 observer calls; each test leaves the LVGL heap unchanged. The first text render keeps one long-lived LVGL
+      renderer allocation (96 -> 97), measured and excluded by a warm-up before the baseline. Regression: test/host_unit
+      10/10 passed.
+  - test_id: TASK-060B-build
+    <<: *common
+    result: PASS
+    observed: "kvmpad.bin 0x19f710 B (59 % of the app partition free), 0 warnings in project code; sha256 c6c03d9ecc382be23f6c3140bf8c65c38123557a3f2ec91b324577df3a326c64"
+    evidence:
+      - "evidence/build/m5-060b-2.log sha256=57d8522f9f50fe3be8cf8c16eebdbfb440b645b91a2b5aae5fd802b94fafd7be"
+      - "evidence/hardware/m5-060b-2.log sha256=86bc305fe3356d7971d788481f1b4d98bed17d304eceb96d9a912af8661e1cc8 (flash, hash verified)"
+    issues:
+      - "First build attempt (m5-060b-1) failed on broken string literals introduced while editing kvm_console.c; fixed before m5-060b-2."
+  - test_id: TASK-060B-board
+    <<: *common
+    result: PASS
+    firmware_sha256: "c6c03d9ecc382be23f6c3140bf8c65c38123557a3f2ec91b324577df3a326c64"
+    steps: "kvm_serial.py cmd: ui store; ui bench idle|small|full|scroll 10; ui store; ui demo; ui store; ui snap 4"
+    observed: >-
+      Store chain live: version=3 sources=0x7 host="Active" owner="None" epoch=0 caps=off client="Off" wifi=no touch=ok
+      drag_lock=unknown (gesture source not live yet: shown as unknown, not guessed). Mailbox 6035 publishes, 3 applied,
+      6032 coalesced as unchanged, 0 stale, 0 invalid; store applied 2 snapshots over 2246 UI ticks. LVGL heap in PSRAM:
+      302 live blocks / 14.8 KB at idle, 1028 / 46.4 KB with the scroll scene, back to 315 / 15.2 KB after the LVGL demo,
+      0 internal fallbacks. Internal heap free after start 126.6 KB (TASK-060A DOUBLE_DIRECT: 112.0 KB); lifetime minimum
+      87.7 KB including the LVGL demo (TASK-060A: 7.8 KB). Rendering unchanged: small 32.74 fps / 27.8 ms, full 8.27 fps /
+      119.4 ms, scroll 32.78 fps; LVGL demo 11 fps, render 81 ms (TASK-060A: 73 ms, objects now in PSRAM), flush 19 ms.
+      `ui demo` now restores the KVMpad scene; the snapshot after it has hash 08E610BB, identical to the idle scene
+      captured before the change (evidence/hardware/20261102-055315-restore-idle.log).
+    evidence:
+      - "evidence/hardware/20261102-061009-m5-060b-session.log sha256=41600365811b7a7775ff4ade3eb909a446d3571a073f10aa7c683d0c313be03e"
+      - "evidence/hardware/20261102-061009-m5-060b-session.png sha256=332ba8efe09e3b37f01b2a9107897c26d8628db4d1eda20794cd310379e7ba7d"
+      - "evidence/hardware/20261102-055238-white-check.log sha256=e52b74ca3876c36e405859313e055ca95d9d2bca53d97fd555e3d1970262b28f (owner report 'white screen': LVGL itself rendered an empty light-theme screen left by the LVGL demo; panel at 32.746 Hz)"
+      - "evidence/hardware/20261102-055315-restore-idle.log sha256=d038d573bd821c23eb65ef0e8ad488f39aff297a5627fc0616af8140942c7e2d"
+  - test_id: AT-UIFW-02
+    <<: *common
+    result: PASS_SW
+    observed: "store level: 10000 bind/delete cycles, zero live-allocation growth. Screen switching through the router belongs to TASK-060C."
+    hw: NOT_RUN_HW
+  - test_id: AT-UIFW-03
+    <<: *common
+    result: PASS_SW
+    observed: "random erroneous / late / duplicate publishes and lost events converge to the last accepted domain state (mailbox and store)"
+    hw: PARTIAL   # live chain shown with `ui store`; no injected owner changes on the board
+  - test_id: AT-UIFW-09
+    <<: *common
+    result: PASS_SW
+    observed: "observers bound to widgets detach on delete; store deinit with live widgets, then widget delete: no use-after-free under ASan"
+    hw: NOT_RUN_HW
+not_run:
+  - id: AT-UIFW-01, 04, 05, 07 (full), 08, 10
+    reason: "need the router (060C), touch bridge (060E) and views (070A-D)"
+board_resets_today: "25 (one flash in this task)"

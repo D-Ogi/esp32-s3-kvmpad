@@ -1,0 +1,274 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M5 / TASK-071 (second half): Settings -> Keyboard -> Host layout (FR-741), the KEYBOARD view drawing its legends
+# and geometry family from the generated kbd_layouts tables (FR-742, FR-743), and the legend font subsets of those
+# tables (TECH-078). Format: docs/spec/04 section 12.
+---
+common: &common
+  build_sha: "ba5164a + uncommitted TASK-071 host-layout package"
+  board: "#1 ESP32-S3-Touch-LCD-7B, rev v0.2 (not used: no step below touched the board)"
+  firmware: "build-hostlayout, kvmpad.bin 0x321000 B (3280896), 22% of the app partition free"
+  when_utc: "2026-11-03"
+reports:
+  - test_id: TASK-071-keyboard-legends-host
+    <<: *common
+    result: PASS_SW
+    requirement: FR-742, FR-743
+    steps: |
+      cmake --build ../build-host-views && ctest --test-dir ../build-host-views --output-on-failure
+    observed: >-
+      7/7 executables pass (mouse, keyboard, shortcuts, status, remote, settings, app), 34.1 s.
+      test_ui_view_keyboard adds host-layout cases that walk every drawn legend of us, de, fr, jp, br, ru and a
+      script with no glyph, and compare each one against the table entry of that slot: a legend is accepted only
+      when it is the table's string or the U+FFFD fallback. Separate cases cover the geometry families
+      (ANSI without LSGT, ISO with LSGT and the ISO Enter, JIS with Yen / Ro / Muhenkan / Henkan / Kana, ABNT2,
+      KR Han/Eng and Hanja), that every slotted cap owns exactly one slot (55 caps), that a tap still sends the
+      usage of the table slot and not one derived from the legend (FR-743), that an id the tables do not have
+      changes nothing, and that setting a layout before the view exists is a no-op.
+  - test_id: TASK-071-settings-picker-host
+    <<: *common
+    result: PASS_SW
+    requirement: FR-741
+    steps: |
+      ctest --test-dir ../build-host-views --output-on-failure   # test_ui_view_settings
+      ctest --test-dir ../build-host-config ; ctest --test-dir ../build-host-kbd
+    observed: >-
+      test_ui_view_settings passes with the new cases: the row is read-only (no control at all) when the snapshot
+      reports no layout database; the picker lists the 96 layout groups six to a page with a page counter and
+      enabled/disabled Prev and Next; a row with variants opens the second level and Back returns to the first;
+      a pick reports UI_SETTING_HOST_LAYOUT with the table index and changes nothing on screen until the domain
+      republishes (AGENTS-UI MUST 5); the picker closes if the database disappears; an id the tables do not have
+      keeps its own text and gets no name invented. config_store 2/2 and kbd_layouts 2/2 also pass.
+    note: >-
+      No config_store schema bump was needed: schema 3 already carries host_layout[16] with its validation,
+      repair and kvm_config_store_set_layout(). Only main/app_config.c (app_config_set_layout) and
+      main/ui_shell.c (UI_SETTING_HOST_LAYOUT -> kbd_layouts_at(index)->id, layout_db_available) were added.
+  - test_id: TASK-071-simulator
+    <<: *common
+    result: PASS_SW
+    requirement: FR-741, FR-742, TECH-078, AT-UIFW-01, AT-UIFW-09, AT-UIFW-10
+    steps: |
+      cmake -S simulator/lvgl_sdl -B ../build-sim -G Ninja -DCMAKE_C_COMPILER=clang && cmake --build ../build-sim
+      ../build-sim/kvm_sim.exe            # SetErrorMode(0x8003) first, so a missing DLL opens no window
+      python -I -X utf8 simulator/tools/golden_manifest.py --lvgl 9.6.0
+    observed: >-
+      kvm_sim PASS, 54 goldens (9 new), 0 too_small, 0 overlapping, 0 outside the panel, 0 hidden object reached,
+      live allocations 133 -> 133, AT-UIFW-10 200 open/close cycles 3039 -> 3039, AT-UIFW-02 2000 view switches
+      3455 -> 3455. New fixtures: keyboard_layout_us (ANSI), _de (ISO, LSGT, ISO Enter), _fr (AZERTY, AltGr
+      legends), _jp (JIS), _br (ABNT2), _ru (Cyrillic from the legend font), settings_host_layout (first level),
+      settings_host_layout_variants (second level), settings_host_layout_page (paged on). Every changed PNG was
+      looked at.
+    defect_found_and_fixed: >-
+      Four defects were found by looking at the images and the checks, and fixed. (1) The legend fonts were handed
+      out as the theme's TITLE/BODY/LABEL fonts with Montserrat as their fallback, which redrew every Latin glyph
+      in the whole UI in Noto Sans (all 45 goldens changed); the chain is now the other way round, so only glyphs
+      Montserrat lacks come from Noto and no unrelated golden moves. (2) The picker labels used
+      lv_label_set_text_static() with LV_LABEL_LONG_MODE_DOTS, which LVGL refuses (10 warnings per Settings
+      build); they now own their text. (3) "Muhenkan" and "Han/Eng" were clipped on their caps; those caps are
+      wider now. (4) The Host layout note duplicated the row's own description and spilled out of the pane; it is
+      hidden when the picker is available, and the picker's footer hint is one short line.
+      One simulator check was corrected: sim_check_hidden() probes a hidden object by pressing its centre, which
+      may legitimately activate the visible control underneath; when that control closed the picker, the rest of
+      the list was no longer hidden and the check reported six false positives. The check now re-tests the
+      hidden branch immediately before each probe.
+  - test_id: TECH-078-legend-fonts
+    <<: *common
+    result: PASS_SW
+    requirement: TECH-078, ADR-025
+    steps: |
+      python -I tools/fonts/gen_legend_font.py --font <NotoSans-Regular.otf in ../.tools> \
+        --lv-font-conv <lv_font_conv 1.5.3 in ../.tools> \
+        --codepoints components/kbd_layouts/generated/legend_codepoints.txt --out-dir components/ui_theme/fonts
+      python -I tools/check_license_headers.py ; python -I tools/verify_spec_manifest.py
+    observed: >-
+      882 of the 956 legend code points are in Noto Sans (Latin-1, Latin Extended A/B, IPA, spacing modifiers,
+      combining diacritics, Greek, Cyrillic) and are rasterized at 24 / 16 / 14 px, 4 bpp. The 74 that are not
+      (arrows U+2190..2193, a few technical and mathematical symbols) are drawn as U+FFFD, which the host test
+      accepts as a legend only for exactly those code points. Sizes in the image: kvm_font_legend_24/16/14
+      114582 + 66066 + 55638 = 236286 B, kbd_layouts_data 173074 B, together 409360 B = 0.39 MiB of the
+      1.5 MiB budget. check_license_headers 500 files, 0 missing, 0 unlisted; verify_spec_manifest 12/12.
+    note: >-
+      The font is pinned by SHA256 (notofonts/latin-greek-cyrillic tag NotoSans-v2.015,
+      bfb44de2...d5c21b) and downloaded under ../.tools, never into the repository or onto C:. Noto Sans and
+      lv_font_conv 1.5.3 are recorded in THIRD_PARTY_NOTICES.md with OFL-NotoSans.txt.
+    defect_found_and_fixed: >-
+      lv_font_conv writes each glyph's code point as a literal character in its comment, so the generated files
+      carried unpaired bidirectional controls (U+202A..U+202E, U+2066..U+2069) and the xtensa GCC build failed
+      with -Werror=bidi-chars. The generator now writes those code points as <U+XXXX>; no glyph data changes.
+  - test_id: TASK-071-firmware-build
+    <<: *common
+    result: PASS_SW
+    steps: |
+      . ../.tools/idf-env.ps1
+      idf.py -B ../build-hostlayout -D SDKCONFIG=../build-hostlayout/sdkconfig build
+      idf.py -B ../build-hostlayout ... size-files
+    observed: >-
+      Builds clean for the ESP32-S3 with ESP-IDF v6.1. kvmpad.bin 0x321000 B (3280896); the last image of the
+      2026-11-02 package was 2887680 B, so the step is +393216 B, which matches the 409360 B the tables and the
+      three fonts contribute (the linker shares some alignment). 22% of the 0x400000 app partition is free.
+      The board was not flashed and COM3 was not opened.
+  - test_id: ADR-039-picker-host
+    <<: *common
+    result: PASS_SW
+    requirement: FR-741, ADR-039
+    steps: |
+      cmake --build ../build-host-views && ctest --test-dir ../build-host-views --output-on-failure
+      ../build-host-views/test_ui_view_settings.exe
+    observed: >-
+      7/7 executables pass, 41.3 s; test_ui_view_settings 10984 checks, 0 failures. The picker now opens on its
+      home screen, so the five earlier cases reach the list through "All layouts" and Back walks the screens out
+      one at a time. New cases: the home screen names the layout in force and draws 11 home-row legends, shows
+      the favorites in the record's order and the recents newest first with a pinned one left out, and a tap on
+      a tile or a chip reports that layout's table index; the star reports UI_SETTING_HOST_FAV_TOGGLE for the
+      entry its row names and leaves the picker open; a long press on a tile reports the same for that tile and
+      does not apply the layout; with eight pinned, a ninth is refused with a note and nothing reported, while
+      unpinning one of the eight still works; the search screen matches a name ("pol" finds Polish) and an id
+      ("de" leads with German), the erase key takes one character back, a query nothing matches says "0 found"
+      and offers no row, and a result applies like any other row; a favorite or recent whose id the tables no
+      longer resolve is skipped while the rest of the screen keeps working; the A-Z strip jumps the list and an
+      empty bucket is disabled.
+    defect_found_and_fixed: >-
+      Every control of the home screen was unreachable whenever a favorite existed. The rows container of the
+      list is a sibling that takes the height it is given even with every row hidden, so the home column was laid
+      out shorter than its content and its lower children sat past the parent's edge - where LVGL's touch search
+      never goes, because it does not enter a parent the point lies outside of. They were drawn clipped and took
+      no touch at all. The list container is now hidden on the home screen, the two buttons of the home share the
+      row's width instead of each claiming a fixed one, the index strip lies across the top of the rows rather
+      than down the side (nine buckets at the 44 px floor are 396 px, more than the pane is tall), and the number
+      of rows is measured against the pane before every draw, so a page is as long as there is room for. The
+      AT-UIFW-01 probe of the test now checks every clickable control for containment in each of its ancestors,
+      not only in the card, and runs over all four picker screens; it is what caught the last two cases.
+  - test_id: ADR-039-list-algebra-host
+    <<: *common
+    result: PASS_SW
+    requirement: FR-741, ADR-039 section 9
+    steps: |
+      cmake --build ../build-host-config && ctest --test-dir ../build-host-config --output-on-failure
+    observed: >-
+      2/2 pass. The ordering, the deduplication and the two limits are kvm_config_pin_toggle() and
+      kvm_config_recent_push() in config_store, next to the record and within reach of the host tests; the new
+      cases cover pinning in order, unpinning without disturbing the rest, the refusal of a ninth favorite with
+      the record untouched, the refusal to unpin the last one, a malformed or NULL id, the recents newest first,
+      the move to the head instead of a duplicate, the sixth push dropping the oldest, and an id the tables no
+      longer have being kept as a valid id. The schema-3 to schema-4 migration and the record-level setters were
+      already covered; they still pass unchanged.
+  - test_id: ADR-039-simulator
+    <<: *common
+    result: PASS_SW
+    requirement: FR-741, ADR-039, AT-UIFW-01, AT-UIFW-09, AT-UIFW-10
+    steps: |
+      cmake --build ../build-sim
+      ../build-sim/kvm_sim.exe --update-golden   # then a plain run to compare
+      python -I simulator/tools/golden_manifest.py
+    observed: >-
+      PASS over 58 goldens, live LVGL allocations 133 at the end against a baseline of 133. Three new fixtures
+      and goldens: settings_host_layout_home (the layout in force with its home row, eight tiles, three chips),
+      settings_host_layout_search (the query "de", the picker's own keyboard, the matches) and
+      settings_host_layout_star (the list with the A-Z strip, one bucket jump, and the refusal of a ninth
+      favorite). settings_host_layout now shows the home screen with both lists empty and their hints, and
+      settings_host_layout_variants reaches the variant level through the list and the D-F bucket. The fixture
+      language gained layout_fav / layout_recent and the steps layout_all, layout_search, layout_type,
+      layout_star, layout_pick_fav, layout_pick_recent, layout_index, hold_quick and quick_pick. The
+      keyboard_quick_layout golden holds the ADR-039 section 8 card over the KEYBOARD view: three pinned
+      layouts, the two recents that are not pinned, and "de" marked as the one in force. Every keyboard
+      golden now shows the strip in its new form at the end of the utility row (keyboard_layout_de: the
+      keyboard icon, "DE" and the chevron, ending inside the panel).
+  - test_id: ADR-039-quick-switch-host
+    <<: *common
+    result: PASS_SW
+    requirement: FR-741, ADR-039 section 8, AT-UIFW-01
+    steps: |
+      cmake --build ../build-host-views
+      ctest --test-dir ../build-host-views --output-on-failure
+    observed: >-
+      7/7 suites pass. Four new tests in test_ui_view_keyboard: a long press on the layout strip opens the
+      card and a short tap does not; the tiles are the favorites in order then the recents that are not
+      pinned, with the layout in force marked and still tappable; one tap reports UI_SETTING_HOST_LAYOUT with
+      the table index of the chosen entry, closes the card and applies nothing (the field still shows what the
+      record published), and no key or modifier action leaves the view; Close and a router dismiss change
+      nothing and the view forgets its tiles; no sink, an empty list and ids the tables do not ship each open
+      no card and are counted; and AT-UIFW-01 on the card - every tile at least 44 px, inside the card and the
+      panel, with its center inside each of its ancestors.
+  - test_id: ADR-039-strip-affordance-host
+    <<: *common
+    result: PASS_SW
+    requirement: FR-742, ADR-039 section 8, AT-UIFW-01
+    steps: |
+      cmake --build ../build-host-views
+      ctest --test-dir ../build-host-views --output-on-failure
+    observed: >-
+      7/7 suites pass, test_ui_view_keyboard 7314 checks and 0 failures. The layout strip is now a quiet
+      button carrying LV_SYMBOL_KEYBOARD, the short id of the layout in force and LV_SYMBOL_DOWN; both a tap
+      and a long press open the quick switch and neither changes a layout on its own. Tests: the short id
+      drops the variant and goes upper case (fr(oss) -> FR, de -> DE), the name accessor keeps the layout
+      name, the FR-742 sentence is still what hint_text reports, an empty layout hides the strip, and the
+      strip plus every one of its children stays inside the right edge of the 1024 px panel (the plain label
+      it replaces used to run off it).
+  - test_id: ADR-039-firmware-build
+    <<: *common
+    result: PASS_SW
+    steps: |
+      . ../.tools/idf-env.ps1
+      idf.py -B ../build-hostlayout -D SDKCONFIG=../build-hostlayout/sdkconfig build
+    observed: >-
+      Builds clean with ESP-IDF v6.1. kvmpad.bin is 0x331000 B (3346432), 20% of the app partition free. The picker, the two drawn star icons and the quick
+      switch add no table and no font, only code, two 576-byte A8 bitmaps and a 254-byte config payload. The
+      board was not flashed and COM3 was not opened.
+  - test_id: TASK-071-client-layouts
+    <<: *common
+    result: PASS_SW
+    requirement: FR-741, FR-702, FR-705, ADR-019, ADR-024, ADR-028, AT-EXT-10, AT-EXT-11
+    steps: |
+      $env:NUGET_PACKAGES = 'O:\Praca\KVMpad\.tools\nuget'
+      $env:DOTNET_CLI_HOME = 'O:\Praca\KVMpad\.tools\dotnet-home'
+      dotnet build clients/windows/KVMpad.Client.sln -c Release
+      dotnet test  clients/windows/KVMpad.Client.sln -c Release
+    observed: >-
+      Build clean (one xUnit analyzer warning fixed), 295 passed / 0 failed / 3 skipped (the three skips are
+      the pre-existing native pairing tests that need kvmpad_pairing_test.dll). The CLIENT no longer carries
+      its two hand-written tables: HostLayoutCatalog indexes the generated clients/windows/layouts/
+      kbd_layouts.json - the same 581-layout file the device compiles in, untouched - and builds a character
+      table only for the layout in use. The App and the test project copy the file to layouts/
+      kbd_layouts.json beside their binary. New tests: the catalog holds 581 layouts with an id and a name
+      each (us ANSI, pl, de(neo)), a table is built once and matched case-insensitively, the German table is
+      really QWERTZ with AltGr on the third level, a dead-key character (German "A-circumflex") is two
+      presses in order and leaves nothing held, a missing file gives an empty catalog whose layout types only
+      space/tab/Enter and reports the rest as unavailable, a file that is not the generated one is refused
+      without quoting it, and the level-to-modifier rule. The existing type-text tests were retargeted from
+      HostLayouts.UsAnsi / .PolishProgrammer to the generated us and pl tables and pass unchanged - the
+      generated tables agree with the hand-written ones on printable ASCII and on the nine Polish AltGr pairs.
+not_run_hw:
+  - id: TASK-071-host-layout-board
+    reason: >-
+      Choosing a layout in Settings and typing on the relabelled keyboard needs a finger on the panel and a
+      prepared HOST: the console refuses a synthetic tap while the product shell is on screen. The owner has to
+      open Settings -> Keyboard -> Host layout, page to a layout, pick a variant, and then check on the HOST that
+      the characters the caps show are the characters that arrive (with the same layout set on the HOST).
+  - id: AT-EXT-24
+    reason: >-
+      Legibility of the legend fonts on the 1024x600 panel (and of the Cyrillic and Greek glyphs in particular) is
+      a visual judgement on the board. The simulator renders at the panel's resolution but not on its display.
+  - id: TASK-071-image-on-board
+    reason: >-
+      The image built here was not flashed (the brief forbids it), so the extra 0.39 MiB of flash and the font
+      cache behaviour under the RGB panel's scan-out were not measured on hardware.
+  - id: ADR-039-picker-board
+    reason: >-
+      Pinning a favorite, searching with the on-screen keyboard and jumping with the A-Z strip have to be done
+      with a finger on the 1024x600 panel: the host tests and the simulator use the real LVGL hit test, but not
+      the GT911. The owner has to open Settings -> Keyboard -> Host layout, pin two layouts, search for one by
+      name, pick it, and check that the tiles and the chips come back the way the record stores them after a
+      restart.
+  - id: AT-EXT-10-client-type-text
+    reason: >-
+      Typing text from the CLIENT with a non-US layout has never reached a HOST: the planner is proven at the
+      unit level only. The owner has to pair a CLIENT, set the same layout on both sides, and type a line
+      containing a dead-key character and an AltGr character into a prepared HOST.
+  - id: ADR-039-quick-switch-board
+    reason: >-
+      The long press that opens the quick switch is a 400 ms hold on the GT911, not on the test pointer: the
+      host tests and the simulator drive the real LVGL hit test but not the panel. The owner has to hold the
+      layout strip over the field on the 1024x600 panel, tap a tile, and check that the caps are relabelled
+      once the record comes back and that typing into a prepared HOST produces the characters the caps show.

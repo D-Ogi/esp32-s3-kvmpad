@@ -1,0 +1,118 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M4: deterministic gesture engine (TASK-040; 01 §3 FR-101..116, 03 §2/§2.1/§8 VEC-001..004, ADR-007).
+# Format: docs/spec/04-TEST-PLAN-AND-ACCEPTANCE-CRITERIA.md section 12, one document per test id.
+# Raw logs live outside the repository in ../evidence/ (hardware/, build/); each is named with its SHA256.
+# Host results are L1 (host unit). On the board the normative vectors were replayed through a private engine instance
+# from the console (`gesture replay`); the intents were printed, never handed to hid_dispatch, and the USB report counter
+# stayed unchanged. Nobody was at the bench, so no real finger touched the panel: every real-touch result is NOT_RUN_HW.
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M4 package"
+  firmware_sha256: "3c9084b229ed7b16a1bc350ae4204a76616a22884b3ec7777bebd1958669b36c"   # build/kvmpad.bin
+  bootloader_sha256: "7405b34871ca07aa32b401171489a0db42531d7ba57e39d5a435e528dead73d5"
+  partition_table_sha256: "4904409646dea5980eeb5cdb19c075a1bef538f145188c986c320c9b781a0822"
+  hardware: "Waveshare ESP32-S3-Touch-LCD-7B (ADR-026), board unit #1, ESP32-S3 rev v0.2"
+  usb_host_os: "Windows 11 Pro 10.0.26200"
+  idf: "v6.1"
+  components_lock_sha256: "c093e3356f074d307eee983c692dd7dca1caf85896a98130ca1793b61e579a48"
+  host_toolchain: "llvm-mingw 20261020 (clang 23), -Wall -Wextra -Werror -Wshadow -Wconversion, ASan + UBSan, -fno-sanitize-recover=all"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: L1-host-unit-M4
+    <<: *common
+    result: PASS
+    steps: "cmake -S test/host_unit -B ../build-host -G Ninja -DCMAKE_C_COMPILER=clang; cmake --build ../build-host; ctest --test-dir ../build-host -V; gesture_test_property.exe <seed> 100000 for seeds 0x1, 0xdeadbeef, 0x3039"
+    observed: >-
+      10/10 suites, 0 failures. New: gesture_test_vectors 6217 checks (20 cases), gesture_test_property 100000 free-form
+      sequences + 10000 single-gesture sequences per seed (default seed 0x6765737475726573, then 0x1, 0xdeadbeef, 0x3039):
+      0 failures, out_overflow 0, left_held never survives touch_count = 0.
+    evidence:
+      - "evidence/build/host-unit-m4.log sha256=27a1ba4a00f6f5c472da102f3de00c36bc5a724c7f2b3bd46637816ca4aed275"
+    issues:
+      - "Mutation check (five hand-made defects in gesture_engine.c: tap window off by one, missing LEFT_UP on the extra finger, scroll axis flip, gap cancel disabled, drag-lock timeout ignored): the first run let two survive because the 300 ms 'not a tap' case passed only through the 120 ms gap rule and VEC-004 was replayed with movement. Both cases were tightened (resting-finger frames every 20 ms; literal VEC-004); final run 5/5 killed. The mutants were never part of the tree."
+  - test_id: L2-on-target-replay-M4
+    <<: *common
+    result: PASS
+    steps: ".tools/flash.ps1 m4-gesture-1; test/hil/kvm_serial.py boot; kvm_serial.py cmd 'gesture replay'; kvm_serial.py cmd 'usb'"
+    observed: >-
+      BOOT_OK boot #187. `gesture replay` on the board: VEC-001 -> BTN_DOWN button=1, BTN_UP button=1 at 130 ms, taps=1;
+      VEC-002 -> WHEEL v=1 at 95 ms only; VEC-003 -> WHEEL v=1 at 30 ms only; VEC-004 -> four WHEEL v=1 (40..100 ms), no
+      click on the last release; every run ends in IDLE with left_held=0 and cancels=0; GESTURE_REPLAY_DONE intents=8.
+      Identical to the host expectations. `usb` afterwards: sent=3 refused=0 wrong_context=0 (the three mount-time neutral
+      reports from M3) - nothing from the replay reached the HID path.
+    evidence:
+      - "evidence/build/m4-gesture-1.log sha256=80565ce167ef8698a482c2cc2da58c1d1c405c9756e861deec70e38b150f8065 (0 warnings, 77% app partition free)"
+      - "evidence/hardware/20261102-043624-boot.log sha256=80aa62d45b3e696bee9c68ebcb3871099a8f626907068ac180492b45797f3057"
+      - "evidence/hardware/20261102-043632-cmd.log sha256=8a3872f95da002050d4403ad8b3519e5673654a254a7ff6442c67fdca753d448"
+      - "evidence/hardware/20261102-043636-cmd.log sha256=ec4b832e33349fb510870783d41fb8da035ac2f6f4342a02ebe6008671edb1a7"
+  - test_id: AT-GEST-01   # VEC-001 one-finger tap
+    <<: *common
+    result: PASS_SW
+    observed: "vec001_one_finger_tap: exactly LEFT_DOWN + LEFT_UP on UP at 130 ms, no MOVE, no RIGHT, no WHEEL; tap at 220 ms still a tap, 230 ms (with resting-finger frames) and 9 px not a tap. Replayed on the board with the same output."
+    hw: NOT_RUN_HW   # real finger needs TASK-060E and a person at the bench
+  - test_id: AT-GEST-02   # 50 px move, exact sum, no click
+    <<: *common
+    result: PASS_SW
+    observed: "one_finger_move_sum: 50 px in 5 px steps, sum of dx exact after gain, no button; fractional_motion_not_lost: 0.3 px steps accumulate to the exact total."
+    hw: NOT_RUN_HW
+  - test_id: AT-GEST-03   # long press with <10 px jitter -> one RIGHT
+    <<: *common
+    result: PASS_SW
+    observed: "long_press_right_click: 550 ms with +-5 px jitter -> one RIGHT_DOWN + RIGHT_UP on the threshold, nothing on UP; long_press_without_samples_fires_on_tick: fires from the tick when the controller stops reporting a resting finger."
+    hw: NOT_RUN_HW
+  - test_id: AT-GEST-04   # long press with >10 px movement -> no RIGHT
+    <<: *common
+    result: PASS_SW
+    observed: "long_press_moved_is_no_right: 12 px before 550 ms -> ONE_MOVING, only MOVE intents, no RIGHT, no LEFT."
+    hw: NOT_RUN_HW
+  - test_id: AT-GEST-05   # VEC-002 two-finger scroll
+    <<: *common
+    result: PASS_SW
+    observed: "vec002_two_finger_scroll_staggered: WHEEL only after 10 px of centroid travel, no MOVE, no click; scroll_axis_does_not_flip_on_reversal. Replayed on the board: one WHEEL v=1 at 95 ms."
+    hw: NOT_RUN_HW
+  - test_id: AT-GEST-06   # short parallel 2-finger tap -> one RIGHT
+    <<: *common
+    result: PASS_SW
+    observed: "two_finger_tap_is_right_click: join <= 100 ms, both up <= 250 ms, both <= 10 px -> exactly one RIGHT_DOWN + RIGHT_UP, never 2 x LEFT."
+    hw: NOT_RUN_HW
+  - test_id: AT-GEST-07   # VEC-003 points in reverse order
+    <<: *common
+    result: PASS_SW
+    observed: "vec003_track_ids_swap_order: fingers followed by track_id, centroid continuous, one WHEEL step, no MOVE. Replayed on the board: WHEEL v=1 at 30 ms."
+    hw: NOT_RUN_HW
+  - test_id: AT-GEST-08   # VEC-004 2 -> 1 -> 0 fingers
+    <<: *common
+    result: PASS_SW
+    observed: "vec004_two_then_one: scroll steps while two fingers move, WAIT_RELEASE after the first lift, no click and no MOVE on the last release. Replayed on the board: four WHEEL steps, 0 clicks."
+    hw: NOT_RUN_HW
+  - test_id: AT-GEST-09   # 3/4/5 fingers in any order
+    <<: *common
+    result: PASS_SW
+    observed: "three_fingers_cancel: 3, 4 and 5 fingers in every arrival order -> CANCELLED, cancel_by_reason[FINGERS] counted, the only output is the LEFT_UP required when LEFT was held; nothing until touch_count = 0."
+    hw: NOT_RUN_HW
+  - test_id: AT-GEST-10   # double-tap-and-drag
+    <<: *common
+    result: PASS_SW
+    observed: "double_tap_and_drag: tap, second contact within 300 ms / 32 px that moves > 8 px -> exactly one LEFT_DOWN before the first MOVE, MOVEs, LEFT_UP on release; a second contact without movement is an ordinary click; third_finger_during_drag_releases."
+    hw: NOT_RUN_HW
+  - test_id: AT-GEST-11   # 120 ms without data / I2C error
+    <<: *common
+    result: PASS_SW
+    observed: "gap_and_invalid_cancel: > 120 ms without a sample (from the tick or from the next sample) and valid = false both release LEFT and count cancel_by_reason[GAP] / [INVALID]; old_sequence_rejected counts MALFORMED."
+    hw: NOT_RUN_HW
+  - test_id: AT-GEST-12   # drag lock, mode switch, timeout
+    <<: *common
+    result: PASS_SW
+    observed: "drag_lock_paths: drag lock keeps LEFT after the finger lifts; drag lock off, external cancel (mode switch / owner lost), 10 s inactivity (capped at 60 s) each end with exactly one LEFT_UP and left_held = 0; the property run checks the same invariant on 400k random sequences."
+    hw: NOT_RUN_HW
+  - test_id: FR-112-FR-116   # sensitivity curve and degraded multi-touch (added by the engine contract, not a 04 row)
+    <<: *common
+    result: PASS_SW
+    observed: "gain_curve_is_monotonic_and_bounded: Slow < Normal < Fast, monotonic in speed, clamped to [0.7, 2.2]; degraded_multitouch_fallback: two_finger_enabled = false -> the second finger cancels instead of scrolling."
+    hw: NOT_RUN_HW
+not_run:
+  - id: AT-GEST-01..12 on the panel
+    reason: "The GT911 sampler is not yet routed into the engine (TASK-060E ui_touch_bridge) and nobody was at the bench; the engine is proven on vectors and replayed on the board. Thresholds remain the 01 §3.1 starting values until a HIL tuning ADR."

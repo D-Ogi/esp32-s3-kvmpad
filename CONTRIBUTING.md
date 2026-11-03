@@ -7,6 +7,8 @@
 3. `docs/REPO-LAYOUT.md` — directory map, dependency rules, repository boundary, known gaps.
 4. `docs/ADR/README.md` and `docs/EXTENSIONS.md` — decisions and requirements added **after** the specification was frozen.
 5. `docs/ROADMAP.md` — milestones, gates, the tasks added by ADRs and the current status; pick work from there.
+6. `docs/HANDBOOK.md` — practical rules for the board (reset budget, console stack), memory, module boundaries and
+   parallel work. Read it before your first flash.
 
 ## Language
 
@@ -36,6 +38,8 @@ The `AGENTS*.md` documents refer to specification files without a directory. In 
 | 023 | Approval policies (accept on pairing, control approval, Alt+F4 confirmation) configurable locally in Settings; hard security invariants have no toggle; the CLIENT cannot change settings |
 | 024 | Keyboard layouts generated from xkeyboard-config ("Host layout" mirroring: legends, ANSI/ISO/JIS/ABNT2/KR geometry, IME keys); on-device IME for Japanese / Simplified Chinese / Korean in the main release, Unicode delivered through per-OS input modes |
 | 025 | Three-line license header (SPDX + copyright + Required Notice) in every authored source file, verified by `tools/check_license_headers.py` in CI; the notice embedded in the firmware image and the CLIENT binary; `Settings → About` with third-party notices |
+| 026 | Target board is the **ESP32-S3-Touch-LCD-7B** (1024×600, CH32V003 I/O expander at 0x24, inverted backlight PWM, EXIO5 LOW = USB); the 7B exclusion in `AGENTS.md` §1 is lifted; UI geometry scales from the 800×480 reference to 1024×600 |
+| 037 | One language key on the KEYBOARD view instead of the `KO` / `ZH` / `JA` caps (tap cycles, long press opens a picker); the active input languages are toggles in `Settings → Keyboard`, stored in the record (schema 3) and English-only by default |
 
 Treat the new requirement IDs (`FR-311`, `FR-7xx`, `TECH-07x`, `SEC-10x`) and test IDs (`AT-EXT-xx`) as part of the specification.
 
@@ -58,7 +62,7 @@ Treat the new requirement IDs (`FR-311`, `FR-7xx`, `TECH-07x`, `SEC-10x`) and te
   // Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
   ```
 
-  Exempt: the frozen package, Markdown, JSON/lock files, binary assets, dotfiles. Third-party code keeps its original header
+  Exempt: the frozen package, Markdown, JSON/lock files, Visual Studio `.sln` files (no comment syntax), binary assets, dotfiles. Third-party code keeps its original header
   untouched and is listed in `THIRD_PARTY_NOTICES.md` (path, upstream, version, license). Check before every PR:
   `python -I tools/check_license_headers.py` must report 0 missing and 0 unlisted (`--fix` inserts missing headers).
   The firmware and the CLIENT embed the same notice (TECH-084) and show it in About (FR-751).
@@ -66,7 +70,7 @@ Treat the new requirement IDs (`FR-311`, `FR-7xx`, `TECH-07x`, `SEC-10x`) and te
   never inside the repository.
 - Raw logs, screenshots and packet captures go to `../evidence/` outside the repository; the records (`hardware/boards.md`,
   `test/reports/`) keep the key lines and the SHA256 of each file. Logs never contain typed keystrokes, tokens or pairing secrets.
-- Hardware: no `burn_*` operations on eFuses, no secure boot / flash encryption without the owner's decision and a recovery plan.
+- Hardware: no `burn_*` operations on eFuses and no secure boot / flash encryption, ever (ADR-036). Each builder signs OTA images with their own key, kept offline and never in the repository.
 
 ## Contribution license
 

@@ -1,0 +1,130 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M3 supplement: HID input on the wire, checked from the HOST side. The board runs a bench image with
+# CONFIG_KVM_HID_BENCH_PROBE (`hid probe <keys|rollover|move>`: fixed harmless sequences through the normal LOCAL
+# path), and test/hil/hid_capture_windows.py records on the Windows HOST, through Raw Input filtered to
+# VID_303A&PID_400C, what Windows decoded from KVMpad's reports. Run with the owner's consent while they used the
+# HOST. Only F13..F24 and pointer motion that returns to its start were sent; no click, chord or Consumer usage.
+# Format: docs/spec/04 section 12. Raw logs: ../evidence/hardware/ (outside the repository).
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M6 package (image m5-probe-1)"
+  idf: "v6.1"
+  board: "Waveshare ESP32-S3-Touch-LCD-7B, board #1 (ESP32-S3 rev v0.2, 16 MiB flash, 8 MiB PSRAM)"
+  host: "Windows 11 Pro 10.0.26200, KVMpad on the HID port"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: AT-HID-02-keyboard
+    <<: *common
+    result: PASS_HW
+    evidence: |
+      evidence/hardware/20261102-084548-m5-probe-1-keys.log sha256=1e9266b0072a2aa1f5d6a7f46f6da2ecc49f3dfcef0c01ad01d01c7238375004
+      evidence/hardware/m5-probe-1-capture-keys.txt sha256=b20e02f82b0ee8394ae496b52fa96022864c1242fb87d64dc3f78e6de48a26db
+    observed: >-
+      `hid probe keys` (F13..F24, DOWN then UP each, 40 ms apart): the HOST saw exactly 24 key events, F13..F24 make
+      then break in order, no other key and no button from the device. Board afterwards: ledger_empty=1, keys=0,
+      accepted=24, completion_timeouts kbd=0 mouse=0 consumer=0.
+  - test_id: AT-HID-03
+    <<: *common
+    result: PASS_HW
+    evidence: |
+      evidence/hardware/20261102-084601-m5-probe-1-rollover.log sha256=33fffd8e9a7a991c1e941545dff6f0cf07d5df5887709cf1f6908daf201f796f
+      evidence/hardware/m5-probe-1-capture-rollover.txt sha256=85a889040a7e9f36f9ebb0d67528f74999c141a719e0340e2ac27bd16dba7055
+    observed: >-
+      `hid probe rollover` (F13..F19 held together, then released): the HOST saw make for F13..F18 only and a break
+      for each of them; the 7th key never reached the wire (refused in the core; the dispatcher accepts intents
+      asynchronously, so the console reports refused_downs=0). Ledger empty afterwards.
+  - test_id: AT-HID-04
+    <<: *common
+    result: PASS_HW
+    evidence: |
+      evidence/hardware/20261102-084651-m5-probe-1-move2.log sha256=91b849e6a735c57e1ea28246c4c31defd5679e7d77909ce468b58ed463c361fd
+      evidence/hardware/m5-probe-1-capture-move2.txt sha256=7770c10734a7da9dea97f2a995e0d02b2be993ddfca4d8d81e420271e8139f3e
+    observed: >-
+      `hid probe move` (+300, -300 on X, +200, -200 on Y as single int16 intents): HOST totals |dx|=600, |dy|=400,
+      net motion (0, 0): no int8 overflow, nothing lost or repeated. Windows merged consecutive reports into one Raw
+      Input event (largest 173 = 127 + 46), so the int8 split itself is visible on the board side (report builder
+      takes int8) and in the host unit tests, not per Raw Input event.
+    issues:
+      - "First run (evidence/hardware/m5-probe-1-capture-move.txt sha256=2f6ddbfe85cf0ed576fa5d94b9fed30f44aa6d07c69340774a5a3ae2c7d6be3e) was marked FAIL by a wrong script assumption (one Raw Input event per report); the script now checks totals and net motion, the data of both runs agree."
+  - test_id: AT-KEY-07-wire
+    <<: *common
+    result: PASS_HW
+    observed: "Every probe ends with RELEASE_ALL; the HOST saw a break for every make, and the board ledger was empty after each probe (keys=0, buttons=0x00, mods=0x00)."
+  - test_id: HID-completion-timeouts
+    <<: *common
+    result: PASS_HW
+    observed: >-
+      Per-interface completion timeouts (new counter) stayed 0/0/0 over 66 probe intents. The three timeouts seen
+      during the owner's typing session on image m5-shell-2 are not reproduced by paced probe traffic; the counter
+      now tells which interface fails if it happens again.
+  - test_id: AT-HID-06
+    <<: *common
+    result: PASS_HW
+    steps: |
+      HOST (this PC): python -I test/hil/hid_capture_windows.py --probe chords --seconds 14
+      board, 2 s later: hid probe chords      (owner's go-ahead, 2026-11-02; image ota-a, CONFIG_KVM_HID_BENCH_PROBE)
+    evidence: |
+      evidence/hardware/20261102-194430-chords-board.log sha256=980c9cdb7bfce271a96c0329158e6de0bf335c6f55931407a35612e343b34054
+      evidence/hardware/chords-capture.txt sha256=63e6255142cb194225814b149f1d89721a09ef493b9889e2dc8885fddcb77494
+    observed: >-
+      Alt+Tab x2, Win+D x2 and Ctrl+Shift+Esc through the LOCAL path (KVM_HID_CHORD intents -> InputArbiter ->
+      HidScheduler), errors=0. Raw Input on the HOST: for every chord the modifier makes, the key break and the
+      modifier breaks arrive in the order of 02 section 7.3 and no key is left held. The key make of each chord is
+      not delivered to Raw Input, because Windows consumes it as a system hotkey; the owner confirmed that all five
+      chords acted on the desktop (window switch, show desktop, Task Manager). The first checker run reported this
+      as FAIL. test/hil/hid_capture_windows.py now accepts a missing key make when the rest of the order is right,
+      lists it under `notes`, and still refuses a wrong order (re-check of the recorded capture: 0 fails, 5 notes).
+  - test_id: AT-HID-08-revoke
+    <<: *common
+    result: PASS_HW
+    evidence: |
+      evidence/hardware/20261102-194430-chords-board.log sha256=980c9cdb7bfce271a96c0329158e6de0bf335c6f55931407a35612e343b34054
+      evidence/hardware/chords-capture.txt sha256=63e6255142cb194225814b149f1d89721a09ef493b9889e2dc8885fddcb77494
+    observed: >-
+      The revoke half: an Alt+Tab cut at once by RELEASE_ALL (reason owner_change). Board: "interrupted:
+      ledger_empty=1 chord_active=0". HOST: Tab break and Alt break arrive, no key stays held after the capture. The
+      USB-suspend half (suspend or unplug during a chord) NOT_RUN_HW: it needs a person at the cable or the HOST
+      going to sleep.
+  - test_id: AT-HID-05/09-on-wire
+    <<: *common
+    result: NOT_RUN_HW
+    observed: >-
+      Ctrl+Alt+Del: the owner tried it by hand from the SHORTCUTS view and reported it worked; the formal run with the
+      board-side counters is postponed by the owner, so AT-HID-05 stays NOT_RUN_HW. AT-HID-09: see the soak entries.
+  # ---- soak with the owner at the cable (image soak-flash: -Og, DOUBLE_PARTIAL, `hid probe soak`) ------------------
+  # Board: `hid probe soak 10000` = Ctrl / Shift / Ctrl+Shift + F13..F24 as balanced text bursts (FR-748 path), each
+  # step read by the HOST before the next; the owner pulled and re-plugged the HID cable at random (about 8 times,
+  # some contacts very short). HOST: test/hil/hid_capture_windows.py --probe soak (Raw Input, KVMpad device only).
+  - test_id: AT-HID-08-unplug-suspend
+    <<: *common
+    result: PASS_HW
+    evidence: |
+      evidence/hardware/20261102-213122-soak-10k.log sha256=c5ac6baf2dddd32f25010308910eebd99d30b0889a8ede6c74435a2b75a135cf
+      evidence/hardware/soak-host-capture.txt sha256=ae68aaff46f0376e952ff3309497f87a54adc2d89d80baddd851941340cfea52
+    observed: >-
+      14 bursts cut in the middle of a shortcut by the unplug. The board sees an unplug as a USB suspend (no VBUS
+      sensing on the OTG port: suspends=13, umounts=0) and releases on it: release_by_reason usb_suspend=13, plus 7
+      completion timeouts (reports in flight when the cable went) each ending in the fail-safe RELEASE_ALL. 8 re-mounts,
+      every one starting from neutral (TECH-035; enforced in hid_core, host-tested). End state: ledger_empty=1
+      mods=0x00 keys=0. HOST: 9 device arrivals, 8 cut shortcuts dropped with their device, no key down at the end.
+      Limitation: suspend through the HOST going to sleep was not run; the unplug path exercises the same
+      KVM_USB_SUSPENDED handling.
+  - test_id: AT-HID-09
+    <<: *common
+    result: FINDING
+    evidence: |
+      evidence/hardware/20261102-213122-soak-10k.log sha256=c5ac6baf2dddd32f25010308910eebd99d30b0889a8ede6c74435a2b75a135cf
+      evidence/hardware/soak-host-capture.txt sha256=ae68aaff46f0376e952ff3309497f87a54adc2d89d80baddd851941340cfea52
+    observed: >-
+      Board: tried=10000 done=9524 cut_bursts=14, 0 stuck modifiers (ledger_empty=1, mods=0x00 at the end). HOST:
+      9256 shortcut makes on 9 device handles, nothing held at the end (0 stuck modifiers), but the checker reported
+      3 makes of a key already down on the same handle (counted as phantom repeats) and 3 breaks of a key that was
+      not down. The capture kept no timestamps, so these 6 events cannot be placed against the unplugs. Likely cause
+      (not proven): the very short cable contacts the owner reported, where Windows starts enumerating a device that
+      goes away again, or Windows key repeat while a report hung at the moment of an unplug. AT-HID-09 is not passed.
+    next: >-
+      Re-run postponed by the owner. Before it: the capture records a timestamp per event and the device arrival and
+      removal times (RIDEV_DEVNOTIFY), and reports each anomaly with its distance to the nearest unplug.

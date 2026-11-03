@@ -1,0 +1,113 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# Screen jumps after a view switch (owner, board #1) and the requested-restart watchdog finding of TASK-110:
+# measurements behind ADR-035 (PROPOSED). One reset series of 11 resets (budget 15): 1 flash of the instrumented
+# DOUBLE_PARTIAL image, 8 `reboot` runs, 1 flash of DOUBLE_DIRECT, 1 flash of -O2 DOUBLE_PARTIAL. No unexpected reset.
+# Method: `ui nav <view>`, 3 s, `lcd stats reset`; missed = VSYNC count - completed frames (DMA restarts at VSYNC).
+# Format: docs/spec/04 section 12. Raw logs: ../evidence/hardware/ (outside the repository).
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M8 package + ADR-035 changes (board_lcd callback chaining, LCD_CAM shutdown handler)"
+  idf: "v6.1"
+  board: "Waveshare ESP32-S3-Touch-LCD-7B, board #1 (ESP32-S3 rev v0.2, 16 MiB flash, 8 MiB PSRAM)"
+  lcd: "1024x600 RGB565, 30 MHz PCLK, 32.746 Hz, 2 panel frame buffers in PSRAM, 2 x 10-line bounce buffers"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: ADR-035-telemetry-chain
+    <<: *common
+    result: PASS_HW
+    evidence: "evidence/hardware/20261102-205306-drift-instr-boot.log sha256=2749d9e7177abef4ecbd05aa0517326793684b1e168c4b1b70c2a39438654d6c"
+    observed: >-
+      With the adapter running, `lcd stats` counts again (before the change: vsync=0 frames_done=0 under LVGL). First
+      read after boot: vsync=287 frames_done=287 missed=0. The UI shell, rendering and flushes work through the
+      forwarded callbacks (`ui shell status` active=yes; UI_BENCH flushes=418). The map file shows the adapter's
+      lvgl_bridge_v9.c.obj referencing __wrap_esp_lcd_rgb_panel_register_event_callbacks.
+  - test_id: ADR-035-drift-double-direct
+    <<: *common
+    result: FAIL
+    config: "DOUBLE_DIRECT, KVM_UI_DRAW_BUF_LINES=24, 2 draw units, -Og (ADR-027 default)"
+    evidence: |
+      evidence/hardware/20261102-205806-drift-dd-boot.log sha256=e40093fffee0b69d80bc6ced928ad82fc4fb87dead44359923a89693d0b76665
+      evidence/hardware/20261102-205816-drift-dd-idle.log sha256=6b462abfa38f60bfa11ea76bab3302ca2a1661dc3eba8382892a105f7a1ec6c3
+      evidence/hardware/20261102-205821-drift-dd-keyboard-stats.log sha256=13ad81e567903db7f1032a2cc50ae0cacb3f9a16d57fff5c5d6ee380835dc68b
+      evidence/hardware/20261102-205825-drift-dd-mouse-stats.log sha256=cc9980c331aa201326dfdacda0cd28274be1d9c4c3831d364b55f044897b696d
+      evidence/hardware/20261102-205829-drift-dd-shortcuts-stats.log sha256=6fad032323b6ead3bb1cfa54577f703f0d82446db889535d3fa12be0e733b99e
+      evidence/hardware/20261102-205833-drift-dd-mouse-stats.log sha256=e328b64d05f48574efcf2bb057fa92993a2e20c8dcc3090d49cfac8e831e2dd1
+      evidence/hardware/20261102-205837-drift-dd-keyboard-stats.log sha256=1c26c95fdd0664e3aff4422d85be3848aaf1184987489a13719156ce8d349da6
+      evidence/hardware/20261102-205841-drift-dd-shortcuts-stats.log sha256=78dc807c3e1d2c9f078c28f522eb10be9d7c768817763c7b4833e80223456652
+      evidence/hardware/20261102-205845-drift-dd-keyboard-stats.log sha256=4bc70759dba7faa73645e3b4caf41b75b81f390fdf84a1cbd7c271bd50c1c644
+      evidence/hardware/20261102-205849-drift-dd-mouse-stats.log sha256=d97b28bd5338278e013e14aeb57494a0355980d44d38dcd170bd64a744cd67f4
+      evidence/hardware/20261102-205850-drift-dd-ui.log sha256=49ebce9e691f06e108aacdbb2a50c584a0777b477af2fe635afcdddf22a5740a
+    observed: >-
+      Idle 336 frames, missed 0. Per switch (keyboard, mouse, shortcuts, mouse, keyboard, shortcuts, keyboard, mouse):
+      missed 3, 5, 3, 5, 4, 4, 3, 5 = 32 in 8 switches; boot 9. VSYNC interval 29.4..31.7 ms while switching
+      (idle: 29.7..31.3 ms after the boot draw). Each missed frame is one 10-line jump, which matches the owner's
+      report. UI_BENCH render_avg 158,591 us, render_max 246,538 us, flushes 25; internal free 72,187 B.
+  - test_id: ADR-035-drift-double-partial
+    <<: *common
+    result: PASS_HW
+    config: "DOUBLE_PARTIAL, KVM_UI_DRAW_BUF_LINES=12 (24,576 B internal strip), 2 draw units, -Og"
+    evidence: |
+      evidence/hardware/20261102-205316-drift-dp-idle.log sha256=18d6102acba40c3d971816ede45706863a90d0bd98be07cce165ae64a4fc4515
+      evidence/hardware/20261102-205321-drift-dp-keyboard-stats.log sha256=4da6a7212cd7a5be42c1ca5d80556461197917a29c525bf81fc5862d44f8a17b
+      evidence/hardware/20261102-205325-drift-dp-mouse-stats.log sha256=527055553b32cdb3985375bf4accb2874d3d040680622f3a47a7cf12e7ea6849
+      evidence/hardware/20261102-205329-drift-dp-shortcuts-stats.log sha256=21891f5e46c89f2c210346fea126544825ba0e886ae03ef01b10d0bb13078586
+      evidence/hardware/20261102-205333-drift-dp-mouse-stats.log sha256=e79fa26b6bda5f8c612b870829577e9e15a0d9dfd398f06608482ef1beaab4c7
+      evidence/hardware/20261102-205337-drift-dp-keyboard-stats.log sha256=328cf99e045bcf3e41688427c04ae64731e854026dfceb20324776b4402c73c1
+      evidence/hardware/20261102-205341-drift-dp-shortcuts-stats.log sha256=15c501f25be1169757f508910b6ac00d180e7e4b2937cd4807d9fb79e099faf8
+      evidence/hardware/20261102-205345-drift-dp-keyboard-stats.log sha256=c4c21515068e69bf7ffe850f75fab7a5a96bf64f8e67ddf380316cd3598d474b
+      evidence/hardware/20261102-205349-drift-dp-mouse-stats.log sha256=05f58a8628f96013220c38b3fb396e401660a646b4d099dd2d877db525c8c1bf
+      evidence/hardware/20261102-205349-drift-dp-ui.log sha256=c45cc07728d4dd83e287737a35c3bca67808b4b6ad3b294002dab473462a98be
+    observed: >-
+      Idle 326 frames, missed 0. Same 8 switches: missed 0 every time (129-153 frames per window). VSYNC interval
+      30.49..30.59 ms. UI_BENCH render_avg 264,601 us, render_max 454,270 us, flushes 418; internal free 47,707 B.
+      The owner's visual check of this variant was not given: the visual part stays NOT_RUN_HW.
+  - test_id: ADR-035-drift-double-partial-o2
+    <<: *common
+    result: PASS_HW
+    config: "DOUBLE_PARTIAL, 12 lines, 2 draw units, CONFIG_COMPILER_OPTIMIZATION_PERF (-O2), build dir ../build-perf"
+    evidence: |
+      evidence/hardware/20261102-210317-drift-o2dp-boot.log sha256=a47af3a8203b075437c3b12831d4bf7a13efbf87acea75eec7ba51c54ccb82b7
+      evidence/hardware/20261102-210320-drift-o2dp-idle.log sha256=6f316c8af0f32ffe9717ff19e01aa724cf62303a1d962185f22f1a164481d890
+      evidence/hardware/20261102-210325-drift-o2dp-keyboard-stats.log sha256=b431d0ae0d250dfa7668cf7886112d402fe1cb0ed730b9e4a9dccf436ec4936f
+      evidence/hardware/20261102-210329-drift-o2dp-mouse-stats.log sha256=284720434d7ff03c98b45bf907a0688d05098536994467c3a7122cfacca89c85
+      evidence/hardware/20261102-210333-drift-o2dp-shortcuts-stats.log sha256=556e76bf69c03112edd7293d4deab0a508025c66fb5814d3602d82ad401e5fc0
+      evidence/hardware/20261102-210337-drift-o2dp-mouse-stats.log sha256=57a62c1bab1e5e4fabd125e165a238c616a959215783ba3396d5eb965a9d8d5f
+      evidence/hardware/20261102-210341-drift-o2dp-keyboard-stats.log sha256=d3fa7800b5515e61c795678be8c605e475ccdcad1718eeca5411ecd188868f75
+      evidence/hardware/20261102-210345-drift-o2dp-shortcuts-stats.log sha256=f42860dee94342b00f4faa926732ed0edbab33402ff1f592fd084e5a0e376c9b
+      evidence/hardware/20261102-210349-drift-o2dp-keyboard-stats.log sha256=fb9677b5b8a226bab8298ec630ff81610efcf6f3da5b857c87f96f365a7205f4
+      evidence/hardware/20261102-210353-drift-o2dp-mouse-stats.log sha256=3ef532680a352774b0e8b0d1f12be62dfc4c13097da6735c3d251fbf52743042
+      evidence/hardware/20261102-210353-drift-o2dp-ui.log sha256=dd0b53fb8e904b8282322b60d73a693ec6d08bd5fdb3a1b9e26147cd2cc821f6
+    observed: >-
+      Boot 434 frames missed 0, idle missed 0, 8 switches missed 0. VSYNC 30.52..30.56 ms. UI_BENCH render_avg
+      228,410 us, render_max 403,158 us (-14 % against -Og); internal free 52,011 B, minimum since boot 10,092 B.
+      The owner then switched views by touch on this image.
+  - test_id: ADR-035-visual
+    <<: *common
+    result: PASS_HW
+    config: "DOUBLE_PARTIAL, 12 lines, -O2 image of ADR-035-drift-double-partial-o2"
+    observed: >-
+      The owner switched mouse, keyboard and shortcuts on the panel and reported no jump (2026-11-02). ADR-035
+      accepted on that basis; -O2 is kept for release builds only (owner's decision), development images stay -Og.
+      Observation for later: the -Og DOUBLE_PARTIAL image flashed afterwards showed missed=8 in the first 216 frames
+      after boot (first full draws and IME loading); view switches are the measured case and stay at 0.
+  - test_id: TASK-110-restart-lcdcam-shutdown
+    <<: *common
+    result: PASS_HW
+    config: "DOUBLE_PARTIAL, -Og, board_lcd shutdown handler (lcd_ll_stop + LCD_CAM reset)"
+    evidence: |
+      evidence/hardware/20261102-205414-rb-lcdshut-1.log sha256=498bb587f4d28cb0e1a014c3d5781bfdc23df1bd56657b2425fb1f356182cf4f
+      evidence/hardware/20261102-205422-rb-lcdshut-2.log sha256=56a21d2d1ce7c2983f11b62b90e15a98289144524e6dce2ccc0749a23c8aa53f
+      evidence/hardware/20261102-205430-rb-lcdshut-3.log sha256=9be81bcffe273548677ddb1b867fb980f10d4bb4d59422950d3264a9adfe5f0f
+      evidence/hardware/20261102-205437-rb-lcdshut-4.log sha256=5e8801825ab1e94edd3658f8caeb8f5074cc261f53aca68d4f5d387efdb0f5c8
+      evidence/hardware/20261102-205445-rb-lcdshut-5.log sha256=834ae697a0177d2eebb5b882e775f85b7bfb95386b305708aab1a5ddcf4fd413
+      evidence/hardware/20261102-205453-rb-lcdshut-6.log sha256=ab970120bf21e00acd883bbad758a977966eb6256ec32e773b5f544f91042f2c
+      evidence/hardware/20261102-205500-rb-lcdshut-7.log sha256=0c16b4ca1666709573b4f8679dc0d69ee9858e4106e5fbeabeb996a77f66b196
+      evidence/hardware/20261102-205508-rb-lcdshut-8.log sha256=16712b6a67ea41e765c700c3a36311130bf766f2e2cf583987df69543c6c3853
+    observed: >-
+      8 of 8 requested restarts ended in rst:0xc (RTC_SW_CPU_RST): 4 x `reboot core1`, 4 x `reboot`. Before the
+      handler, on the same configuration, 3 of 6 ended in rst:0x10 (RTCWDT_RTC_RST), see
+      2026-11-02_M8_TASK-110-ota_d36ab0a.yaml TASK-110-restart-rtcwdt-core. With an unchanged rate of 1/2 the chance of
+      8 clean runs is 0.4 %. Panic and watchdog resets skip shutdown handlers and are not covered by this test.

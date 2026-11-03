@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M5 / TASK-072: Japanese conversion (romaji -> kana -> kanji) on the vendored AOSP OpenWnn dictionary engine
+# (ADR-024 FR-746, TECH-080/081), behind the ime_wnn API. Host results only; the engine has not run on a board yet
+# and no text was typed into a HOST. The tests print no decoded text beyond their own expected vectors, and the
+# engine logs neither the input nor the candidates. Format: docs/spec/04 section 12.
+---
+host_common: &host
+  build_sha: "d36ab0a + uncommitted M0-M8 package"
+  board: "none (host only)"
+  host: "Windows 11, llvm-mingw clang 23.1.4 (x86_64 and i686), Ninja, CMake 4.0.3 from ../.tools"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-072-wnn-blob
+    <<: *host
+    result: PASS_SW
+    requirement: TECH-081
+    steps: |
+      python -I tools/ime/build_wnn_blob.py --out ../build-ime-data/wnn_ja.bin   (run twice)
+    observed: >-
+      The builder extracts the four dictionaries the clause conversion needs from the vendored
+      components/ime_engine/openwnn/data/WnnJpnDic.c - single kanji (NJ_DIC_TYPE_TANKANJI, 81,907 B),
+      independent words (NJ_DIC_TYPE_JIRITSU, 783,246 B), ancillary words (NJ_DIC_TYPE_FZK, 5,785 B) and the
+      connection matrix (NJ_DIC_TYPE_RULE, 18,817 B) - and refuses any array whose length disagrees with the file's
+      own dic_size[] table or whose header does not carry the dictionary type the engine must see. The four
+      prediction dictionaries of the same file are left out: the conversion never sets them. Output wnn_ja.bin
+      889,841 B, SHA256 d816222a90afd0eb48463ecec2074cb85a396bc7de2bf268b9f8e9bf30a9d2a8, identical on both runs
+      (reproducible). It needs no compiler.
+  - test_id: TASK-072-ime-data-image-ja
+    <<: *host
+    result: PASS_SW
+    requirement: TECH-081
+    steps: |
+      python -I tools/ime/build_ime_data.py --cxx <abs>/i686-w64-mingw32-clang++.exe --cxx-flag=-static \
+          --hanzi-font ../build-ime-data/font_hanzi_24_v2.bin --kanji-font ../build-ime-data/font_kanji_24.bin \
+          --work ../build-ime-data --out ../evidence/ime/ime_data3.bin   (run twice)
+    observed: >-
+      Image 6,602,752 B, SHA256 1f9f0775174a3c1df35405e49d7411072208db7a321d98727c5db6dcc685b2fe, byte-identical on
+      both runs. Five files: dict_pinyin.dat 1,068,442 B, font_hanzi_24.bin 3,330,280 B, ofl_noto_cjk.txt 4,301 B,
+      font_kanji_24.bin 1,292,412 B, wnn_ja.bin 889,841 B. 1,458,176 B of the ime_data partition left free, which
+      ADR-033 grew to 0x7B0000 (8,060,928 B); that size is now the builder's --partition-size default. The earlier
+      four-file image without the Japanese candidate font (5,308,416 B, SHA256 3d1d786b...0472) was reproducible too.
+  - test_id: TASK-072-wnn-host
+    <<: *host
+    result: PASS_SW
+    requirement: FR-746, TECH-080
+    steps: |
+      cmake -S test/ime_wnn -B ../build-host-wnn -G Ninja \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+      cmake --build ../build-host-wnn && ctest --test-dir ../build-host-wnn --output-on-failure
+      cmake -S test/ime_wnn -B ../build-host-wnn32 -G Ninja -DKVM_SANITIZE=OFF \
+            -DCMAKE_C_COMPILER=i686-w64-mingw32-clang -DCMAKE_CXX_COMPILER=i686-w64-mingw32-clang++
+      cmake --build ../build-host-wnn32 && ctest --test-dir ../build-host-wnn32 --output-on-failure
+    observed: >-
+      Both builds: ctest 2/2 tests pass. test_ime_wnn (AddressSanitizer + UndefinedBehaviorSanitizer,
+      -fno-sanitize-recover=all): 328 checks, 0 failures - the conversion vectors on the real dictionaries
+      (nihongo, toukyou, watashi, tabetai, nihongonyuuryoku, a three-clause sentence from kyouhaiitenkidesu,
+      arigatou and konnnichiha, which stay hiragana), the romaji edge cases (kka -> small tsu + ka, nn -> n-kana,
+      n'a -> n-kana + a, a trailing lone n, the katakana alternative), a partial choice of the first clause followed
+      by further input and by cancel_last, refusal of upper case, digits, empty and over-long input, out-of-range
+      candidate ids and use before open, 50 open/close cycles and 2000 seeded random inputs (1893 converted, 0 hit
+      an internal limit). The same 328 checks pass on the 32-bit target, so the engine's reading of the
+      dictionaries does not depend on the width of size_t. The dictionary container is built from the vendored data
+      by the suite itself, exactly as the image is built.
+  - test_id: TASK-072-wnn-memory
+    <<: *host
+    result: PASS_SW
+    requirement: TECH-080
+    steps: |
+      ../build-host-wnn/test_wnn_leak.exe wnn_ja.bin        # counting allocator, no sanitizer
+      ../build-host-wnn32/test_wnn_leak.exe wnn_ja.bin
+    observed: >-
+      Six open/search/close cycles: exactly one allocation per ime_wnn_open(), work area 103,408 B on the 64-bit
+      host and 91,316 B on the 32-bit one (the board's layout), 0 B live after every ime_wnn_close(), peak live
+      equal to the work area, no growth across cycles and none over 50 keystrokes inside one session. The
+      dictionaries are read in place and are not copied.
+  - test_id: TASK-072-wnn-latency-host
+    <<: *host
+    result: PASS_SW
+    requirement: FR-746
+    steps: |
+      a scratch probe outside the repository: clang -O2, no sanitizer, ime_wnn_search() called once per added
+      letter, 200 repetitions per length
+    observed: >-
+      Mean per keystroke 0.003 ms at 5 letters, 0.005 ms at 10, 0.024 ms at 20, 0.056 ms at 30, 0.096 ms at 40,
+      0.140 ms at 50 (the API cap); worst single run 0.200 ms. Against the 50 ms per keystroke budget this leaves
+      the whole margin to the board's slower core and to PSRAM latency, which is not a measurement of the board.
+  - test_id: TASK-072-wnn-firmware-build
+    <<: *host
+    result: PASS_SW
+    requirement: FR-746, TECH-080
+    steps: |
+      pwsh -NoProfile -File ../.tools/build.ps1 wnn-1
+      pwsh -NoProfile -File ../.tools/build.ps1 wnn-2
+    observed: >-
+      Both builds exit 0 with the engine, the derived translations and ime_wnn compiled into the firmware;
+      kvmpad.bin 0x2ad770 (2,807,152 B), 33% of the app slot free, against 0x2a33c0 (2,765,760 B) for the previous
+      build of the same tree, so about +41 KB - a bound, not an attribution, because the same build directory
+      carries the parallel UI work of that day. The vendored WnnJpnDic.c is not compiled: the dictionaries travel
+      in the ime_data image.
+not_run:
+  - test_id: TASK-072-wnn-board
+    result: NOT_RUN_HW
+    reason: >-
+      The Japanese conversion has not run on board #1. Open latency, search latency, PSRAM use and the static .bss
+      placement are unmeasured on hardware; the host numbers above do not stand in for them.
+  - test_id: AT-EXT-26 (Japanese part), AT-EXT-27
+    result: NOT_RUN_HW
+    reason: >-
+      Need the candidate bar and the flick keyboard in the KEYBOARD view and typing into a prepared HOST with the
+      owner present; only the engine exists so far.
+limitations:
+  - >-
+    UndefinedBehaviorSanitizer finds a signed left-shift overflow in the vendored engine, not in KVMpad code:
+    the NJ_INT32_READ macro of openwnn/include/nj_dic.h builds a 32-bit value as ((NJ_INT32)in[0] << 24) &
+    0xff000000 with NJ_INT32 a signed long, so every dictionary header field whose top byte is >= 0x80 overflows
+    (first seen at engine/ndbdic.c:784, "left shift of 237 by 24 places"). It is benign on a two's complement
+    target - the mask drops the sign bit again - and the vendored file is left unchanged, so test/ime_wnn switches
+    off the shift-base check for the vendored engine and for the derived translation that uses the same macros,
+    and for nothing else. Every other UBSan check stays on, including for the vendored code, and a failure aborts
+    the test.
+  - >-
+    The five-file image needed a bigger partition: it is 311,296 B over the 6 MiB of TASK-000. ADR-033 grows
+    ime_data to 0x7B0000, so the table changed as well and board #1 needs the partition table flashed together with
+    the image. Nothing here was flashed. The ZH blob (3,330,280 B, 16,580 glyphs) and the JA blob (1,292,412 B,
+    6,655 glyphs) still carry the same code points twice, with the glyph forms each language needs.
+  - >-
+    No user dictionary and no learning: nothing typed is stored, so the frequency ordering is the one the shipped
+    dictionaries carry and does not adapt. The upstream approximate-match patterns are not ported either.
+  - The engine is not reentrant; ime_wnn must be called from one task (the future UI owner) at a time.
+  - >-
+    Conversion quality was checked against the engine's own output on vectors, not against a reference IME; the
+    expected values in the suite are what these dictionaries produce.

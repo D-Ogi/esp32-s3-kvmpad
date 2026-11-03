@@ -1,0 +1,108 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M5 / TASK-070A (MOUSE view), TASK-070B (KEYBOARD view), TASK-070C part 1 (SHORTCUTS view, HOST / CLIENT details)
+# and the product shell composition ui_app (components/ui_views/src/ui_app.c) with its firmware adapter
+# main/ui_shell.c. Format: docs/spec/04 section 12. Raw logs and snapshots: ../evidence/hardware/ (outside the
+# repository); key lines and SHA256 below. No log contains typed keys: the keyboard evidence is counters only.
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M6 package"
+  idf: "v6.1"
+  lvgl: "9.6.0~1"
+  board: "Waveshare ESP32-S3-Touch-LCD-7B, board #1 (ESP32-S3 rev v0.2, 16 MiB flash, 8 MiB PSRAM)"
+  host_toolchain: "llvm-mingw 20261020 clang (ucrt x86_64), CMake 4.0.3, Ninja 1.12.1; ASan (LVGL + project) and UBSan (project)"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-070-host
+    <<: *common
+    result: PASS
+    steps: |
+      cmake -S test/ui_views -B ../build-host-views -G Ninja -DCMAKE_C_COMPILER=clang
+      cmake --build ../build-host-views && ctest --test-dir ../build-host-views -V
+    observed: >-
+      test_ui_view_mouse 2108 checks, test_ui_view_keyboard 1589, test_ui_view_shortcuts 2828, test_ui_view_status
+      1112, test_ui_app 969; 0 failures in all five, -Werror with ASan + UBSan. MOUSE: tap = DOWN then UP, hold =
+      held button, slide-off = UP, HOST loss while held = UP, refused DOWN owes no UP, Drag lock follows the store
+      only; pad x 20..1003 y 88..495, buttons 196x72. KEYBOARD: 77 reachable caps in both layers give DOWN then UP
+      with their usage, a 700 ms hold gives one DOWN (no repeat), modifiers OFF / ARMED / LOCKED come from the store
+      only, F1-F12 is a local layer, Caps shows Unknown until the HOST sends an LED report, smallest cap 64x48, 0
+      overlaps. SHORTCUTS: every tile submits one allowlisted chord id, Alt+F4 asks for confirmation when the policy
+      says so, tiles blocked while the HOST is not mounted / maintenance / owner REMOTE. Details cards: live
+      projections, Wi-Fi never upgrades the CLIENT session (FR-403). Shell: indicators read "Unknown" until a source
+      publishes, a details card cancels input and takes the pad away, the bar below the scrim is unreachable, three
+      tabs follow the router and every real view change asks for a release first, leave releases a held button.
+      Lifecycle: 1000 create/destroy cycles per view and 300 shell init/deinit cycles without live-allocation growth.
+    issues:
+      - "Mutation checks: keyboard 4/4 mutants caught (322 / 6 / 21 / 1 failures), shortcuts and status 2/2, mouse 3/3 (earlier run)."
+  - test_id: TASK-070-board-shell
+    <<: *common
+    result: PASS_HW
+    evidence: |
+      evidence/hardware/20261102-081742-m5-shell-4-snap-mouse.log sha256=8eb3c5783b19031dd3ffbd5baa64acec47515551c150564c224076b730ba9877
+      evidence/hardware/20261102-081847-m5-shell-4-snap-keyboard.log sha256=405097e7560d79ad3e1965e5c6f0082d792adcccfc6185ad091a7a9ffc785067
+      evidence/hardware/20261102-081943-m5-shell-4-snap-shortcuts.log sha256=e5399e0efbc87c328d466e6e7ba0d4624148ca434943123ff148d1d8ef8e912f
+      evidence/hardware/20261102-082038-m5-shell-4-snap-host.log sha256=83046f57ae36d4b6f1f7473fecf67e46e8afd9431dcdcb7dc3fe784002e4e062
+      evidence/hardware/20261102-082134-m5-shell-4-snap-client.log sha256=b681fe56b43959d46bc43dd90759b6a0ebc50e49b9d10500b97d54e3327dac99
+      evidence/hardware/m5-shell-4-mouse.png sha256=fac597de65f010bb5ca26f7214fd1f0afe4f73756df5be955513577e6fc49e86
+      evidence/hardware/m5-shell-4-keyboard.png sha256=5a75770741d27239f26dc942d61d7676879a9e8b5fccf8a4f4c172d3ff2ccdb4
+      evidence/hardware/m5-shell-4-shortcuts.png sha256=75647dc2c732d0ec2bb0a42ff6834c0590d83d9df3fa3ad5932f15a98840c8d4
+      evidence/hardware/m5-shell-4-host.png sha256=8c5b5ac234531630514fe56b56dda4cc989b7f7e647462899dc1cb7b6c058c51
+      evidence/hardware/m5-shell-4-client.png sha256=c12a492150b76c3ab2eea716689278d7fff371405fd0f3e266e2206634b95872
+      evidence/hardware/20261102-082149-m5-shell-4-after.log sha256=9f93a58489068354f2caa835dc221364c72704bdb46e35aac42273a568b7ebeb
+    steps: |
+      kvm_serial.py cmd "ui nav <mouse|keyboard|shortcuts>" / "ui open <host|client>" / "ui close", each followed by "ui snap 2"
+      ui_snapshot.py <log> <png>   (the running hash of SNAP_END is recomputed: all five OK)
+    observed: >-
+      Firmware m5-shell-4: the shell renders the top bar (brand, three tabs, Host "Active", Client "Off"), the
+      MOUSE, KEYBOARD (full US ANSI field) and SHORTCUTS (six commands, Media row, Switch HOST layout) views, and
+      both details cards as blocking overlays. Console navigation goes through the same local action gateway
+      (UI_LOCAL ... ESP_OK); afterwards UI_SHELL shows=4 created=3 cancels=6, UI_OVERLAY shown=2 dismissed=2,
+      HID release_all=6 (one per view change), ledger_empty=1. No reset during the series.
+  - test_id: TASK-070B-board-owner
+    <<: *common
+    result: PASS_HW
+    evidence: "evidence/hardware/20261102-080849-m5-shell-2-owner-kbd.log sha256=23098bdc04d91f7f329f0dea2c805bbb05aeefd254e974584bb7f9c9cb69bbfd"
+    observed: >-
+      Firmware m5-shell-2, the owner at the bench typing on the on-screen keyboard into the Windows HOST and
+      reporting that it works. Counters afterwards: UI_KEYBOARD key_down=35 key_up=35 mod_toggles=2 refused=0; six
+      tab changes, each with RELEASE_ALL (view_change=7 incl. the boot); HID ledger_empty=1, keys=0, mods=0x00.
+    issues:
+      - "HID completion_timeout=3 in the same session: three reports were not read by the HOST within 250 ms, so the core released everything (fail-safe, 02 §7.3). Cause not yet found; to be measured per interface (open item for TASK-050 / M3)."
+  - test_id: TASK-070A-board-buttons
+    <<: *common
+    result: NOT_RUN_HW
+    observed: >-
+      The pad (move, tap, two-finger scroll) reached the HOST in earlier sessions on board #1 (owner reports). The
+      dedicated Left / Right / Drag lock buttons of the rewritten MOUSE view were not pressed by the owner on the
+      current image (UI_MOUSE button_down=0); a synthetic tap is refused while the shell is on screen by design.
+  - test_id: AT-UIFW-01
+    <<: *common
+    result: PASS_SW
+    observed: "Host geometry checks of every view: all targets >= 44 px (keys >= 64x48, buttons 196x72), no overlaps, all inside 1024x600. Board snapshots above for visual review; the SDL golden set is TASK-070D."
+  - test_id: AT-UIFW-02
+    <<: *common
+    result: PASS_SW
+    observed: "1000 create/destroy cycles per view, 300 shell cycles, live LVGL allocations unchanged. 10000-navigation board run NOT_RUN_HW (owner-present budget)."
+  - test_id: AT-UIFW-08
+    <<: *common
+    result: PASS_SW
+    observed: "Navigation with a key / mouse button held: the view's own UP plus the router's release request before the new view (keyboard, mouse and shell tests). Board: RELEASE_ALL per tab change confirmed by counters."
+  - test_id: AT-UIFW-09
+    <<: *common
+    result: PASS_SW
+    observed: "Observers bound to objects; store deleted before the views and the reverse order without use-after-free under ASan."
+  - test_id: AT-UIFW-10
+    <<: *common
+    result: PASS_SW
+    observed: "1000 details-card open/close cycles; the view below is usable after every close (test_ui_view_status, test_ui_app)."
+  - test_id: TASK-070-snapshot-defect
+    <<: *common
+    result: PASS_HW  # FAIL on m5-shell-3, fixed and re-verified on m5-shell-4
+    evidence: "evidence/hardware/20261102-081102-m5-shell-3-shortcuts.log sha256=dd2a55d43258bb4e9d7cc834a10e25765021d76f454452b4bbcc5c54ab7ef344"
+    observed: >-
+      Image m5-shell-3: `ui snap` rendered the full shell inside the 6 KiB console task and overflowed its stack (5
+      resets). Fixed in m5-shell-4: ui_platform_snapshot() hands the render to the LVGL task with lv_async_call() and
+      waits on a semaphore (abandoned requests are freed by the LVGL task). Verified by the five snapshots above;
+      LVGL task stack high-water after a snapshot: 1612 B free of 8192.

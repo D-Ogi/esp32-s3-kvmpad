@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M5 / TASK-060E: GT911 touch router (components/ui_touch_bridge), LVGL pointer indev, gesture FSM stream,
+# firmware wiring (main/ui_glue.c, main/kvm_diag.c, main/kvm_console.c). Format: docs/spec/04 section 12.
+# Raw logs in ../evidence/.
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M5 package"
+  hardware: "Waveshare ESP32-S3-Touch-LCD-7B (ADR-026), board unit #1"
+  usb_host_os: "Windows 11 Pro 10.0.26200"
+  idf: "v6.1"
+  lvgl: "9.6.0~1"
+  host_toolchain: "llvm-mingw 20261020 clang (ucrt x86_64), CMake 4.0.3, Ninja 1.12.1; ASan + UBSan"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-060E-host
+    <<: *common
+    result: PASS
+    steps: |
+      cmake -S test/ui_touch -B ../build-host-touch -G Ninja -DCMAKE_C_COMPILER=clang
+      cmake --build ../build-host-touch && ctest --test-dir ../build-host-touch --output-on-failure
+    observed: >-
+      test_touch_router: 120 checks, 0 failures (11 tests). 200000 random samples: pad_downs=168283 chrome_downs=33326
+      blocked=140210 pointer_cancels=980, no safety or liveness violation. Mutation check: re-introducing the stale
+      target of a reused contact slot gives 2382 liveness violations, so the invariant detects that class of bug.
+    issues:
+      - "Found and fixed by the random test: a reused contact slot kept the lifted contact's target, so a new contact could block itself."
+      - "Found and fixed in review: kvm_gesture_init() clears the struct before copying the config, so a re-init now copies the config to a local first."
+  - test_id: TASK-060E-build
+    <<: *common
+    result: PASS
+    observed: "kvmpad.bin 0x1a3500 B (59 % of the app partition free), 0 warnings in project code; sha256 7bcb047b2613d8af8106e1a20fd58de1a96e14b37b8b6b4af74325cdabac448d"
+    evidence:
+      - "evidence/build/m5-060e-4.log sha256=ad43f5bf93dfd19aa7e673cf7b9e38e54f6ac533bc977e4b6b15304403f0394d"
+      - "evidence/build/flash-m5-060e-4.log sha256=bafa49b229a8e57d10fb0bdcbedee5b7d68155ce4efa394a1fd86eae8f6d5c25 (hash verified)"
+    issues:
+      - "m5-060e-1 failed: used the LCD resolution macros from a header not included; the router now uses BOARD_TOUCH_H_RES/V_RES (touch coordinates)."
+      - "m5-060e-2 on the board: the pad rectangle was empty at boot because the idle scene is built after ui_glue_start(); app_main now refreshes it after the scene (m5-060e-3)."
+  - test_id: TASK-060E-board
+    <<: *common
+    result: PASS
+    firmware_sha256: "7bcb047b2613d8af8106e1a20fd58de1a96e14b37b8b6b4af74325cdabac448d"
+    steps: "kvm_serial.py cmd: ui touch; ui tap 56 106; ui tap 169 564; ui tap 500 300; ui tap 56 106 30; ui pad on; ui tap 56 106; ui pad off; ui touch; hid; ui snap 2"
+    observed: >-
+      Pad rectangle from the screen: x=128..1007 y=72..511. Synthetic taps through the bridge queue (the same path as
+      GT911 samples): rail button "Mouse" -> 1 LVGL CLICKED, bottom "LEFT" -> 1 CLICKED, pad centre -> pad_downs+1 and
+      0 clicks, a 30 ms tap -> 1 CLICKED; tap refused while pad -> HID is on. Router: chrome_downs=3 pad_downs=1
+      blocked_downs=0 invalid=0, queue_full=0, LVGL indev polled (indev_reads 1016). HID untouched by the whole run:
+      accepted=0 posted=0 buttons=0x00 ledger_empty=1. Store: sources=0xF, drag_lock="off" published by the gesture FSM
+      (was "unknown" before 060E). The snapshot shows the top-bar feedback "Mouse (3)".
+    evidence:
+      - "evidence/hardware/20261102-062905-m5-060e-check2.log sha256=9305682a6e9f513cbe9a766977c73d457a0458382a7e04140b92afbb33d5e95b (pad on/off re-inits and cancels the FSM)"
+      - "evidence/hardware/20261102-063319-m5-060e-tap.log sha256=e377e8f62c737609491d2650226a92b07e833f4af5d14f5cf363f2eff1842010"
+      - "evidence/hardware/20261102-063420-m5-060e-snap.log sha256=8214efea1ca48f12b79dc2a01cebc8948ee3b6560b9f8876b985e28b03c9c745"
+      - "evidence/hardware/m5-060e-snap.png sha256=c63d520898e091cae96bf67e4c93dcecda98e99bc0852c7853643bf5bfbba805"
+  - test_id: AT-UIFW-04
+    <<: *common
+    result: PASS_SW
+    observed: "Host: pad + rail contacts in both orders never produce a pointer press from a pad contact nor a pad gesture under a held button; 200000 random samples. Board: NOT_RUN_HW with fingers (nobody at the bench); synthetic taps only."
+  - test_id: AT-GEST-live
+    <<: *common
+    result: NOT_RUN_HW
+    observed: "Pad -> HID stays off by default until TASK-070A; real finger gestures to the HOST need a person at the bench (`ui pad on`, then move/tap/two-finger scroll on the pad)."

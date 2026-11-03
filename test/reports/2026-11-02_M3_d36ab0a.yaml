@@ -1,0 +1,158 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M3: HID core, InputArbiter, RELEASE_ALL (TASK-050 core part, ADR-016 kbd_fsm, ADR-018 Consumer, ADR-020 keep-alive).
+# Format: docs/spec/04-TEST-PLAN-AND-ACCEPTANCE-CRITERIA.md section 12, one document per test id.
+# Raw logs live outside the repository in ../evidence/ (hardware/, build/); each is named with its SHA256.
+# Host results are L1 (host unit). On the board only neutral reports were sent: nobody was at the bench, and no key, button,
+# motion or Consumer usage was allowed to reach the HOST PC. Every test that needs real input on the wire is NOT_RUN_HW.
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M3 package"
+  firmware_sha256: "bfa87f35eab46ec952e39f75b6d5ed7249af4c0424fad1fb5f7c6fe76087570d"   # build/kvmpad.bin
+  bootloader_sha256: "7405b34871ca07aa32b401171489a0db42531d7ba57e39d5a435e528dead73d5"
+  partition_table_sha256: "4904409646dea5980eeb5cdb19c075a1bef538f145188c986c320c9b781a0822"
+  hardware: "Waveshare ESP32-S3-Touch-LCD-7B (ADR-026), board unit #1, ESP32-S3 rev v0.2"
+  usb_host_os: "Windows 11 Pro 10.0.26200"
+  idf: "v6.1"
+  components_lock_sha256: "c093e3356f074d307eee983c692dd7dca1caf85896a98130ca1793b61e579a48"
+  host_toolchain: "llvm-mingw 20261020 (clang 23), -Wall -Wextra -Werror -Wshadow -Wconversion, ASan + UBSan, -fno-sanitize-recover=all"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: L1-host-unit-M3
+    <<: *common
+    result: PASS
+    steps: "cmake -S test/host_unit -B ../build-host -G Ninja -DCMAKE_C_COMPILER=clang; cmake --build ../build-host; ctest --test-dir ../build-host -V"
+    observed: >-
+      8/8 suites, 0 failures. New: test_kbd_fsm 50 checks, test_hid_core 288, test_hid_vectors 95, test_hid_stress 36719
+      (seed 0x4b564d706164). The stress suite was also run with seeds 0x1, 0xdeadbeef and 0x3039: 0 failures each.
+    evidence:
+      - "evidence/build/host-unit-m3.log sha256=e16622e16ebd7bd58536625256ce52b769745396bd9b1df36e7532092cc0b0ea"
+    issues:
+      - "The first stress run found accepted shortcuts that were still queued at RELEASE_ALL ending with no outcome event (10000 accepted, 9768 delivered + aborted). Fixed: queued or stale shortcuts now raise CHORD_ABORTED; the suite asserts delivered + aborted == accepted."
+      - "A single int16 delta of -32768 was clipped by the coalescing cap (32767). The cap is now 32768."
+  - test_id: AT-HID-03   # 6KRO, rollover rejected gracefully
+    <<: *common
+    result: PASS_SW
+    observed: "test_hid_core six_key_rollover: 7th key rejected and counted, modifiers outside the 6 slots, HOST model holds exactly 6 usages; random walk (test_hid_stress) never put a modifier into a slot or more than 6 usages on the wire."
+    hw: NOT_RUN_HW
+  - test_id: AT-HID-04   # int16 split into int8 reports
+    <<: *common
+    result: PASS_SW
+    observed: "split_motion_preserves_sum / coalesced_motion_preserves_sum: sums exact for +-32767/-32768/127/-128 and 300 coalesced moves; max |delta| on the wire 127."
+    hw: NOT_RUN_HW
+  - test_id: AT-HID-05   # Ctrl+Alt+Del phases
+    <<: *common
+    result: PASS_SW
+    observed: "check_chord_reports: modifiers, modifiers+Delete, modifiers, neutral; one Delete press; CHORD_DELIVERED after the last completion."
+    hw: NOT_RUN_HW
+  - test_id: AT-HID-06   # Alt+Tab, Ctrl+Shift+Esc, Win+D, Alt+F4, PrintScreen, layout switch
+    <<: *common
+    result: PASS_SW
+    hw: NOT_RUN_HW
+  - test_id: AT-HID-07   # delivered = read from the endpoint
+    <<: *common
+    result: PASS_SW
+    observed: "chord_delivered_only_after_host_read: with the HOST not reading, no DELIVERED; the 250 ms completion timeout releases, reports ABORTED and never sends the key phase later."
+    hw: NOT_RUN_HW
+  - test_id: AT-HID-08   # chord interrupted by suspend / unplug
+    <<: *common
+    result: PASS_SW
+    observed: "chord_interrupted_by_suspend: ledger empty at once, nothing sent while suspended, neutral after resume, Delete pressed once and never replayed."
+    hw: NOT_RUN_HW
+  - test_id: AT-HID-09   # 10k shortcuts with a random disconnect
+    <<: *common
+    result: PASS_SW
+    observed: "chords_with_random_disconnects: 10000 accepted, 8933 delivered, 1067 aborted, 1883 RELEASE_ALL; 0 stuck states after each step, at most one press of the chord key per shortcut (0 phantom repeats)."
+    hw: NOT_RUN_HW
+  - test_id: AT-KEY-04   # modifier bits, AltGr = Right Alt
+    <<: *common
+    result: PASS_SW
+    hw: NOT_RUN_HW
+  - test_id: AT-KEY-05   # one-shot Ctrl + C
+    <<: *common
+    result: PASS_SW
+    observed: "kbd_one_shot_through_core: nothing on USB while ARMED; Ctrl and C in one report, C up first, then Ctrl up; next key without Ctrl. FSM unit tests: lock window boundary 300 ms, late tap disarms, cancel releases locked + one-shot."
+    hw: NOT_RUN_HW
+  - test_id: AT-KEY-07   # RELEASE_ALL never leaves a key (core part)
+    <<: *common
+    result: PASS_SW
+    observed: "ten_thousand_release_all: 10000 random holds (keys, modifiers, buttons, Consumer) with partial completions, then RELEASE_ALL: HOST model neutral every time."
+    hw: NOT_RUN_HW
+  - test_id: AT-KEY-10   # neutral after re-enumeration
+    <<: *common
+    result: PASS_SW
+    hw: NOT_RUN_HW
+  - test_id: AT-FAULT-05   # endpoint not ready
+    <<: *common
+    result: PASS_SW
+    observed: "busy_endpoint_retries_without_duplicates: 20 refused polls, then exactly 4 Alt+Tab phases, one Tab press."
+    hw: NOT_RUN_HW
+  - test_id: AT-FAULT-06   # session close in a chord
+    <<: *common
+    result: PASS_SW
+    observed: "remote_release_and_disconnect: disconnect after phase 1 -> neutral, Delete never sent, CHORD_ABORTED."
+  - test_id: AT-FAULT-07   # maintenance releases before flash (core part)
+    <<: *common
+    result: PASS_SW
+    observed: "maintenance_blocks_input: button released, epoch incremented, new input -> ERR_OTA_IN_PROGRESS."
+  - test_id: AT-EXT-05   # Consumer DOWN -> UP, release clears
+    <<: *common
+    result: PASS_SW
+    hw: NOT_RUN_HW
+  - test_id: AT-EXT-09   # keep-alive conditions (ADR-020)
+    <<: *common
+    result: PASS_SW
+    observed: "keepalive_rules / keepalive_restarts_on_epoch_change: off by default; one 0-px report after the interval; none with a held key, in maintenance, suspended; interval clamped 10..300 s; owner change restarts the interval."
+    hw: NOT_RUN_HW
+  - test_id: VEC-005..009
+    <<: *common
+    result: PASS_SW
+    observed: "test_hid_vectors: lease timeout during Ctrl DOWN -> epoch+1, Ctrl UP, old-epoch input ERR_STALE_EPOCH; drag + view change -> one LEFT DOWN, moves with the LEFT bit, one LEFT UP; 300 moves coalesced + RELEASE_ALL executed at once + orphan UP counted; unplug/remount -> 3 neutral reports, no replayed Ctrl; local takeover during a REMOTE drag -> REVOKED, LEFT UP first, queued REMOTE move discarded, old epoch rejected."
+  - test_id: AT-SEC-02/03   # core part: no lease / stale epoch / wrong session -> 0 HID
+    <<: *common
+    result: PASS_SW
+    observed: "Authentication, sequence numbers and the transport belong to TASK-100 and are not tested here."
+  - test_id: AT-CONN-05..08   # core part
+    <<: *common
+    result: PASS_SW
+    observed: "lease and heartbeat rules: no sending 3 s after the last heartbeat, revoke at 4 s, foreign heartbeat ignored, a second session cannot take a lease, LOCAL activity blocks a request until 2 s idle."
+  - test_id: M3/firmware-build
+    <<: *common
+    result: PASS
+    steps: ".tools/build.ps1 (idf.py build)"
+    observed: "0 warnings / errors in the filtered build log; image 0xee3b0 B, 77 % of the 4 MiB slot free."
+    evidence:
+      - "evidence/build/m3-hid-dispatch-1.log sha256=c84fc21e3ae24ba6421afadfcfeb60cb8c51adc747fa689093759b685808b0d2"
+  - test_id: M3/HIL-neutral-start   # TECH-035 through the scheduler, TECH-034 context check
+    <<: *common
+    result: PASS
+    steps: "flash; kvm_serial.py boot; kvm_serial.py cmd hid usb; kvm_serial.py cmd 'hid release'"
+    observed: >-
+      'hid: dispatch ready: core in the TinyUSB task'; mount epoch 1; usb_hid sent=3 refused=0 wrong_context=0 complete=3,
+      fallback neutral_sent=0 (the old callback path is unused). 'hid release': RELEASE_ALL request=1, 3 further neutral
+      reports, all read by Windows (sent=6, completion timeouts 0), max pump 88 us.
+    evidence:
+      - "evidence/hardware/20261102-041536-boot.log sha256=8f8330030becdd78262d3e58c924ffc88b1f37f00f5f25869ffb37838e3e49d4"
+      - "evidence/hardware/20261102-041537-cmd.log sha256=ecda8bb3885b3f5b3101f4899bdde6e6214f7d5be0fee8c78460ab381add270b"
+      - "evidence/hardware/20261102-041547-cmd.log sha256=3f81b5d9f6a365700293a8fb6d3593a15ad072a7282a4696b39162705d4d895e"
+    issues:
+      - "The 10 ms tick runs the pump 100 times per second even when idle (pumps == pump_requests, 2784 after the bootloop). Cheap (max 88 us), but an idle-aware tick is an optimization for TASK-120."
+  - test_id: M3/bootloop-15
+    <<: *common
+    result: PASS
+    observed: "15/15 boots reach BOOT_OK with EXIO5 verified and GT911 found; USB mount 1066..1070 ms after reset; after the series sent=3, complete=3, timeouts=0."
+    evidence:
+      - "evidence/hardware/20261102-041636-bootloop15.log sha256=a8a2d192484a900f8891fda7550035c0e358c7d81436126c32f8e251482fadde"
+      - "evidence/hardware/20261102-041702-cmd.log sha256=840737d2bea49308dcea8e4dee0544b62a89d160e929c06c6e2dabaa34951890"
+  - test_id: AT-HID-01   # enumeration, after the scheduler change
+    <<: *common
+    result: PASS
+    observed: "test/hil/usb_enum_windows.ps1: USB_ENUM PASS (composite, boot keyboard, boot mouse, Consumer; serial 441BF6C9229C)."
+    evidence:
+      - "evidence/hardware/20261102-041636-usb-enum-windows.log sha256=d73f181eb288b40ae3587f7d7b436daef87114077106d4dbe786610caa44d27b"
+  - test_id: AT-HID-02/AT-CONN-10/AT-HID-03..09-on-wire
+    <<: *common
+    result: NOT_RUN_HW
+    reason: "Real key, button, motion and Consumer reports need a person at the bench (and a HOST prepared for them). No producer is connected to the scheduler yet; the console deliberately has no command that presses a key."

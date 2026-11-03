@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M6 / TASK-090: config_store (versioned settings record with CRC, migrator, debounced atomic writes) and its
+# firmware integration main/app_config.c (NVS backend, writer task, ADR-017 Wi-Fi cache hooks, `config` console).
+# Format: docs/spec/04 section 12. Raw logs: ../evidence/hardware/ (outside the repository).
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M6 package"
+  idf: "v6.1"
+  board: "Waveshare ESP32-S3-Touch-LCD-7B, board #1 (ESP32-S3 rev v0.2, 16 MiB flash, 8 MiB PSRAM)"
+  host_toolchain: "llvm-mingw 20261020 clang (ucrt x86_64), CMake 4.0.3, Ninja 1.12.1; ASan + UBSan"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-090-host
+    <<: *common
+    result: PASS
+    steps: |
+      cmake -S test/config_store -B ../build-host-config -G Ninja -DCMAKE_C_COMPILER=clang
+      cmake --build ../build-host-config && ctest --test-dir ../build-host-config -V
+    observed: >-
+      config_record: 1864 checks, 0 failures (defaults, range validation and repair of every field, layout id
+      rules, CRC32 known vector, every single bit flip of a stored record detected, truncated / oversized blobs,
+      schema v1 -> v2 migration, future schema held read-only, paired-client register and the policy floor).
+      config_store: 669 checks, 0 failures against a fake NVS with fault injection (first boot, read-back,
+      corruption and read errors recover to defaults, debounce coalesces a burst and bounds a long drag, minimum
+      interval between writes, a no-op change costs nothing, flush bypasses the debounce, write failure retried,
+      power loss keeps the old record, torn write recovers, pairing changes written at once, no token reaches
+      storage, factory reset clears everything also with a failing erase).
+  - test_id: TASK-090-board
+    <<: *common
+    result: PASS_HW
+    evidence: |
+      evidence/hardware/20261102-073323-m6-070a-1-state.log sha256=1348bf615813928cf0c59969085ba35439ae1646ebd0f7e07e78a972065f21e1
+      evidence/hardware/20261102-080704-m5-shell-2-state.log sha256=0596ef118a8aba9a497c5eb14d795ead49676eadccd028e472760ff696497158
+    observed: >-
+      First boot of the integrated image (m6-070a-1): CONFIG load=defaults, one change (the ADR-017 cache after the
+      first full connect) -> writes=1, write_failures=0, wifi_cache=valid channel=6. After the next flash and reset
+      (m5-shell-2): CONFIG load=ok recovered=no, changes=0 writes=0 (nothing rewritten at boot), every field kept
+      (sensitivity 1, brightness 80, remote.enabled 0, pair.require_accept 1, control.approval 2,
+      shortcuts.confirm_alt_f4 0), wifi_cache=valid. The record holds no SSID, passphrase or IP.
+  - test_id: ADR-017-cached-connect
+    <<: *common
+    result: PASS_HW
+    evidence: "evidence/hardware/20261102-080704-m5-shell-2-state.log sha256=0596ef118a8aba9a497c5eb14d795ead49676eadccd028e472760ff696497158"
+    observed: "After reset the link came up through the cached BSSID / channel: WIFI_COUNTERS cached=1 full=0 fallbacks=0 connects=1."
+  - test_id: AT-FAULT-02
+    <<: *common
+    result: PASS_SW
+    observed: "Corrupted / torn record -> defaults with `recovered`, the device keeps working (fake NVS fault injection). On the board: NOT_RUN_HW (would need a deliberate NVS corruption and a reset)."
+  - test_id: AT-FAULT-03
+    <<: *common
+    result: PASS_SW
+    observed: "Write failure -> the record stays dirty and is retried; no data loss in RAM (fake NVS)."
+  - test_id: AT-FAULT-10
+    <<: *common
+    result: PASS_SW
+    observed: "Store level: factory reset clears every field and the paired-client register, also when the erase fails (fake NVS). On the board NOT_RUN_HW: PROC-010 has no UI or console entry yet, and a factory reset from tooling needs the owner (AGENTS.md prohibition 6)."
+  - test_id: AT-SEC-08-config
+    <<: *common
+    result: PASS_HW
+    observed: "`config` prints field values and counters only; the paired-client register prints a count (paired=0), never names or token hashes."

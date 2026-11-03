@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M5 / TASK-070D: L1 desktop simulator (07 §10) - the real LVGL 9.6 and the real ui_core / ui_theme /
+# ui_components / ui_views sources, headless at 1024x600 RGB565, driven by fixtures, compared with goldens.
+# Format: docs/spec/04 section 12. No board is involved; no row here is a hardware result.
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M8 package"
+  host_toolchain: "llvm-mingw 20261020 clang (ucrt x86_64), CMake 4.0.3, Ninja 1.12.1; ASan + UBSan; -Werror"
+  lvgl: "9.6.0 (managed component, same tree as the firmware)"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-070D-sim
+    <<: *common
+    result: PASS
+    steps: |
+      cmake -S simulator/lvgl_sdl -B ../build-sim -G Ninja -DCMAKE_C_COMPILER=clang
+      cmake --build ../build-sim && ctest --test-dir ../build-sim -V
+    observed: >-
+      Clean build by the implementer (512/512 targets, no warning), suite rerun by the integrator: 1/1 passed. 23
+      fixtures built, 23 goldens match with 0 differing pixels (mouse, drag lock, keyboard plain / caps on / caps
+      unknown / Fn / mods / key held, shortcuts / confirm / layout / toast, HOST and CLIENT details, host lost /
+      suspended / offline, client lost / offline, queue overflow, maintenance, REMOTE owner). No interactive
+      object below the AT-UIFW-01 minimum size and none outside the screen.
+  - test_id: AT-UIFW-01
+    <<: *common
+    result: PASS_SW
+    observed: "Every visible interactive object in the 23 fixtures checked against the minimum target size: small=0, over=0."
+  - test_id: AT-UIFW-02
+    <<: *common
+    result: PASS_SW
+    observed: "2000 view switches: live allocations 2399 -> 2399, observers 11 -> 11, views created 3 -> 3 (views are kept, not rebuilt)."
+  - test_id: AT-UIFW-04
+    <<: *common
+    result: PASS_SW
+    observed: "Pad area [20..1003] x [88..495] pressed and released: no action and no phantom tab click."
+  - test_id: AT-UIFW-08
+    <<: *common
+    result: PASS_SW
+    observed: "KEY_UP(0x04) at seq 10, cancel before it, new input area at seq 12: no second UP."
+  - test_id: AT-UIFW-10
+    <<: *common
+    result: PASS_SW
+    observed: "200 overlay open/close cycles: pad available after each, live allocations 1987 -> 1987."
+  - test_id: AT-UIFW-sim-vs-board
+    <<: *common
+    result: NOT_RUN_HW
+    observed: "The goldens are L1 evidence. Board screenshots of the same shell exist (test/reports/2026-11-02_M5_TASK-070ABC_d36ab0a.yaml, `ui snap`); a pixel comparison simulator vs. board is not automated."
+  - test_id: TASK-070D-visual-fixes
+    <<: *common
+    result: PASS
+    observed: >-
+      The goldens exposed eight visual defects; fixed in ui_theme / ui_views / ui_core (overlay scrim token): disabled
+      state carried by surface + ink + border instead of a blanket 40 % opacity (disabled legends were about 1.1:1),
+      every disabled shortcut tile and the layout tile repainted in the disabled ink, KEYBOARD shows the same
+      "Host disconnected" notice as MOUSE, the MOUSE notice no longer clips the pad header, one scrim color/opacity for
+      the details overlays and the FR-734 modal, symmetric keyboard margins, enabled look for F1..F12, CapsLock
+      sub-legend fits, toast placement. New fixture shortcuts_host_lost (FR-308 gate). Integrator rerun: test/ui_views
+      5/5 (test_ui_view_shortcuts 2962 checks), simulator 24 fixtures match, AT-UIFW-01 0 violations; goldens
+      inspected by eye.

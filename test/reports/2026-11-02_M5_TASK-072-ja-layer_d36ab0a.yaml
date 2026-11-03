@@ -1,0 +1,173 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M5 / TASK-072: the JA layer of the KEYBOARD view (FR-746), the compressed candidate fonts and the ime_data partition
+# of ADR-033 (PROPOSED), and both decoders brought up on board #1. The OpenWnn engine itself is reported in
+# 2026-11-02_M5_TASK-072-openwnn_d36ab0a.yaml. No text was typed into a HOST and no setting was changed on the board.
+# Format: docs/spec/04 section 12.
+---
+host_common: &host
+  build_sha: "d36ab0a + uncommitted M0-M8 package"
+  board: "none (host only)"
+  host: "Windows 11, llvm-mingw clang (x86_64)"
+  when_utc: "2026-11-02"
+board_common: &board
+  build_sha: "d36ab0a + uncommitted M0-M8 package, firmware build ja-3 (kvmpad.bin about 0x2ae1xx B, 33% of the app slot free)"
+  board: "#1 ESP32-S3-Touch-LCD-7B, rev v0.2, 16 MB flash, 8 MB PSRAM (hardware/boards.md)"
+  host: "Windows 11, COM3 console (test/hil/kvm_serial.py)"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-072-compressed-font-blobs
+    <<: *host
+    result: PASS_SW
+    requirement: FR-746, TECH-081
+    steps: |
+      python -I tools/fonts/gen_hanzi_font_blob.py --set zh --font ../.tools/dl/fonts/sc/NotoSansSC-Regular.otf ... (run twice)
+      python -I tools/fonts/gen_hanzi_font_blob.py --set ja --font ../.tools/dl/fonts/jp/NotoSansJP-Regular.otf ... (run twice)
+      cmake -S test/ui_components -B ../build-host-uicomp -DKVM_HANZI_BLOB=<abs>/font_hanzi_24_v2.bin; ctest
+    observed: >-
+      KVMFONT1 version 2 (LVGL RLE + prefilter). font_hanzi_24.bin 3,330,280 B, 4 parts, 16,580 glyphs, SHA256
+      59aaa4a4d50808efa709764f2b8292f10468a42377ddee355352fac77dc33923; font_kanji_24.bin 1,292,412 B, 2 parts, 6,655
+      glyphs, SHA256 363c4200821692960d9474dde119a206f591343df06f9a33ec54ff5539696f81; both identical on the second run.
+      test_ui_font_blob 405 checks, 0 failures: version 3 refused, a short compressed stream refused, 3000 seeded
+      compressed variants under ASan, the real v2 blob drawn through LVGL, ui_font_blob_load_ex() yields 64 times for
+      16,580 glyphs (one per UI_FONT_BLOB_YIELD_GLYPHS) with the same result as ui_font_blob_load(). ctest 5/5 pass.
+  - test_id: TASK-072-ime-data-image
+    <<: *host
+    result: PASS_SW
+    requirement: TECH-081, ADR-033
+    steps: |
+      python -I tools/ime/build_ime_data.py --cxx <i686 clang++> --cxx-flag=-static --hanzi-font <v2> --kanji-font <ja> \
+          --work ../build-ime-data --out ../evidence/ime/ime_data4{a,b}.bin
+    observed: >-
+      6,602,752 B, 5 files (dict_pinyin.dat, font_hanzi_24.bin, ofl_noto_cjk.txt, font_kanji_24.bin, wnn_ja.bin), SHA256
+      1f9f0775174a3c1df35405e49d7411072208db7a321d98727c5db6dcc685b2fe for both runs. Does not fit 6 MiB; fits the
+      0x7B0000 partition of ADR-033 with 1,458,176 B free (the builder's default --partition-size).
+  - test_id: TASK-072-ja-layer-host
+    <<: *host
+    result: PASS_SW
+    requirement: FR-746, FR-747, FR-748
+    steps: |
+      cmake --build ../build-host-views && ctest --test-dir ../build-host-views --output-on-failure
+    observed: >-
+      7/7 pass. test_ui_view_keyboard (new test_ja_layer with a fake decoder that has `preedit`): JA needs its own
+      decoder, an unknown layer id is ignored, the strip takes UI_FONT_KANJI, the input shows the kana reading after the
+      fixed text, Enter commits fixed text + reading + unparsed letters ('-' as the minus key), Japanese punctuation
+      、。・「」？, JA -> ZH commits the reading with no TEXT_CANCEL in between and switches decoder and font, removing the
+      JA decoder leaves ZH alone and discards a JA composition with one TEXT_CANCEL. The utility row has one more local
+      cap (counts updated). test_ui_app: ui_app_set_ja_engine pass-through.
+  - test_id: TASK-072-ja-layer-sim
+    <<: *host
+    result: PASS_SW
+    requirement: FR-746, AT-UIFW-01/02/04/08/10
+    steps: |
+      cmake -S simulator/lvgl_sdl -B ../build-sim -DKVM_HANZI_BLOB=<abs>/font_hanzi_24_v2.bin -DKVM_KANJI_BLOB=<abs>/font_kanji_24.bin
+      ../build-sim/kvm_sim --update-golden; python -I -X utf8 simulator/tools/golden_manifest.py --command ...; ../build-sim/kvm_sim
+    observed: >-
+      kvm_sim PASS, 42 fixtures. New fixture keyboard_ja (canned decoder of sim_ja.c, real Noto Sans JP blob): reading
+      かんじへんかん, candidates 漢字変換 / 漢字 / 感じ / 幹事 / かんじ. Every KEYBOARD golden regenerated on purpose
+      (the JA cap in the utility row; keyboard_zh now renders from the compressed hanzi blob). Live LVGL allocations
+      back to the baseline.
+  - test_id: TASK-072-ja-glue-board
+    <<: *board
+    result: PASS_HW
+    requirement: FR-746, TECH-080, TECH-081, ADR-033
+    steps: |
+      pwsh -File ../.tools/flash.ps1 ja-1    (bootloader, the ADR-033 partition table, app; NVS untouched)
+      ../.tools/venv/Scripts/python -m esptool --chip esp32s3 --port COM3 write-flash 0x820000 ../evidence/ime/ime_data4a.bin
+      pwsh -File ../.tools/flash.ps1 ja-3; kvm_serial.py cmd "info" "ime status" after 30 s and after 100 s
+      kvm_serial.py cmd "reboot"; cmd "info" "ime status" after 30 s; cmd "info" after 90 s more
+      kvm_serial.py cmd "ui nav keyboard" "ui snap 2"; test/hil/ui_snapshot.py
+    observed: >-
+      Partition ime_data 8,060,928 B, 5 files, all SHA256-verified at mount (about 1.33 s). `IME glue installed (ZH
+      ready, JA ready)`. Worker timing on two boots: start 675 / 694 ms after boot, mount 1340 / 1328, hanzi font
+      validation 2842 / 2811, ZH total 2965 / 2932, kanji font 1100 / 1104, JA total 1104 / 1108, total 5413 / 5370 ms.
+      No reset over 100 s after the flash (boot_count 250) and over 90 s after the console reboot (reset_reason 3,
+      boot_count 251). Heap internal free 74,023 B, PSRAM free 1,843,404 B with both decoders open. The KEYBOARD
+      snapshot shows KO, ZH and JA disabled: the owner's saved delivery mode is host-ime (not changed).
+    evidence:
+      - "../evidence/hardware/20261102-154423-ja-fix1.log sha256=952dafb648b632cc63e5010cec3a92d20071564f87e7cd18e93f367752bfe24c"
+      - "../evidence/hardware/20261102-154532-ja-fix2.log sha256=f4c48ad1396970c837f161472c7f61a5081d15b04073eb24c4231297764d9d4e"
+      - "../evidence/hardware/20261102-154544-ja-fix-reboot.log sha256=1964bec8806b299f2313c578885a3c4f3f7df72c747d39b935720fafaa254c97"
+      - "../evidence/hardware/20261102-154615-ja-fix3.log sha256=614a4cba8db85ed857dde147df581413fd14ce5159b60feb57c13de37a4bf061"
+      - "../evidence/hardware/20261102-154715-ja-fix4.log sha256=01c1a14cfe8b024bd93b4f09bb4241c54f9f23c17fe8c3c08b35039f14c86b97"
+      - "../evidence/hardware/20261102-154819-ja-kbd.log sha256=c9b20514c81398819e910032b38930116d0eb66e4c03bbd069eb78f3d9ce6cec"
+      - "../evidence/hardware/ja-kbd.png sha256=13be2ac3b2067cbdc38f70ff6dd6c1d84d1b716020987b12bcf66f50c227c443"
+  - test_id: TASK-072-ime-load-task-wdt
+    <<: *board
+    result: FAIL
+    requirement: TECH-080 (decoders off the boot path without disturbing the system)
+    steps: |
+      firmware ja-1 / ja-2 (before the fix): kvm_serial.py cmd "reboot"; cmd "info" "ime status" at intervals
+    observed: >-
+      Two unexpected resets after one console reboot: boot_count 247 -> 249 with reset_reason 6 (ESP_RST_TASK_WDT).
+      Cause: the ime_load worker (priority 1, pinned to core 1) validated the compressed hanzi font (2.8 s of pixel
+      walk) right after the mount without blocking, so IDLE1 could not run and the task watchdog (5 s, idle task of
+      CPU1 watched) fired when the run went over the limit; some boots finished just under it. The series was stopped
+      at the first unexpected reset. Fix: ui_font_blob_load_ex() calls a yield every 256 glyphs, and ime_glue passes
+      vTaskDelay(1) and blocks for a tick between its stages. Cost about 70 ms. Verified by the board run above.
+    evidence:
+      - "../evidence/hardware/20261102-153949-ja-reboot.log sha256=88eb100191942d5aed7813549dda2e484b162e19b4ea6fae9b88aab127b9d35e"
+      - "../evidence/hardware/20261102-154010-ja-timing3.log sha256=5b15a47a65a73e80fa7f8e480cb49bba2ab63d7a43cff228c415d4d4ed91e519"
+      - "../evidence/hardware/20261102-154042-bc1.log sha256=65f12ab04fc6386a6364c53bebc2a0a7e7be11d48557b2ca69600f14f9f99a09"
+  - test_id: TASK-072-ja-flick-host
+    <<: *host
+    result: PASS_SW
+    requirement: FR-746
+    steps: |
+      cmake --build ../build-host-views && ctest --test-dir ../build-host-views --output-on-failure
+    observed: >-
+      7/7 pass; test_ui_view_keyboard 2577 checks, 0 failures. New test_ja_flick (pointer slides through the real LVGL
+      hit test): the toggle only on JA; the pad hides the number and letter rows, keeps the utility and bottom rows,
+      every pad key is at least UI_TOUCH_MIN and inside the content slot; tap and the four slide directions give
+      ka / si / tu / ne / ho, a slide under UI_FLICK_MIN is a tap; the key shows its resting legend after release;
+      ゛゜小 cycles あ -> ぁ -> あ and つ -> づ -> っ -> つ, は -> ば -> ぱ; Backspace removes one kana; わ row
+      wo / nn / -; Enter commits and clears; a punctuation slide commits the reading before 。; 「 and ？ with nothing
+      composed; Space and Backspace with nothing composed leave as TEXT_KEY; no KEY_DOWN from the pad; the input stops
+      at UI_VIEW_KBD_JA_CAP; a lost HOST disables the pad; ABC and leaving JA restore the QWERTY rows and the F1-F12
+      swap. The fake decoder of the test was resized to the JA input cap (UBSan caught an index past the pinyin cap).
+  - test_id: TASK-072-ja-flick-sim
+    <<: *host
+    result: PASS_SW
+    requirement: FR-746, AT-UIFW-01/02/04/08/10
+    steps: |
+      ../build-sim/kvm_sim --update-golden --only keyboard_ja_flick (also keyboard_ja, settings_about); kvm_sim
+    observed: >-
+      kvm_sim PASS, 43 fixtures, acceptance checks AT-UIFW-02/04/08/10 pass, live LVGL allocations back to the
+      baseline. New fixture keyboard_ja_flick with the new steps `tap_flick_mode` and `flick Q:D`: か, わ up, さ left,
+      ゛ give the reading かんじ and the candidates 漢字 / 感じ / 幹事 / かんじ on the pad. keyboard_ja regenerated
+      (the Flick toggle in the strip); settings_about regenerated (the OpenWnn rows in THIRD_PARTY_NOTICES.md).
+  - test_id: TASK-072-ja-flick-board-boot
+    <<: *board
+    result: PASS_HW
+    requirement: TECH-080
+    steps: |
+      pwsh -File ../.tools/flash.ps1 kvmpad; kvm_serial.py cmd "info" "ime status"; after 90 s cmd "info" "ime bench"
+    observed: >-
+      Firmware with the flick pad (app 0x2af0c0 B, 33% of the app partition free) boots, mounts the 5-file image and
+      installs both decoders with no unexpected reset: second check reset_reason=1, boot_count=252 (unchanged since the
+      flash), `IME glue installed (ZH ready, JA ready)`, timing start 698 / mount 1325 / hanzi font 2850 / ZH 2975 /
+      kanji font 1115 / JA 1119 / total 5422 ms, internal heap free 73,447 B, PSRAM free 1,777,196 B. `ime bench`
+      refuses by design while the UI owns the decoders (exit 0x1, not a fault). The pad itself was not touched on the panel: the owner's saved
+      delivery mode (host-ime) keeps the JA layer disabled, and that setting is not changed without the owner.
+    evidence:
+      - "../evidence/hardware/20261102-160743-flick_info.log sha256=0ddc238716fe8972f9147409bcd99c5b2aa5878fef4f8383f73c6b0b48eb1123"
+      - "../evidence/hardware/20261102-160908-flick_info3.log sha256=0b5739ca99b1b128178c1db9e6e5a836f0a0183bf49482df6bdd13fd386213af"
+not_run:
+  - test_id: TASK-072-ja-flick-touch
+    result: NOT_RUN_HW
+    reason: >-
+      Flicks on the GT911 panel (slide threshold feel, legend under the finger) need the owner at the board with a
+      Unicode delivery mode chosen.
+  - test_id: AT-EXT-27
+    result: NOT_RUN_HW
+    reason: >-
+      Typing romaji on the JA layer (and pinyin on ZH) into a prepared HOST needs the owner: a Unicode delivery mode
+      chosen in Settings by touch and a HOST set up for it. The JA strip with real kana and kanji on the panel was
+      therefore seen only in the simulator.
+  - test_id: TASK-072-ja-latency-in-ui
+    result: NOT_RUN_HW
+    reason: OpenWnn search latency inside the LVGL task needs taps on the JA layer (host figures in the OpenWnn report).
+open:
+  - "FR-746 12-key flick pad: implemented (host + simulator); touch feel on the panel waits for the owner (TASK-072-ja-flick-touch)."

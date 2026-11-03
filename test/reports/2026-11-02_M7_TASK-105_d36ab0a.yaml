@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M7 / TASK-105: native Windows CLIENT (ADR-021, ADR-028 PROPOSED) with the ADR-029 pairing core compiled into a
+# native library from components/secure_remote/pairing. No device or LAN involved: every network row is NOT_RUN_HW.
+# Format: docs/spec/04 section 12.
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M8 package"
+  toolchain: ".NET SDK 9.0.308 (NuGet cache and CLI home under ../.tools), llvm-mingw 20261020 for the native library, CMake 4.0.3, Ninja 1.12.1"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-105-native
+    <<: *common
+    result: PASS
+    steps: |
+      cmake -S clients/windows/native -B ../build-win-pairing -G Ninja -DCMAKE_C_COMPILER=x86_64-w64-mingw32-clang -DMBEDTLS_ROOT=<pinned IDF>/components/mbedtls/mbedtls
+      cmake --build ../build-win-pairing
+    observed: >-
+      Fresh build directory, rerun by the integrator: 0 warnings, 0 errors. kvmpad_pairing.dll (CLIENT half, 14 exports,
+      BCryptGenRandom) and kvmpad_pairing_test.dll (seeded fixture, never shipped) land in the gitignored native/bin/.
+  - test_id: TASK-105-managed
+    <<: *common
+    result: PASS
+    steps: |
+      dotnet build clients/windows/KVMpad.Client.sln -c Release
+      dotnet test clients/windows/KVMpad.Client.sln -c Release --no-build
+    observed: >-
+      Build 0 warnings; 278 tests passed, 0 failed (integrator rerun). Covers the v1 envelope and codec, sequence and
+      rate limit, session logic, capture ledger and release-all, Windows key map, type-text planner, certificate
+      pinning over a loopback TLS pair, mDNS parsing, pairing message order and the 180 s deadline over the whole run,
+      credential storage, and 19 native tests.
+  - test_id: AT-EXT-13-client
+    <<: *common
+    result: PASS_SW
+    observed: >-
+      All four ADR-029 vectors re-run in-process through the native library (DEVICE session vs. CLIENT driver under
+      the seeded generator, inputs read from test/pairing/vectors/*.json): round blobs, transcript hash, both
+      confirmation tags, sealed token, token and stored hash equal field by field; wrong code fails at confirmation,
+      certificate mismatch fails at pair.hello before any attempt is spent.
+  - test_id: TECH-084-client
+    <<: *common
+    result: PASS
+    observed: "KVMpad.Client.exe and .dll carry LegalCopyright = \"Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.\"; the Required Notice string is in the dll; About shows the notices (FR-751)."
+  - test_id: AT-EXT-11/14/15/16/17/24, AT-SEC-01/03/04/08 (HIL halves), AT-CONN-04/05/07/08
+    <<: *common
+    result: NOT_RUN_HW
+    observed: "Need the device transport (TLS/WSS, /v1/ws and /v1/pair, mDNS) on the board, a LAN, and for the Accept step the owner at the device."

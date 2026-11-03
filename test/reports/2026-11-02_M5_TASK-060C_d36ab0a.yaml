@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M5 / TASK-060C: router (root shell, lazy view cache, atomic view switch) and overlay stack of ui_core
+# (components/ui_core/src/ui_router.c, ui_overlay.c). Format: docs/spec/04 section 12.
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M6 package"
+  lvgl: "9.6.0~1"
+  host_toolchain: "llvm-mingw 20261020 clang (ucrt x86_64), CMake 4.0.3, Ninja 1.12.1; ASan (LVGL + project) and UBSan (project)"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-060C-host
+    <<: *common
+    result: PASS
+    steps: |
+      cmake -S test/ui_nav -B ../build-host-nav -G Ninja -DCMAKE_C_COMPILER=clang
+      cmake --build ../build-host-nav && ctest --test-dir ../build-host-nav --output-on-failure
+    observed: >-
+      test_ui_nav: 12174 checks, 0 failures (9 tests, LVGL 9.6.0 headless 1024x600 with the LVGL test pointer).
+      Atomic order verified from a call log: create (lazy) -> cancel + HID release request -> on_leave(old) ->
+      on_enter(new) -> active_view published -> pad re-read. 1000 modal open / click-close cycles (the close button
+      dismisses its own overlay): live LVGL allocations 182 -> 182, the view below received all 1000 clicks.
+      10000 view switches with status updates: 217 -> 217 live allocations (bytes 16781 -> 16787: label text length
+      of the last status), three views created. Mutation check: moving the cancel step after on_leave gives 2
+      failures.
+    issues:
+      - "LVGL 9.6 deprecates lv_obj_add_flag/remove_flag/has_flag; the router uses lv_obj_set_clickable/set_scrollable/is_hidden (found by -Werror)."
+  - test_id: AT-UIFW-02
+    <<: *common
+    result: PASS_SW
+    observed: "Router level: 10000 view switches without live-allocation growth. Board measurement comes with the UI shell (070A..C)."
+  - test_id: AT-UIFW-08
+    <<: *common
+    result: PASS_SW
+    observed: "Router level: a held key / drag is released before the old view leaves; a refused release request is counted and the switch completes. HID-level proof is in the M3 report (RELEASE_ALL on view change)."
+  - test_id: AT-UIFW-09
+    <<: *common
+    result: PASS_SW
+    observed: "Store deleted before the router while view labels observe its subjects, and the reverse order: no use-after-free under ASan."
+  - test_id: AT-UIFW-10
+    <<: *common
+    result: PASS_SW
+    observed: "1000 modal repetitions; the view below is clickable after every close."
+  - test_id: TASK-060C-board
+    <<: *common
+    result: NOT_RUN_HW
+    observed: "The router is compiled into the firmware (ui_core) but no screen uses it yet: it becomes visible with the UI shell and the views (TASK-070A..C)."

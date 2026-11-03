@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M5 / TASK-060D: ui_theme (tokens, shared styles, fonts, severity) and ui_components (UiStatusItem, UiTopBar,
+# UiActionKey, UiSegmented, UiModal, UiToast) on LVGL 9.6 at the 1024x600 geometry of ADR-026.
+# Format: docs/spec/04 section 12.
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M6 package"
+  lvgl: "9.6.0~1"
+  host_toolchain: "llvm-mingw 20261020 clang (ucrt x86_64), CMake 4.0.3, Ninja 1.12.1; ASan (LVGL + project) and UBSan (project)"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-060D-host
+    <<: *common
+    result: PASS
+    steps: |
+      cmake -S test/ui_components -B ../build-host-uicomp -G Ninja -DCMAKE_C_COMPILER=clang
+      cmake --build ../build-host-uicomp && ctest --test-dir ../build-host-uicomp -V
+    observed: >-
+      test_ui_theme: 154 checks, 0 failures (token floors 4/8/12/16 spacing and 44/48 touch, 1024x600 budget of the
+      top bar, every font role compiled in, severity carried by color and by glyph, init/deinit twice without a
+      leak and without resetting a live style). test_ui_components: 50214 checks, 0 failures (unknown value reads
+      "Unknown", subject binding survives either deletion order, the top bar keeps its size with a 200-character
+      status, every key and tab >= 44x44 px, an action key gives exactly one DOWN and one matching UP also when the
+      press is lost, the key is disabled while held or deleted while held, no phantom DOWN when a press slides onto
+      a neighbor, 10000 create/delete cycles per component without live-allocation growth). test_ui_overlay: 4073
+      checks, 0 failures (a modal absorbs the press aimed below it, 1000 open/close cycles keep the heap flat,
+      toasts self-delete and are never clickable). test_ui_snapshot: 45 checks, 0 failures (three shell states built
+      from the six components: no overlap, all within bounds, minimum hit box >= 44 px).
+  - test_id: AT-UIFW-02
+    <<: *common
+    result: PASS_SW
+    observed: "Component level: 10000 create/delete cycles of each component leave the live LVGL allocation count unchanged."
+  - test_id: AT-UIFW-09
+    <<: *common
+    result: PASS_SW
+    observed: "Status item and segmented bindings: subject deleted before and after the widget, no use-after-free under ASan."
+  - test_id: AT-UIFW-10
+    <<: *common
+    result: PASS_SW
+    observed: "UiModal: 1000 open/close repetitions; the button underneath never receives a press while the modal is open and works after every close."
+  - test_id: TASK-060D-board
+    <<: *common
+    result: PASS_HW
+    evidence: "evidence/hardware/20261102-073323-m6-070a-1-state.log sha256=1348bf615813928cf0c59969085ba35439ae1646ebd0f7e07e78a972065f21e1"
+    observed: >-
+      Firmware m6-070a-1: the MOUSE view styled with ui_theme and its three UiActionKey buttons is on screen on board
+      #1 (1024x600), shell active, pad -> HID on. Internal heap free 132971 B, minimum 95016 B. Whether the buttons
+      reach the HOST is checked in the TASK-070A report; the visual sign-off of the top bar and the segmented control
+      comes with the shell image.
+    issues:
+      - "The theme uses only built-in Montserrat sizes; legend fonts for non-Latin layouts are TASK-071."

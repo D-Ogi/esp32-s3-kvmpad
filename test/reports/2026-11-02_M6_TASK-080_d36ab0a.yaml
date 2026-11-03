@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M6 / TASK-080 (ADR-015 PROPOSED): net_status component (Wi-Fi STA link owner + read-only status), CLIENT state
+# DISABLED until TASK-100, ADR-017 cache hooks backed by config_store (TASK-090). Format: docs/spec/04 section 12.
+# Raw logs: ../evidence/hardware/ and ../evidence/build/ (outside the repository); key lines and SHA256 below.
+# No log contains the network name or the passphrase: wifi_provision.py keeps no log and prints only the result.
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M6 package"
+  idf: "v6.1"
+  board: "Waveshare ESP32-S3-Touch-LCD-7B, board #1 (ESP32-S3 rev v0.2, 16 MiB flash, 8 MiB PSRAM)"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-080-host
+    <<: *common
+    result: PASS
+    steps: |
+      cmake -S test/net_status -B ../build-host-net -G Ninja -DCMAKE_C_COMPILER=clang
+      cmake --build ../build-host-net && ctest --test-dir ../build-host-net --output-on-failure
+    observed: >-
+      test_net_fsm: 198 checks, 0 failures (ASan + UBSan). Covers not configured / full / cached connect, cached
+      timeout and reject with cache invalidation, exponential backoff with <= 25 % jitter capped at 60 s, drop / DHCP
+      timeout / stop / forget, the no-secret structure check, and 4 x 50000 random driver events (no IP outside
+      CONNECTED, every transient state has a deadline).
+  - test_id: AT-CONN-03
+    <<: *common
+    result: PASS_HW
+    evidence: "evidence/hardware/20261102-070726-m6-080-3-check.log sha256=a566fc12f22438c470ef958275d708e9a6779ec13fa264440f6b05961e4effcf"
+    observed: >-
+      Stored network not reachable (driver reason 201, no AP found), link in backoff: UI store host="Active",
+      client="Off", wifi=no, touch=ok; USB mounted. Local HID kept working: with pad->HID on (`ui pad on`) the owner
+      reported pointer movement and two-finger scrolling on the HOST.
+  - test_id: TASK-080-link
+    <<: *common
+    result: PASS_HW
+    evidence: |
+      evidence/hardware/20261102-070824-m6-080-3-wifi1.log sha256=66866b46881080eed5e75558476c96760341c0e5590688e7e90087e995625ffe
+      evidence/hardware/20261102-070834-m6-080-3-connected.log sha256=d4bde57bf665565c5af1d08ec9e9cce603c1208209007a0967126f0073395e7e
+    steps: |
+      KVM_WIFI_SSID=... KVM_WIFI_PASS=... ../.tools/venv/Scripts/python -I test/hil/wifi_provision.py   -> WIFI_JOIN err=ESP_OK
+      kvm_serial.py cmd "wifi" "ui store" "wifi scan" "usb"
+    observed: >-
+      Bench join (CONFIG_KVM_NET_CONSOLE_JOIN, bench only) -> link=connected ip=yes channel=6 rssi=-38..-35, 1 connect.
+      UI store wifi=yes, client="Off" (FR-401/403: Wi-Fi with an IP is not "Client connected"). `wifi scan` while
+      connected: 6 APs in 2.9 s, printed as channel / RSSI / security only. USB stayed USB_MOUNTED, mounts=1.
+      Secret scan: no evidence, repository or ledger file contains the network name or the passphrase.
+  - test_id: TASK-080-stress
+    <<: *common
+    result: PASS_HW
+    evidence: "evidence/hardware/20261102-070910-m6-080-3-stress.log sha256=593d55c74945c074204c720b6b7510eeec8737fc605cce2d5955b6ed0f844c24"
+    observed: >-
+      `stress 15` with the link up: 6 scans, 266 NVS writes, 266 64 KiB erases, 0 errors; touch 174 reads, 0 I2C
+      errors; USB mounts 1 -> 1, report_failed=0; link still connected afterwards. Internal heap minimum 13728 B:
+      too low, see TASK-080-ram.
+  - test_id: AT-EXT-01
+    <<: *common
+    result: NOT_RUN_HW
+    observed: "Modem-sleep latency measurement needs a timed ping series against the AP; WIFI_PS_NONE is set meanwhile (TECH-070)."
+  - test_id: AT-EXT-02
+    <<: *common
+    result: NOT_RUN_HW
+    observed: "Fast reconnect timing (cached BSSID/channel vs full scan) needs AP power cycling by a person; FSM part covered by TASK-080-host."
+  - test_id: AT-CONN-04
+    <<: *common
+    result: NOT_RUN_HW
+    observed: "Comes with secure_remote (TASK-100)."
+  - test_id: AT-CONN-05
+    <<: *common
+    result: NOT_RUN_HW
+    observed: "Comes with secure_remote (TASK-100)."

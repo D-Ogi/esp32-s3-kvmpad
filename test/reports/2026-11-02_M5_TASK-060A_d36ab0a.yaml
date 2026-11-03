@@ -1,0 +1,100 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M5 / TASK-060A: LVGL 9.6 integration spike (ADR-013 candidate esp_lvgl_adapter 0.7.4 vs fallback esp_lvgl_port 2.9.0),
+# decided in ADR-027. Format: docs/spec/04 section 12. Raw logs live outside the repository in ../evidence/ (build/,
+# hardware/), each named with its SHA256. Nobody was at the bench: no touch input was routed, no HID was emitted; the
+# screens were verified from console snapshots (PNG decoded on the host), not by eye on the panel.
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M5 package"
+  hardware: "Waveshare ESP32-S3-Touch-LCD-7B (ADR-026), board unit #1, ESP32-S3 rev v0.2, 16 MiB flash, 8 MiB PSRAM"
+  usb_host_os: "Windows 11 Pro 10.0.26200"
+  idf: "v6.1"
+  lvgl: "9.6.0~1 (registry build of 9.6.0)"
+  components_lock_sha256: "fcc7d0fc86008e39265af15d74056b9231dfe4379e2a93f75e1299a7b0645f77"   # dependencies.lock after the spike
+  pinned_by_lock: "lvgl/lvgl 9.6.0~1; espressif/esp_lvgl_adapter 0.7.4; espressif/esp_lvgl_port 2.9.0; button 4.2.3; cmake_utilities 0.5.3; esp_lv_decoder 0.5.0; esp_lv_fs 1.0.1; esp_mmap_assets 2.0.1; esp_new_jpeg 1.0.2; freetype 2.14.3~1; knob 1.1.0; libpng 1.6.59; qoi 0.20260529.0; zlib 1.3.2~2; esp_lcd_touch 1.2.1; esp_lcd_touch_gt911 1.2.1; esp_tinyusb 3.0.0"
+  method: "components/ui_platform/src/ui_bench.c scenes idle/small/full/scroll, 10 s windows after a 500 ms settle; FPS = LV_EVENT_RENDER_READY per second; render = RENDER_START->READY, flush = FLUSH_START->FINISH; CPU = busy per mille per core from the idle tasks; LVGL demo = lv_demo_benchmark (16 scenes), summary divided by the scene count"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-060A-build
+    <<: *common
+    result: PASS
+    steps: "idf.py reconfigure (manifest: lvgl ==9.6.0~1, esp_lvgl_adapter ==0.7.4, esp_lvgl_port ==2.9.0); .tools/build.ps1 for each Kconfig variant; map file checked for the other backend's symbols"
+    observed: >-
+      Three binaries from one tree by Kconfig: adapter TRIPLE_PARTIAL (kvmpad.bin 0x19e130 B, 60% of the app partition
+      free, sha256 922f98d4bfb12d9f235e2467ef22196dbbffa5d529d7cf13435006d912c52acf), port avoid_tearing (0x1980d0 B,
+      29bff7493b45fcdb895616b90a4fd2bb797ed21e040bff4711d67ff0b71774f2), adapter DOUBLE_DIRECT (0x19e140 B,
+      acc564ffde42e2fbb7fb3e6d90e95e9a5b9078cd736779b250db10d3ec5993e4). The adapter binary links 0 esp_lvgl_port symbols,
+      the port binary links 0 esp_lv_adapter symbols. Own code: 0 warnings. One upstream warning (lvgl lv_sysmon.c:355
+      unused 'perf' with LV_USE_PERF_MONITOR_LOG_MODE) - spike-only option, see ADR-027.
+    evidence:
+      - "evidence/build/m5-reconfigure-3.log sha256=b30614f972b2ee7c3150af97ff856297dc609666607d41fabb4a9ecf312e9eac"
+      - "evidence/build/m5-adapter-2.log sha256=c84a8f51523693f4137f086fdb04e8c1a84e2498118d978c7261a6ba546d7b79 (first clean build, 50-line strip)"
+      - "evidence/build/m5-adapter-3.log sha256=373433d1b317ac13b99b0208eba47834447226f5728c53f363db5d7f07bf3e22 (24-line strip)"
+      - "evidence/build/m5-adapter-4.log sha256=ed9329f3aa10dd19ec837928a32fa8b28562f099b618180e7276b25a6cbf413f (leak + metrics fixes; measured)"
+      - "evidence/build/m5-port-1.log sha256=333921868a33933a700a426b60de4a0c2b72eef2786c6d8cd3d6c08db00959ea"
+      - "evidence/build/m5-adapter-direct-1.log sha256=799ec97dc3714c2d08764a2a8005d7bc167c67685a90547fd13ea02072d22b8c"
+    issues:
+      - "A Kconfig-conditional dependency rule ($CONFIG{KVM_UI_BACKEND_*}) is evaluated before sdkconfig exists on a fresh configure (two failed passes, logs m5-reconfigure-1/2); both components are pinned unconditionally and one is compiled."
+      - "LVGL 9.6 keeps its public headers in include/lvgl/ and deprecates lv_obj_add_flag/remove_flag and lv_list; the scene uses lv_obj_set_hidden/set_scrollable and a flex column."
+  - test_id: TASK-060A-adapter-triple-partial
+    <<: *common
+    result: PASS
+    firmware_sha256: "922f98d4bfb12d9f235e2467ef22196dbbffa5d529d7cf13435006d912c52acf"
+    steps: ".tools/flash.ps1; kvm_serial.py cmd info 'ui bench idle 10' 'ui bench small 10' 'ui bench full 10' 'ui bench scroll 10' 'ui bench small 10' info; then with 'hid keepalive on 1'; then 'ui demo'"
+    observed: >-
+      3 panel fbs, 24-line internal draw strip. idle: 0 renders, cpu 2.4%/1.0%. small: 32.83 fps, render avg 29.0 ms
+      (max 29.4), flush avg 9.7 ms (max 28.3), cpu 7.6%/14.4%. full: 11.60 fps, render avg 83.9 ms (max 86.1),
+      cpu 46.5%/95.3%. scroll: 32.79 fps, render 28.4 ms, cpu 7.9%/16.5%. small again 32.84 fps with internal heap
+      62539 B (62959 B before the series: no leak). Under USB keep-alive: small 32.82, full 11.58 (unchanged; USB sent=5).
+      LVGL demo: 16 scenes, 13 fps avg, cpu 100%, render 81 ms, flush 22 ms, 70 s; internal heap minimum during the
+      demo 364 B (ADR-027 item 3). adapter_fps counter 32/11/32 agrees. LVGL task stack high-water 6496 B of 12288.
+    evidence:
+      - "evidence/hardware/20261102-050408-boot.log sha256=8dfdcdc8fb11b5c98c8f9e56a53c88380cc73696e55e868e739db096e2b707e9 (50-line strip: 'alloc partial draw buffer 102400 bytes failed', ESP_FAIL, boot otherwise OK)"
+      - "evidence/hardware/20261102-051623-ui-adapter-bench2.log sha256=605e7ae138f80b6feec2edacb634914c14ccd846b519003077e83d6cea34427f"
+      - "evidence/hardware/20261102-051646-ui-adapter-bench2-usb.log sha256=8ae2b71514d80ef7ce452453b2b12e772e14c94b0af1198acf2ba6d778877283"
+      - "evidence/hardware/20261102-051757-ui-adapter-lvdemo2.log sha256=e0e86cc33b5583e86860419aa1e892b3d9bbf5832f14f9f701e867336417f3d0"
+      - "evidence/hardware/20261102-051159-ui-adapter-snap.log sha256=8dae9e3b39d055fe38bc747e8396e31f6776c9afa6a32f5585efee60e5d38502 -> 20261102-051159-ui-adapter-snap.png sha256=080c2a3fda2b06ddcda32462c8742e7de0905427c643a76e9ca702edbb2877bc (256x150, hash 88308104 verified)"
+    issues:
+      - "Superseded first series (evidence/hardware/20261102-051010-ui-adapter-bench.log, -051033-...-usb.log, -051144-...-lvdemo.log): the benchmark leaked the previous screen (internal heap 62959 -> 19 B over seven runs) and the metrics reset mid-cycle produced 14-58 s maxima; both fixed in ui_bench.c / ui_platform.c and the series repeated."
+  - test_id: TASK-060A-port-avoid-tearing
+    <<: *common
+    result: PASS
+    firmware_sha256: "29bff7493b45fcdb895616b90a4fd2bb797ed21e040bff4711d67ff0b71774f2"
+    steps: "sdkconfig: CONFIG_KVM_UI_BACKEND_PORT=y; build; flash; kvm_serial.py boot; the same command series"
+    observed: >-
+      2 panel fbs as LVGL direct-mode buffers. BOOT_OK, taskLVGL prio 4 core 1. idle: cpu 1.6%/0.9%. small: 32.69 fps,
+      render 27.9 ms, flush 9.1 ms, cpu 8.2%/13.3%. full: 8.09 fps, render 119.5 ms, flush 26.4 ms, cpu 73.0%/71.7%.
+      scroll: 32.69 fps, render 27.2 ms. small again 32.79 fps, internal heap 117859 B (118591 before). Under keep-alive:
+      small 32.79, full 8.19. LVGL demo: 12 fps, cpu 100%, render 73 ms, flush 17 ms, 69 s; internal minimum 7796 B.
+    evidence:
+      - "evidence/hardware/20261102-052318-boot.log sha256=c5129de3c4d4a9ce9ac76b74ccf762f1d11e005b5c8f5c740e83415b88527e61"
+      - "evidence/hardware/20261102-052413-ui-port-bench.log sha256=b0cad365c7a4f9b6f28ad6d354f0b7cfefa476103d2865e5835cc7b3059559a4"
+      - "evidence/hardware/20261102-052436-ui-port-bench-usb.log sha256=4a38958319ac441373fa7c853cb39a4c8e46a7ef9564e63ca3b554b318877da0"
+      - "evidence/hardware/20261102-052547-ui-port-lvdemo.log sha256=83d3e018282a7acc016e4e31ef7fdb36037da5421b0eaf791ce0052ede1474cc"
+      - "evidence/hardware/20261102-052601-ui-port-snap.log sha256=037b933490a512253705b550710fb606bab788d46a01edd0da67f28df1920abb -> 20261102-052601-ui-port-snap.png sha256=39b2c51a3601b519474436f35fe0f30b4c735c2ca82f6bd472f1b3e4848503ed (hash B0A71F1C verified)"
+  - test_id: TASK-060A-adapter-double-direct
+    <<: *common
+    result: PASS
+    firmware_sha256: "acc564ffde42e2fbb7fb3e6d90e95e9a5b9078cd736779b250db10d3ec5993e4"
+    steps: "sdkconfig: adapter + CONFIG_KVM_UI_ADAPTER_TEAR_DOUBLE_DIRECT=y; build; flash; 'ui bench' series; 'ui demo'"
+    observed: >-
+      2 panel fbs, no internal strip. idle: cpu 2.3%/1.0%. small: 32.80 fps, render 27.9 ms, flush 9.1 ms, cpu 9.0%/13.3%.
+      full: 8.23 fps, render 119.6 ms, cpu 75.5%/69.4%. scroll: 32.82 fps, render 27.2 ms. Internal heap 112039 B after
+      start; LVGL demo: 11 fps, cpu 100%, render 73 ms, flush 18 ms; internal minimum 7796 B. Chosen default (ADR-027).
+    evidence:
+      - "evidence/hardware/20261102-053257-ui-adapter-direct-bench.log sha256=9fe358f9c1adfb8a9d50962cd4b5250a597c7a5eba6ea3898e2b9b05c8bfae31"
+      - "evidence/hardware/20261102-053408-ui-adapter-direct-lvdemo.log sha256=8237f47485fb6711e1e3053fcdf6ca7536b81f2777c2c4e1f68541fef3a7a3b6"
+  - test_id: AT-UIFW-07   # lock/task stress with Wi-Fi + USB
+    <<: *common
+    result: PARTIAL
+    observed: "USB keep-alive traffic only (no Wi-Fi yet: TASK-080); FPS unchanged under it on both backends. The full run belongs to TASK-070D once the status service exists."
+    hw: PARTIAL
+not_run:
+  - id: AT-UIFW-01..06, 08..10
+    reason: "They test ui_core / ui_views / the touch bridge (TASK-060B..E, 070A..D), which do not exist yet; TASK-060A delivers the platform and the ADR-013 decision only."
+  - id: real-finger latency, three-mode HIL
+    reason: "No touch routed into LVGL until TASK-060E; nobody at the bench."
+board_resets_today: "24 (15 bootloop M3 + 9 flash/boot for M4 and M5)"

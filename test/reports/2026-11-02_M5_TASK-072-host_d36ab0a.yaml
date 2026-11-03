@@ -1,0 +1,172 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M5 / TASK-072, host slice: the parts of ADR-024 that need neither the board, a dictionary nor the
+# TASK-071 layout tables. Format: docs/spec/04 section 12.
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M8 package"
+  board: "none (host only)"
+  host: "Windows 11, llvm-mingw clang, AddressSanitizer + UndefinedBehaviorSanitizer"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: AT-EXT-26-hangul
+    <<: *common
+    result: PASS_SW
+    requirement: FR-746, TECH-080
+    steps: |
+      cmake -S test/ime -B ../build-host-ime -G Ninja -DCMAKE_C_COMPILER=clang
+      cmake --build ../build-host-ime && ctest --test-dir ../build-host-ime --output-on-failure
+    observed: >-
+      test_hangul: 160 checks, 0 failures. Word vectors typed on 2-set key positions (dkssudgktpdy -> 안녕하세요,
+      gksrmf -> 한글, ekfrdl -> 닭이, ekfrk -> 달가, compound vowels and finals, Shift jamo), lone jamo, backspace
+      through a compound final and a compound vowel, refusal of non-jamo input, all 11172 precomposed syllables
+      composed from independent decomposition tables and backspaced to empty in exactly as many steps as keys, and a
+      10000-key seeded random walk with only syllables / compatibility jamo as output. The composer has no heap use
+      at all (fixed state struct), so heap growth over 10000 keys is zero by construction.
+  - test_id: TASK-072-unicode-delivery
+    <<: *common
+    result: PASS_SW
+    requirement: FR-747, FR-748 (cancel keys)
+    observed: >-
+      test_kbd_unicode: 31 checks, 0 failures. Exact step lists for linux (Ctrl+Shift+U, hex, Space), macos (Option
+      held, UTF-16 groups), windows-hex (Alt, Numpad +, keypad digits, one sequence per UTF-16 unit) and wincompose
+      (Right Alt, u, hex, Enter), including U+1F600; refusals (0, surrogates, above U+10FFFF, host-ime, unknown
+      mode, too small a buffer); a HOST layout that needs Shift for digits; cancel keys (Esc for linux and
+      wincompose, none for the others); 109872 generated sequences over 4 modes x 3 resolvers all balanced (every
+      DOWN released in order, nothing held at the end), longest 56 steps of the 160 cap.
+  - test_id: TASK-072-mutants
+    <<: *common
+    result: PASS_SW
+    observed: >-
+      Four one-line mutants built against the suites, all caught: compound final not split before a vowel, a wrong
+      compound vowel, Alt never released in windows-hex, a wrong high surrogate.
+  - test_id: TASK-072-burst-host
+    <<: *common
+    result: PASS_SW
+    requirement: FR-748, 03 §6.5 (rate), TECH-005, INV-006
+    steps: |
+      cmake -S test/host_unit -B ../build-host -G Ninja -DCMAKE_C_COMPILER=clang
+      cmake --build ../build-host && ctest --test-dir ../build-host --output-on-failure
+    observed: >-
+      New hid_core text burst (kvm_hid_core_burst_start / _cancel, hid_dispatch_burst_*). test_hid_burst: 538
+      checks, 0 failures, on sequences from kbd_unicode: the linux sequence for é reaches the fake HOST as 16
+      keyboard reports in order (U only with Ctrl+Shift, digits without modifiers), paced at >= 10 ms per step;
+      BURST_DONE only after the HOST read the last report; U+1F600 in windows-hex as two Alt groups; a second burst,
+      keyboard intents and the modifier FSM refused with ERR_BUSY while the pointer still moves; no control request
+      admitted during a burst; unbalanced / invalid / oversized / 7-key bursts and a burst over a held key refused
+      with nothing changed; cancel releases the held keys first, then Esc (never Ctrl+Shift+Esc), then RELEASE_ALL;
+      unplug, completion timeout, RELEASE_ALL and maintenance end it at once and nothing is replayed after a
+      remount; 200 random bursts over the four modes with half cancelled at a random step all leave the HOST
+      neutral with no UP without DOWN. The other 10 host_unit suites (hid_core, vectors, stress, kbd_fsm, gesture
+      ...) still pass unchanged: 11/11.
+  - test_id: TASK-072-burst-mutants
+    <<: *common
+    result: PASS_SW
+    observed: >-
+      Seven mutants of hid_core.c, all caught: no release before the cancel key, RELEASE_ALL not ending the burst,
+      no pacing, keyboard intents not refused, no wait for the HOST to read the last report (caught after a test
+      for it was added), unbalanced bursts accepted, a burst started over a held key.
+  - test_id: TASK-072-burst-board
+    <<: *common
+    board: "#1 ESP32-S3-Touch-LCD-7B, rev v0.2"
+    firmware: "task072-burst (0x212fb0 B)"
+    result: PASS_HW
+    steps: |
+      ../.tools/flash.ps1 task072-burst; python -I test/hil/kvm_serial.py cmd "hid"
+    observed: >-
+      Boots with the new core, HOST mounted, neutral start reports sent (sent=6, release_all=1 view_change from
+      the shell start), "HID burst active=0 started=0 done=0 cancelled=0 aborted=0", 1783 pumps without a reset.
+      Nothing on the device starts a burst yet, so this proves only that the changed core runs; no keystroke was
+      sent to the HOST.
+    evidence:
+      - {file: 20261102-123443-burst-fw-hid.log, sha256: de6c5361ab613e212b0d2eb343d456756fa33c9dc5608cb9759694a545d155ea}
+  - test_id: TASK-072-firmware-build
+    <<: *common
+    result: PASS_SW
+    steps: pwsh -NoProfile -File ../.tools/build.ps1 task072-host-slice
+    observed: >-
+      ime_engine and kbd_layouts removed from EXCLUDE_COMPONENTS; both compile with the Xtensa toolchain without
+      warnings; nothing links them yet, so kvmpad.bin is unchanged at 0x212890 B. Not flashed.
+  - test_id: TASK-072-ko-layer
+    <<: *common
+    result: PASS_SW
+    requirement: FR-746, FR-747, FR-748, TECH-078, AT-UIFW-08, AT-UIFW-09
+    steps: |
+      cmake --build ../build-host-views && ctest --test-dir ../build-host-views --output-on-failure
+      cmake --build ../build-host-ui && ctest --test-dir ../build-host-ui
+    observed: >-
+      KEYBOARD view KO layer: test_ui_view_keyboard 1976 checks, 0 failures. The KO cap is disabled while the delivery
+      mode is host-ime or no HOST is mounted; on = TEXT_CANCEL first; "dkssud" gives exactly one TEXT_CHAR U+C548 and
+      leaves U+B155 in the preedit strip, rendered from the Hangul subset (glyph resolved by kvm_font_hangul_24,
+      Latin by its Montserrat 24 fallback); Backspace edits locally; Space commits U+B140 then TEXT_KEY 0x2C; Shift+r
+      gives the double consonant and drops the one-tap shift; Ctrl/Alt/Win/AltGr/Caps disabled; no KEY_DOWN and no
+      MODIFIER_TOGGLE in the layer; off commits; leaving the view and a switch to host-ime discard the preedit with
+      TEXT_CANCEL and send no character; geometry of the KO layer with its strip: 70 caps, none under 44 px, no
+      overlap; 1000 create/destroy cycles with no live-allocation growth. Settings: the FR-747 stepper reports one
+      change per tap, wraps both ways, is never optimistic, disabled until a record is published, shows the setup
+      hint of the published mode (test_ui_view_settings 3403 checks). ui_app: set_settings drives the KO
+      availability (test_ui_app). ui_store action validation for TEXT_CHAR / TEXT_KEY / TEXT_CANCEL (3/3). All
+      29 host suites pass (host_unit 11, ime 3, ui_store 3, ui_components 4, ui_nav 1, ui_views 7).
+  - test_id: TASK-072-ko-simulator
+    <<: *common
+    result: PASS_SW
+    requirement: AT-UIFW-01, AT-UIFW-02, AT-UIFW-04, AT-UIFW-09
+    steps: |
+      cmake --build ../build-sim && ../build-sim/kvm_sim --update-golden
+      python -I -X utf8 simulator/tools/golden_manifest.py --lvgl 9.6.0 && ../build-sim/kvm_sim
+    observed: >-
+      New fixture keyboard_ko (KO layer composing 안녕: 녕 in the strip). Goldens regenerated for the eight keyboard
+      fixtures (the KO cap in the utility row), settings_keyboard (Unicode stepper and hint) and settings_about (the
+      new third-party row); every image was looked at before the update. kvm_sim: 40 fixtures match, live LVGL
+      allocations back to the baseline (133), PASS.
+  - test_id: TASK-072-font-reproducible
+    <<: *common
+    result: PASS_SW
+    requirement: TECH-078, ADR-025
+    steps: |
+      python -I tools/fonts/gen_hangul_font.py --font ../.tools/dl/fonts/NotoSansKR-Regular.otf \
+        --lv-font-conv ../.tools/lv_font_conv/node_modules/lv_font_conv/lv_font_conv.js --out <file>   (twice)
+    observed: >-
+      2401 code points (U+3131..U+3163 and the 2350 KS X 1001 syllables); two runs give the same file, SHA256
+      b382a42593fed27dac5cc01fe9af04504691f6df64ea5b39c86a77df344a3c68; font input SHA256 69975a0a...148d68 checked
+      by the script. check_license_headers: 0 missing, 0 unlisted (the font carries SPDX OFL-1.1 and is listed in
+      THIRD_PARTY_NOTICES.md).
+  - test_id: TASK-072-ko-board
+    <<: *common
+    board: "#1 ESP32-S3-Touch-LCD-7B, rev v0.2"
+    firmware: "task072-ko (0x297710 B, 35% of the app slot free)"
+    result: PASS_HW
+    steps: |
+      ../.tools/build.ps1 task072-ko; ../.tools/flash.ps1 task072-ko
+      python -I test/hil/kvm_serial.py cmd "hid"; ... cmd "usb"
+    observed: >-
+      One flash, boots with the text queue, the KO layer and the Hangul font; HOST mounted; "HID burst active=0
+      started=0", no reset over two reads. Nothing was typed into the HOST. Observation: this boot logged
+      send_refused=134 and one completion timeout per interface (release_by_reason completion_timeout=3) before
+      the HOST started reading the IN endpoints; the core answered with RELEASE_ALL as specified, the counters
+      did not move afterwards (usb complete=9, failed=0). The previous boot (task072-burst) had none; nothing in
+      this change touches USB, so it is recorded as a HOST-side start-up delay to watch, not explained.
+    evidence:
+      - {file: 20261102-130211-task072-ko.log, sha256: e979bc136876239f9e27ee3ce9468beabf747a8b1021c28b225b8ae0c33d11eb}
+      - {file: 20261102-130235-task072-ko-usb.log, sha256: 71ad325381b4623d24e4a235144a6d1699d0ec45c6f364cc544b1d695b9e68a2}
+not_run_hw:
+  - id: TASK-072-ko-touch
+    reason: >-
+      Typing on the KO layer by touch, with text reaching the HOST, needs the owner at the board: a delivery mode
+      chosen in Settings by touch and a HOST set up for it (FR-747 hint). Nothing was typed into the owner's PC.
+  - id: AT-HID-replay-after-burst
+    reason: >-
+      05 §12 asks for the AT-HID / AT-KEY wire replay after a change to the HID core; the host suites were
+      replayed (11/11), the wire replay types into the owner's PC (bench hid probe) and waits for the owner.
+  - id: AT-EXT-27
+    reason: >-
+      Delivery to a real HOST (GNOME + IBus, macOS Unicode Hex Input, Windows EnableHexNumpad, WinCompose) needs the
+      burst path in the arbiter (FR-748), the composition UI and the owner's HOSTs.
+not_implemented:
+  - "OpenWnn / PinyinIME engines, ime_data partition, footprint spike on board #1 (TECH-080/081)"
+  - "Candidate bar and flick keyboard for Japanese / Chinese (they need the OpenWnn / PinyinIME engines); the Korean
+    composition layer and its preview strip are implemented"
+  - "TASK-071 layout tables: BLOCKED, the generator (TECH-077) runs on a Linux tooling host; WSL2 does not start on
+    the workstation (virtualization disabled) and CI needs a push"

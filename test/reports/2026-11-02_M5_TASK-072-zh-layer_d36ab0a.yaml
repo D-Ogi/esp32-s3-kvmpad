@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M5 / TASK-072: the ZH layer of the KEYBOARD view (ADR-024 FR-746..748). Pinyin input, the candidate strip, the hanzi
+# font in the ime_data image (read in place) and the background hand-over of the decoder to the LVGL owner. No text was
+# typed into a HOST and no setting was changed on the board. Format: docs/spec/04 section 12.
+---
+host_common: &host
+  build_sha: "d36ab0a + uncommitted M0-M8 package"
+  board: "none (host only)"
+  host: "Windows 11, llvm-mingw clang (x86_64; i686 for test/ime_pinyin)"
+  when_utc: "2026-11-02"
+board_common: &board
+  build_sha: "d36ab0a + uncommitted M0-M8 package, firmware build zh-layer-1 (kvmpad.bin 0x2a3050 B, 34% of the app slot free)"
+  board: "#1 ESP32-S3-Touch-LCD-7B, rev v0.2, 16 MB flash, 8 MB PSRAM (hardware/boards.md)"
+  host: "Windows 11, COM3 console (test/hil/kvm_serial.py)"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-072-hanzi-font-blob
+    <<: *host
+    result: PASS_SW
+    requirement: FR-746, TECH-081
+    steps: |
+      python -I tools/fonts/gen_hanzi_font_blob.py --font ../.tools/dl/fonts/sc/NotoSansSC-Regular.otf \
+          --lv-font-conv <lv_font_conv.js 1.5.3> --node <node> --work <outside> --out ../build-ime-data/font_hanzi_24.bin   (run twice)
+      python -I tools/ime/build_ime_data.py ... --hanzi-font ../build-ime-data/font_hanzi_24.bin --out ../evidence/ime/ime_data2.bin
+      cmake -S test/ui_components -B ../build-host-uicomp -G Ninja -DKVM_HANZI_BLOB=<abs>/font_hanzi_24.bin
+      cmake --build ../build-host-uicomp && ctest --test-dir ../build-host-uicomp --output-on-failure
+    observed: >-
+      Blob 4,583,832 B, 5 parts, 16,580 glyphs, SHA256 c922795b63fced7f98725faf8874ec51cafee9e71c1abd5602d7b81c5f9a79a1
+      on both runs (reproducible). ime_data image 5,668,864 B (3 files: dict_pinyin.dat, font_hanzi_24.bin,
+      ofl_noto_cjk.txt), SHA256 c407c7bd055c438c53e9975c9f4f7a86c0e769d71d0ab7e16cd581941812ec6d, fits the 6 MiB
+      partition. test_ui_font_blob: 394 checks, 0 failures (a hand-built two-part blob drawn through LVGL, 29 damage
+      cases, every truncation, 3000 seeded random corruptions, the real blob: U+4F60 is 24 px wide). ctest 5/5 pass.
+  - test_id: TASK-072-zh-layer-host
+    <<: *host
+    result: PASS_SW
+    requirement: FR-746, FR-747, FR-748
+    steps: |
+      cmake --build ../build-host-views && ctest --test-dir ../build-host-views --output-on-failure
+      cmake --build ../build-host-pinyin && ctest --test-dir ../build-host-pinyin --output-on-failure   (i686)
+    observed: >-
+      build-host-views 7/7 pass: test_ui_view_keyboard 2399 checks (ZH needs a decoder and a delivery mode, an
+      incomplete decoder table is refused, composition, paging, digits, Space / Enter / Esc / Backspace, full-width
+      punctuation, KO and ZH exclusive, discard on HOST loss / view change / host-ime, strip geometry), test_ui_app
+      1063 checks (ui_app_set_zh_engine pass-through). build-host-pinyin 2/2 pass: test_ime_pinyin 156 checks
+      (consumed / parsed / complete / cancel_last after a partial choice), test_pinyin_leak 0 failures.
+  - test_id: TASK-072-zh-layer-sim
+    <<: *host
+    result: PASS_SW
+    requirement: FR-746, AT-UIFW-01/02/04/08/10
+    steps: |
+      cmake -S simulator/lvgl_sdl -B ../build-sim -DKVM_HANZI_BLOB=<abs>/font_hanzi_24.bin && cmake --build ../build-sim
+      ../build-sim/kvm_sim --update-golden --only <the 10 changed fixtures>; python -I -X utf8 simulator/tools/golden_manifest.py ...
+      ../build-sim/kvm_sim
+    observed: >-
+      kvm_sim PASS, 41 fixtures match their goldens. New fixture keyboard_zh (canned decoder of sim_zh.c, real hanzi
+      font): input "nihao" and the six candidates rendered in Noto Sans SC. Regenerated on purpose: the eight KEYBOARD
+      goldens (the utility row gained the ZH cap) and settings_about (THIRD_PARTY_NOTICES.md gained the PinyinIME and
+      ime_data rows). AT-UIFW-02/04/08/10 lines unchanged; live LVGL allocations back to the baseline.
+    evidence:
+      - "../evidence/sim-zh-2.log sha256=af95765b5db39d44f06af8532893ba5e9a5b33b0a497f282f8516a457c861704"
+  - test_id: TASK-072-zh-glue-board
+    <<: *board
+    result: PASS_HW
+    requirement: FR-746, TECH-080, TECH-081
+    steps: |
+      ../.tools/venv/Scripts/python -m esptool --chip esp32s3 --port COM3 write-flash 0x820000 ../evidence/ime/ime_data2.bin
+      pwsh -File ../.tools/build.ps1 zh-layer-1; pwsh -File ../.tools/flash.ps1 zh-layer-1
+      test/hil/kvm_serial.py cmd "ime status"; cmd "info" "ui" "tasks"; cmd "ui nav keyboard" "ui snap 2"
+    observed: >-
+      Image written and verified by esptool (hash of data verified). After boot, without a console command: 3 files,
+      all SHA256-verified in 1166 ms, `IME glue installed` (worker mounted, mapped and validated the font, opened the
+      decoder; the LVGL timer installed both). The ime_load task had exited. PSRAM free 1,959,456 B (about 1.04 MiB
+      below the spike's idle figure, the decoder while open), internal heap free 74,379 B, LVGL stack high-water
+      5564 B. The KEYBOARD snapshot shows the ZH cap disabled, as required while the delivery mode is host-ime (the
+      owner's saved setting, not changed). Two resets (the two flashes); no unexpected reset.
+    evidence:
+      - "../evidence/hardware/20261102-141755-zh-layer-1-status.log sha256=b5950cdd31963e00e5197ffcb7fa982161243f389188eedadbc35d34861f8679"
+      - "../evidence/hardware/20261102-141807-zh-layer-1-info.log sha256=d2bec704c19b9956ce5be4c90a7ddf4df628e1fab0667dd1461192ef0722595d"
+      - "../evidence/hardware/20261102-141915-zh-layer-1-kbd.log sha256=ce13616f10a569e978330cb98a2b6c1d7f02043ca42edbc1d30d39b1086b0bfa"
+      - "../evidence/hardware/zh-layer-1-kbd.png sha256=ea4f66d962c6c261c16960649050e8fd4a155ff6308078442cc1fefc0d656d15"
+not_run:
+  - test_id: AT-EXT-27
+    result: NOT_RUN_HW
+    reason: >-
+      Typing pinyin on the ZH layer into a prepared HOST needs the owner: a Unicode delivery mode chosen in Settings by
+      touch and a HOST set up for it. The candidate strip on the panel with real hanzi was therefore not seen on the
+      board yet, only in the simulator.
+  - test_id: TASK-072-zh-latency-in-ui
+    result: NOT_RUN_HW
+    reason: Search latency inside the LVGL task while typing (the bench measured it in a worker) needs taps on the ZH layer.

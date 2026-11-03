@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M5 / TASK-072: PinyinIME footprint spike (ADR-024 FR-746, TECH-080/081). The vendored AOSP decoder runs on board #1
+# from the ime_data partition; the numbers below were measured with the `ime bench` console command. No text was typed
+# into a HOST and the bench prints no decoded text. Format: docs/spec/04 section 12.
+---
+host_common: &host
+  build_sha: "d36ab0a + uncommitted M0-M8 package"
+  board: "none (host only)"
+  host: "Windows 11, llvm-mingw clang for i686 (32-bit size_t, the dictionary layout of the ESP32-S3)"
+  when_utc: "2026-11-02"
+board_common: &board
+  build_sha: "d36ab0a + uncommitted M0-M8 package, firmware build task072-pinyin3 (kvmpad.bin 0x2a0560 B, 34% of the app slot free)"
+  board: "#1 ESP32-S3-Touch-LCD-7B, rev v0.2, 16 MB flash, 8 MB PSRAM (hardware/boards.md)"
+  host: "Windows 11, COM3 console (test/hil/kvm_serial.py); ime_data image flashed at 0x820000"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-072-ime-data-image
+    <<: *host
+    result: PASS_SW
+    requirement: TECH-081
+    steps: |
+      python -I tools/ime/build_ime_data.py --cxx <abs>/i686-w64-mingw32-clang++.exe --cxx-flag=-static \
+          --work ../build-ime-data --out ../evidence/ime/ime_data.bin   (run twice)
+      cmake -S test/ime -B ../build-host-ime -G Ninja -DCMAKE_C_COMPILER=clang
+      cmake --build ../build-host-ime && ctest --test-dir ../build-host-ime --output-on-failure
+    observed: >-
+      Image 1,073,152 B, SHA256 2c75a717853d676f3eec427294e91139ac470ff5d29587958fb35e567b02c3cb on both runs
+      (reproducible); one file dict_pinyin.dat, 1,068,442 B, SHA256
+      5722707837c94a773b7a833075e46be1f746fadccd262bdf156d3e4d4827e02d (the same as the dictionary built by
+      test/ime_pinyin). test_ime_data: 47 checks, 0 failures (a valid image; erased flash, wrong version, file counts,
+      bad names, unaligned / empty / out-of-bounds / overflowing / overlapping files refused). ctest build-host-ime: 4/4 tests pass.
+  - test_id: TASK-072-pinyin-host
+    <<: *host
+    result: PASS_SW
+    requirement: FR-746, TECH-080
+    steps: |
+      cmake -S test/ime_pinyin -B ../build-host-pinyin -G Ninja \
+            -DCMAKE_C_COMPILER=i686-w64-mingw32-clang -DCMAKE_CXX_COMPILER=i686-w64-mingw32-clang++
+      cmake --build ../build-host-pinyin && ctest --test-dir ../build-host-pinyin --output-on-failure
+    observed: >-
+      2/2 tests pass. test_ime_pinyin (AddressSanitizer): 138 checks, 0 failures: the 10 bench vectors (top
+      candidate), xi'an with an apostrophe, a partial choice, refusal of upper case, digits, empty and over-long input,
+      out-of-range candidate ids, use before open, 50 open/close cycles and 2000 seeded random inputs.
+      test_pinyin_leak (counting allocator): six open/search/close cycles, live engine heap after every close
+      65614 B (C heap) + 12114 B (operator new), constant from the first cycle on.
+  - test_id: TASK-072-pinyin-leak-fix
+    <<: *host
+    result: PASS_SW
+    requirement: TECH-080
+    observed: >-
+      Spike run 2 on the board lost ~200 KB of PSRAM per open/close. A host probe with the counting allocator showed
+      ~195 KB (C heap) + ~4 KB (new) per cycle. Two upstream defects in the vendored code: DictTrie::free_resource()
+      freed nodes_ge1_ twice and never freed lma_idx_buf_; SpellingTrie::construct() overwrote root_, dumb_node_ and
+      splitter_node_ on every load. Both fixed locally, marked "KVMpad local change (2026-11-02)" and listed in
+      THIRD_PARTY_NOTICES.md; test_pinyin_leak keeps them fixed.
+  - test_id: TASK-072-pinyin-board
+    <<: *board
+    result: PASS_HW
+    requirement: FR-746, TECH-080, TECH-081
+    steps: |
+      ../.tools/venv/Scripts/python -m esptool --chip esp32s3 --port COM3 write-flash 0x820000 ../evidence/ime/ime_data.bin
+      pwsh -File ../.tools/build.ps1 task072-pinyin3; pwsh -File ../.tools/flash.ps1 task072-pinyin3
+      test/hil/kvm_serial.py cmd "ime bench"   (three times, no reset between runs)
+    observed: >-
+      Mount: partition found (6 MiB), 1 file, SHA256 verified in 225 ms. Open 120.7-121.8 ms. Vectors 10/10 pass on
+      every run. Search worst 9.3 ms on the first run (cold cache), 4.0-4.2 ms after it; mean 5.2 ms first run,
+      2.0 ms after it; worst while typing "jintiantianqihenhao" one letter at a time 7.8-7.9 ms (target ≤ 50 ms per
+      keystroke). PSRAM free: 3083960 -> 1967820 open -> 3004304 after close (run 1, the singleton remainder stays),
+      3004304 -> 1964084 -> 3004300 (run 2), 3004300 -> 1964076 -> 3004292 (run 3): about 1.04 MiB while open and a
+      drift of 4-8 B per run after the fix (was ~200 KB per run). Internal heap free equal before, during and after
+      every run (65095 / 65319 / 65287 B); the engine's static .bss lives in PSRAM. Worker stack 10240 B, 7672 B never
+      used. No reset, no panic. Earlier runs on the same board: spike 1 (before the heap routing) took ~47 KB of
+      internal RAM (minimum ever free 8032 B); spike 2 (heap routing, before the leak fix) showed the PSRAM leak.
+    evidence:
+      - "../evidence/hardware/20261102-132016-ime-status.log sha256=824e68c70342922e40cf9ec57552a9d175b737da99fe8b8cb3b05d3cf9e8a4b4"
+      - "../evidence/hardware/20261102-132021-ime-mount.log sha256=5e98475eac62f7f0b559b9fa6c5cc7122493a8bb845eb207f6744480623d4901"
+      - "../evidence/hardware/20261102-132025-ime-bench.log sha256=b29b7317ebb5418160f34240740327b8f627b578c8357e13c053d0a01f9e92f7"
+      - "../evidence/hardware/20261102-132730-ime-bench2a.log sha256=41546791cf6724be0eeb79a2840a4e0297da31e054a2586ed490502e5f913408"
+      - "../evidence/hardware/20261102-132731-ime-bench2b.log sha256=b46c303f8046bf67faef8c1848fe760c0d8a9e0dd2607c6c17d424c2808f5253"
+      - "../evidence/hardware/20261102-133402-ime-bench3a.log sha256=5b59d93041f5486937d813cb8a617de972af6132460bc1eb699d060b7eee1b03"
+      - "../evidence/hardware/20261102-133409-ime-bench3b.log sha256=d301abfecb666f910859632645e84f45a5a4d01262430a684a8d1423c49f4e8a"
+      - "../evidence/hardware/20261102-133410-ime-bench3c.log sha256=6681d60a5fdca8b5612314c2f34253f113bbc4191ab93d703afe9c20cc654876"
+not_run:
+  - test_id: AT-EXT-27
+    result: NOT_RUN_HW
+    reason: >-
+      Needs the candidate bar in the KEYBOARD view and typing into a prepared HOST with the owner present; only the
+      decoder runs so far.
+  - test_id: TASK-072-openwnn
+    result: NOT_RUN
+    reason: "Japanese engine (OpenWnn) not vendored yet."
+  - test_id: TASK-072-heap-per-keystroke
+    result: NOT_RUN_HW
+    reason: >-
+      Heap growth inside one open session was not sampled per keystroke on the board; only before / after open and
+      after close.
+limitations:
+  - The engine is not reentrant; ime_pinyin must be called from one task (the future UI owner) at a time.
+  - Full flash of the 6 MiB ime_data partition is a separate step; an app-only flash does not write it.

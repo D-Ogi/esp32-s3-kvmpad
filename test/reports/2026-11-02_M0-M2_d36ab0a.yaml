@@ -1,0 +1,250 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M0-M2 bring-up on board unit #1 (TASK-000, TASK-010, TASK-020, TASK-030, TASK-050 USB part).
+# Format: docs/spec/04-TEST-PLAN-AND-ACCEPTANCE-CRITERIA.md section 12, one document per test id.
+# Raw logs live outside the repository in ../evidence/ (hardware/, build/); each is named with its SHA256.
+# build_sha: the M0-M2 package is not committed yet; it sits on top of d36ab0a. Update after the commit.
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M2 package"
+  firmware_sha256: "2738d62e3b197354aef479f3a14ef74be85d7e8c5a06d4d7fb0f3e9076afabd6"   # build/kvmpad.bin, final
+  bootloader_sha256: "7405b34871ca07aa32b401171489a0db42531d7ba57e39d5a435e528dead73d5"
+  partition_table_sha256: "4904409646dea5980eeb5cdb19c075a1bef538f145188c986c320c9b781a0822"
+  hardware: "Waveshare ESP32-S3-Touch-LCD-7B (ADR-026), board unit #1, ESP32-S3 rev v0.2, MAC 44:1b:f6:c9:22:9c"
+  flash_psram: "16 MiB flash (QIO 80 MHz), 8 MiB octal PSRAM (80 MHz)"
+  usb_host_os: "Windows 11 Pro 10.0.26200.9711"
+  idf: "v6.1 (tree shows -dirty: Windows symlink artifacts only)"
+  components_lock_sha256: "c093e3356f074d307eee983c692dd7dca1caf85896a98130ca1793b61e579a48"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-000/L0-build
+    <<: *common
+    result: PASS
+    steps: "idf.py build from sdkconfig.defaults only (generated sdkconfig removed first); clean build in a second directory (idf.py -B ../build-fw-clean); compare SHA256"
+    observed: >-
+      0 compiler warnings in a clean build (5 CMake component-validation warnings inside ESP-IDF esp_wifi/wpa_supplicant, not
+      project code). Regenerated sdkconfig differs from the hand-tuned one only by 7 '# default:' comment lines.
+      CONFIG_APP_REPRODUCIBLE_BUILD=y: kvmpad.bin, bootloader.bin and partition-table.bin are bit-identical across the two
+      build directories (before the option the images differed). Image 964016 B in a 4 MiB slot (77 % free); DIRAM used
+      168266 B of 341760 B. Flash read-back verified (esptool verify-flash, digest matched for all three regions).
+    evidence:
+      - "evidence/build/clean-repro.log sha256=c80de98b63d470930d3a8fc70c194cc7ecc76c80c15b05c7b237dfe83bf29865"
+      - "evidence/build/size-final.log sha256=fc276dce0ddd059abc96f248a953264ec15e261bc2749b74aaaabf3399b2530a"
+      - "evidence/build/size-components-final.log sha256=b2812e2fd6a2fc90e880bb4426f89221e164862c8b2ba19515286011cfbd952b"
+      - "evidence/hardware/verify-flash-final.log sha256=b4ed453d24cdd58dbcf414f316a424ccbe1bec9c4376aec0f04c47b04400d920"
+    issues:
+      - "One transient xtensa-gcc 15.2.0 internal compiler error (segfault) in esp_lcd_panel_rgb.c during an early build; not reproduced in any later build."
+  - test_id: L1-host-unit
+    <<: *common
+    result: PASS
+    steps: "cmake -S test/host_unit -B ../build-host -G Ninja -DCMAKE_C_COMPILER=clang; cmake --build; ctest -V (llvm-mingw 20261020, clang 23.1.4, CMake 4.0.3, -Wall -Wextra -Werror -Wconversion, ASan + UBSan, -fno-sanitize-recover=all)"
+    observed: "4/4 suites: test_touch_sample 100421 checks, test_usb_hid_reports 69, test_io_ext 656, test_lcd_pattern 4347; 0 failures. ASan confirmed active (a deliberate heap overflow is reported)."
+    evidence:
+      - "evidence/build/host-unit-final.log sha256=22f4ada9b33a7dcf0ffbb2f4244b4b444f9520b9deae2635331ef1dd1f483c29"
+    issues:
+      - "The compiler flagged an unused helper in main/lcd_pattern.c; removed."
+  - test_id: AT-HW-1.2-1   # 02 section 1.2 item 1: revision, flash/PSRAM, size-components, PSRAM log
+    <<: *common
+    result: PASS
+    observed: "chip rev v0.2, 16 MiB flash, 8 MiB AP octal PSRAM (gen 3); size and size-components recorded (see TASK-000)."
+    evidence:
+      - "hardware/boards.md (board unit #1)"
+  - test_id: AT-HW-1.2-2   # both USB-C connectors, start on the HID port alone
+    <<: *common
+    result: PASS
+    steps: "Owner at the bench: both cables out; cold start with only the USB (Type_C2, OTG) cable -> test/hil/usb_enum_windows.ps1 + PnP query for COM ports; then only the UART (Type_C1, CH343) cable -> PnP query + console 'usb', 'exio'"
+    observed: >-
+      Type_C2 alone: the board starts powered from the HID port, test card on screen, USB_ENUM PASS (3 interfaces, serial
+      441BF6C9229C), no COM port present (CH343 unpowered). Type_C1 alone: CH343 COM3 present, no VID_303A&PID_400C device
+      present; firmware up, expander read-back 0x5E = 0x5E, USB_SEL = 0, USB state ENUMERATING with 0 mounts and 0 reports
+      sent. Role of each connector confirmed: Type_C2 = HID to the HOST, Type_C1 = UART debug. VBUS of Type_C2 is not
+      observable by the firmware on the 7B (see AT-HW-1.2-7).
+    evidence:
+      - "evidence/hardware/20261102-032916-usb-enum-windows.log sha256=d73f181eb288b40ae3587f7d7b436daef87114077106d4dbe786610caa44d27b"
+      - "evidence/hardware/20261102-033011-cmd.log sha256=a065616f22fea1128a8349709cc67cd5326c0b80df1b49d6bdbd17daebcfa800"
+    issues:
+      - "The COM-port presence checks were PnP queries in the session, not saved as separate log files."
+  - test_id: AT-HW-1.2-3   # I2C scan, GT911 address
+    <<: *common
+    result: PASS
+    observed: "Scan after the 7B init: 0x24 (CH32V003 expander) and 0x5D (GT911) only. GT911 product '911', fw 0x1060, config v91, 1024x600, 5 points."
+    evidence:
+      - "evidence/hardware/20261102-030555-final-hil.log sha256=da836ee31a1a673c34de3f8fc7327a188b946dd74eb82c92cd28e068ce692b78"
+    issues:
+      - "Before the correct expander init, scans showed changing phantom addresses (0x0E/0x30/0x46/0x66/0x68). Not seen since; cause not proven (hardware/boards.md)."
+  - test_id: AT-HW-1.2-4   # EXIO5 = USB before the USB stack; re-enumeration after a restart
+    <<: *common
+    result: PASS
+    steps: "kvm_serial.py boot; kvm_serial.py bootloop 15 (final build, mount verified every cycle); bootloop 100 (earlier build of the same BSP, mount not checked)"
+    observed: >-
+      Every boot logs 'EXIO5(USB_SEL)=0 -> verified' before 'TinyUSB started'. Final build 15/15 PASS, USB mounted by the HOST
+      at 1057-1081 ms after reset. The expander is not reset with the ESP32-S3: 2 of 15 warm resets needed 2 and 3 safe-state
+      attempts (bounded at 5). Earlier build: 100/100 PASS. A boot whose read-back does not confirm EXIO5 = LOW refuses to
+      start USB (seen once after a watchdog reset, before the re-apply loop existed).
+    evidence:
+      - "evidence/hardware/20261102-030320-bootloop15.log sha256=326566c5ec5caf5c328e2b2f5b87a4d50e1c478053199c19daa8d2f105ed1a27"
+      - "evidence/hardware/20261102-023721-bootloop100.log sha256=fa427188e6058bc94afee0a3222a6fa651110a54ca1d30a5410a0ecb3cf0a133"
+      - "evidence/hardware/20261102-020951-boot.log sha256=f07c1534d2a57581cd6a187d548c11d1ce4b771619590f57353e45ebfb57ee94"
+  - test_id: AT-HW-1.2-5   # 5 points: complete track_id set, coordinates and time, no artificial reordering
+    <<: *common
+    result: PASS
+    steps: "Touch screen; the owner placed up to 5 fingers and moved them; 'touch capture 15000 256'"
+    observed: >-
+      256 samples: points per sample {0:18, 1:24, 2:20, 3:80, 4:69, 5:45}; track ids 0..4; 0 contract violations (03 section 2:
+      count, bounds, unique id, ascending track_id, strictly increasing sample_seq); x 220..943, y 7..589; inter-sample p50
+      9.9 ms, p95 10.6 ms, max 12.5 ms (about 100 Hz).
+    evidence:
+      - "evidence/hardware/20261102-024245-touch-5finger.log sha256=710f7116676b2437944777bc649ece320a6e0f4654ee74fed9d10d072119718a"
+    issues:
+      - "The capture buffer (256) filled before the corner taps; corner accuracy (TECH-011 control targets) NOT_RUN."
+  - test_id: AT-HW-1.2-6   # RGB stability with Wi-Fi, USB HID and NVS/flash writes at the same time
+    <<: *common
+    result: PASS
+    steps: "'stress 30' (Wi-Fi scan + NVS writes + 64 KiB erase/write + PSRAM copy) and 'stress 15 nowifi' with USB mounted"
+    observed: >-
+      0 errors (NVS, flash, I2C, USB); USB stayed mounted; VSYNC 32.747 Hz mean. The picture jumps by up to about 15 lines while
+      a flash erase/program runs (PSRAM is stalled during flash writes, Espressif ESP-FAQ; TECH-021 does not guarantee a
+      flawless refresh during flash) and recovers by itself. Final cache configuration: 1 of 493 frames lost in 15 s,
+      VSYNC interval 30.0..30.5 ms, longest touch read 2.3 ms (before: 2 lost, 29.9..31.2 ms, 560 ms).
+    evidence:
+      - "evidence/hardware/20261102-022851-stress.log sha256=05fe2c8c2c8009c05dcd634b0d539c57662e09507578d7bf9971d9768d2936c1"
+      - "evidence/hardware/20261102-023005-stress-nowifi.log sha256=00e85a1908922927732aa2f86be8d094b51ad78ee205d4850a75b21de9480396"
+      - "evidence/hardware/20261102-025631-stress-cache64.log sha256=82af2f43120658fb5d0e8ca17c9a10ca5513a69c9d570236b06c28a11ff7b6eb"
+    issues:
+      - "SPI_FLASH_AUTO_SUSPEND would shorten the stalls but needs a flash part confirmed by the module vendor (JEDEC 46 4018 is not); not enabled."
+  - test_id: AT-HW-1.2-7   # HOST off / auxiliary power, no backfeed
+    <<: *common
+    result: BLOCKED
+    steps: "Schematic review first (02 section 1.2 item 7: do not risk backfeed); then, with auxiliary power from Type_C1 only, the HID cable plugged in, removed (HOST power gone) and plugged in again; console 'usb' after each step"
+    observed: >-
+      Waveshare schematic (ESP32-S3-Touch-LCD-7B-Schematic.pdf): the VBUS pins of the HID connector Type_C2 are wired
+      straight to the board 5V rail (only TVS2 to GND, no diode or switch). The rail is also fed from the UART connector
+      (VUART -> AO3401 ideal diode Q10 -> 5V), from the battery boost (CS8501 VOUT) and from the 5V header J9. So with
+      auxiliary power the board drives VBUS of the HOST port: a HOST that is off would be back-fed. The HOST-off test with
+      auxiliary power and the cable attached was therefore not performed. Simulated instead by removing the HID cable while
+      powered from Type_C1: no report sent, but the device saw only bus idle and reported USB_SUSPENDED (umounts=0), not
+      DETACHED. Re-plugging started a new USB epoch (epoch 2, mounts 2, 3 neutral reports, USB_ENUM PASS), so nothing of the
+      old session can be replayed. VBUS sensing (esp_tinyusb self_powered + vbus_monitor_io) cannot fix this on the 7B: the
+      HID-port VBUS is the same net as the board 5V rail.
+    evidence:
+      - "evidence/hardware/ESP32-S3-Touch-LCD-7B-Schematic.pdf sha256=60d31638254809aa39af0c5cc774ae4d2ebb73bdc4e57f68593cc4f559dec76c (https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-7B/ESP32-S3-Touch-LCD-7B-Schematic.pdf)"
+      - "evidence/hardware/7B-schematic-crop-usb-hid.png sha256=9bafb18e44f560f3a2d2e5e953acca3e083eee60cfc460fe7c3dc40b38ba27de"
+      - "evidence/hardware/7B-schematic-crop-usb-uart.png sha256=c3ec5ff52c35b0a51f8a872afd68799031d213437782eafe24254aed6ecc21a0"
+      - "evidence/hardware/7B-schematic-crop-battery.png sha256=b5872af1b1943fcdd367b59b6854959189070addec58b997bd7c6be38c30c905"
+      - "evidence/hardware/20261102-033132-cmd.log sha256=b43a28382e8899743cbe1e0501b448d0807b8df79dff37ad60da58f7f18ceda1"
+      - "evidence/hardware/20261102-033302-cmd.log sha256=ce18adbc3f27a9492b212acbaccdc743dcef6a4bcfd5e71298afa4b45f6b464b"
+      - "evidence/hardware/20261102-033302-usb-enum-windows.log sha256=1275989ab0ed833922b071b7802ddd6788087a060d54b6c67d9b9b14c851f83c"
+    issues:
+      - "Status-function limitation (02 section 1.2 item 7): on the 7B the firmware cannot tell 'HOST off / cable removed' from 'HOST suspended' when the board has auxiliary power; both show as USB_SUSPENDED and must be treated as HOST not active (no HID, RELEASE_ALL). Supported power configuration: the HID port alone. Auxiliary power (UART port, J9, battery) with the cable on a HOST that may be off back-feeds the HOST; not supported without a VBUS-blocking cable/adapter."
+      - "Backfeed voltage/current not measured (no USB tester or multimeter at the bench): NOT_RUN_HW."
+  - test_id: TASK-020/visual-signoff   # 05 TASK-020 DoD: R/G/B, alignment, no shift
+    <<: *common
+    result: PASS
+    steps: "Owner at the bench: test card (bars, ramps, R/G/B swatches) and 'lcd align' (1 px white border, yellow corner L-marks 3 px inside, centre cross)"
+    observed: "Owner: R/G/B colours correct; border visible on all four edges without gaps, all four corner marks equal, centre cross centred, no shifted or wrapped band."
+    evidence:
+      - "evidence/hardware/20261102-032358-cmd.log sha256=aa5f48ea65890924ba942cdf6fa27e7870f7bc2329a6ffb99d213deeb8747900"
+  - test_id: TECH-011/five-control-points   # 0 deg transform: four corners + centre
+    <<: *common
+    result: PASS
+    steps: "'lcd align' on screen; owner tapped the four corner marks and the centre cross; 'touch capture 25000 256', 'touch capture 30000 256'"
+    observed: >-
+      First contact vs target pixel: top-left (13,11) vs (3,3); top-right (995,5) vs (1020,3); bottom-right (1000,557) vs
+      (1020,596); bottom-left (13,562) vs (3,596); centre (497,296) vs (512,300). Orientation correct (no swap, no mirror),
+      single track id 0 per tap. Offsets of up to 39 px (about 6 mm) at the edges reflect where a fingertip can land next to
+      the bezel; the spec sets no accuracy threshold, edge targets follow AT-UI-02 (>= 44x44 px).
+    evidence:
+      - "evidence/hardware/20261102-032530-cmd.log sha256=b635d5b37552ccc7601df3c097f625a05062a61489ad1dfe605ca4bb89c710c1"
+      - "evidence/hardware/20261102-032704-cmd.log sha256=c40f976385f03924783e8e133449254feaffd136897440e3f217a674c150bf6b"
+    issues:
+      - "The 256-sample buffer filled after four taps (about 100 samples/s while touching); the centre was captured in a second run."
+  - test_id: TECH-020/ADR-008-bench   # A 1fb+2x10, B 1fb+2x20, C 2fb+2x10 (+ D: no bounce, informative)
+    <<: *common
+    result: PASS
+    steps: "'lcd bench'; 'lcd variant <fbs> <lines>' + 'lcd drawload <hz> 10'; real 5-finger touch on the touch screen with stats reset"
+    observed: >-
+      Idle: A, B, C all 0 late frames, VSYNC 32.746 Hz. Synthetic touch-screen drawing at 100 Hz: A, B, C lose <= 1 frame in
+      10 s; D (DMA straight from PSRAM) loses 7 and the picture visibly breaks up ('like a detuned TV'): rejected.
+      Real touch (GT911 reads + drawing, code from PSRAM) with 16 KiB I-cache and 32 KiB / 32 B D-cache: 260 of 405 frames
+      lost in 12 s, visible jumps of 10-20 lines. With 32 KiB I-cache and 64 KiB / 64 B D-cache (ESP-FAQ: 64 B lines in
+      bounce-buffer mode): 0 of 404 lost, CPU1 load 28 % -> 14 %, confirmed visually by the owner; PSRAM copy throughput
+      7 -> 15 MiB/s; internal RAM cost about 49 KiB. Interim default: variant A (least DMA RAM: 40 KiB). ADR-008 stays an
+      experiment until p95 touch-to-HID and the 72 h soak exist.
+    evidence:
+      - "evidence/hardware/20261102-022800-bench.log sha256=0293c07fb99ca55491912da167bd576960c4c52db6b76c7ef43abbfd1c32c0ac"
+      - "evidence/hardware/20261102-024958-drawload-matrix.log sha256=0b0f3f3c2faa5e2a0c487b31861fff7acb5c67bbb813194fffcf1c47fb66f022"
+      - "evidence/hardware/20261102-025119-touch-real-icache16-b.log sha256=92724400740a9d052430e5c900c6ae51ec80a791d5bdc04710abaaed55061780"
+      - "evidence/hardware/20261102-025526-touch-real-cache64.log sha256=e73a92d89d627e5766a30c8789bff3fd75713a30d51285fd6ffd628b18ce2268"
+    issues:
+      - "CONFIG_COMPILER_OPTIMIZATION_PERF (also in the ESP-FAQ list) not evaluated; the build uses -Og."
+  - test_id: AT-UI-06   # render under stress/flash: no permanent RGB drift
+    <<: *common
+    result: PASS
+    steps: "Old config (CONFIG_LCD_RGB_RESTART_IN_VSYNC=y): 'lcd glitch 1000 10', 'lcd glitch 3000 20'. New config (option off): same + 'lcd glitch 2000 50'; then 'stress'."
+    observed: >-
+      With RESTART_IN_VSYNC=y the picture stayed shifted up by one bounce block (10 lines) after the glitch series, until the
+      panel was re-created (owner observation; the ESP-IDF 6.1 driver does not clear its bounce EOF counter in that mode, so
+      one late refill flips the bounce-buffer parity for good). Also seen at first boot. With the option off (IDF default):
+      frames are dropped while interrupts are held off and the scan-out resynchronises by itself (owner: picture correct);
+      final build: 48 of 111 frames during 70 glitches of 2-3 ms, then 0 lost.
+    evidence:
+      - "evidence/hardware/20261102-022156-glitch-old.log sha256=a541154a2a168dc58547f90a3bc7b691fe1595a6aa3ed49ab39eb8c93b653518"
+      - "evidence/hardware/20261102-022716-glitch-new.log sha256=175af77754f778ce6071a26e9d0586745b68b99b67704b83fe3d5d2bb91d1ec3"
+      - "evidence/hardware/20261102-030555-final-hil.log sha256=da836ee31a1a673c34de3f8fc7327a188b946dd74eb82c92cd28e068ce692b78"
+    issues:
+      - "Scope: the M1 diagnostic renderer; the LVGL part of AT-UI-06 (no GUI freeze) is for M3."
+  - test_id: AT-FAULT-01   # 100 GT911 I2C errors
+    <<: *common
+    result: PASS
+    steps: "'touch fault 100' on the final build, then wait until all faults are consumed"
+    observed: >-
+      100 injected read errors -> one cancel sample (valid=false) at the first error, no phantom point; 33 recoveries (bus
+      reset + GT911 re-reset) with backoff 10, 20, ... 640 ms capped at 1000 ms; reads resume, last sample valid; EXIO5 stays
+      verified LOW; no IRQ storm after the resets.
+    evidence:
+      - "evidence/hardware/20261102-030555-final-hil.log sha256=da836ee31a1a673c34de3f8fc7327a188b946dd74eb82c92cd28e068ce692b78"
+      - "evidence/hardware/20261102-030642-fault100-tail.log sha256=d55eda16dd7ae7fd4e8082a208ce3104cfbe4a288ede7498f39c5ecfb52fa4f7"
+    issues:
+      - "'The UI indicates the problem' needs the M3 UI: NOT_RUN."
+  - test_id: AT-FAULT-03   # NVS written under RGB stress
+    <<: *common
+    result: PASS
+    observed: "Transient frame drops during NVS/flash writes, no permanent shift (see AT-HW-1.2-6). The 'HID does not lose a keyup' half needs the HID producers of TASK-040/050: NOT_RUN."
+  - test_id: AT-PERF-04   # touch I2C throughput 1/2/5 points
+    <<: *common
+    result: PASS
+    observed: "About 100 Hz sample rate with 1..5 points (p95 10.6 ms), longest read 2.3-4.7 ms on the final cache configuration, track_id consistent across the capture."
+    evidence:
+      - "evidence/hardware/20261102-024245-touch-5finger.log sha256=710f7116676b2437944777bc649ece320a6e0f4654ee74fed9d10d072119718a"
+  - test_id: AT-HID-01   # USB descriptors
+    <<: *common
+    result: PASS
+    steps: "pwsh test/hil/usb_enum_windows.ps1 -CapsLed"
+    observed: >-
+      Windows: composite VID_303A&PID_400C (prototype IDs, TECH-037), serial 441BF6C9229C; MI_00 Class_03&SubClass_01&Prot_01
+      (boot keyboard), MI_01 Class_03&SubClass_01&Prot_02 (boot mouse), MI_02 Class_03&SubClass_00&Prot_00 (Consumer Control,
+      ADR-018); Keyboard, Mouse and HIDClass nodes status OK. Caps Lock toggled twice by the HOST -> 2 LED output reports
+      received; the HOST state restored.
+    evidence:
+      - "evidence/hardware/20261102-030656-usb-enum-windows.log sha256=73902d3d9b86d40a1dcf836061874bbc61d695b3d3721c51c29eaec9f6f18e6a"
+    issues:
+      - "Linux and UEFI enumeration NOT_RUN_HW (owner decision for this bring-up: no Linux or UEFI HOST session)."
+      - "Re-checked after the connector tests (cold start on the HID port alone, hot re-plug with auxiliary power): USB_ENUM PASS both times."
+      - "esp_tinyusb logs 'String index (238) is out of bounds' when Windows asks for the Microsoft OS string descriptor 0xEE; harmless, the request is stalled."
+  - test_id: AT-HID-02   # report formats
+    <<: *common
+    result: NOT_RUN_HW
+    observed: >-
+      Report builders verified on the host (test_usb_hid_reports: boot keyboard 8 B, mouse 3 B boot / 5 B report with AC Pan,
+      consumer). Descriptor side checked on the HOST: Windows HidP_GetCaps on the three collections gives input lengths 9 / 6 /
+      3 B and keyboard output 2 B (Windows adds 1 report-ID byte), i.e. keyboard 8 B + LED 1 B, mouse 5 B with 4 value caps
+      (X, Y, wheel, AC Pan), consumer 2 B: identical to KVM_HID_*_LEN. On the wire only the neutral reports after mount are
+      sent (3 per mount, 0 failed); no HID producer exists before TASK-040/050, so report contents on the wire stay NOT_RUN_HW.
+    evidence:
+      - "evidence/hardware/20261102-032730-hid-caps-windows.log sha256=2900e6749a6a345b7ad2ab1b21f08ae9f33014e8c95e37dae2fe534015791100"
+  - test_id: AT-CONN-10   # 100 USB disconnects/re-enumerations
+    <<: *common
+    result: NOT_RUN_HW
+    observed: "100 resets with re-enumeration passed on an earlier build without the mount check; the final build ran 15 cycles with the mount verified each time (the owner limits reset loops to 15 because every re-enumeration plays the Windows device sound). No HID event replay is possible yet (no producers). Physical cable removal/re-plug once with auxiliary power: new epoch on re-plug, no crash (see AT-HW-1.2-7)."

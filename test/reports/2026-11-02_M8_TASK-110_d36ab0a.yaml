@@ -1,0 +1,77 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M8 / TASK-110: update_manager (signed OTA state machine, image inspection, health check and rollback) and its
+# firmware integration (main/app_main.c start after the health-probe subjects, `ota` console command, app rollback in
+# the bootloader). Image signing (ADR-031 TECH-095) is NOT enabled in this build: it waits for the owner's decision on
+# key custody, so every row that needs a signed image is NOT_RUN_HW.
+# Format: docs/spec/04 section 12. Raw logs: ../evidence/hardware/ (outside the repository).
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M8 package (image m8-ota-1)"
+  idf: "v6.1"
+  board: "Waveshare ESP32-S3-Touch-LCD-7B, board #1 (ESP32-S3 rev v0.2, 16 MiB flash, 8 MiB PSRAM)"
+  host_toolchain: "llvm-mingw 20261020 clang (ucrt x86_64), CMake 4.0.3, Ninja 1.12.1; ASan + UBSan"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-110-host
+    <<: *common
+    result: PASS
+    steps: |
+      cmake -S test/update_manager -B ../build-host-ota -G Ninja -DCMAKE_C_COMPILER=clang
+      cmake --build ../build-host-ota && ctest --test-dir ../build-host-ota -V
+    observed: >-
+      Clean rebuild by the integrator: test_update_image 1242 checks, test_update_health 68 checks, test_update_sm 478
+      checks, 0 failures, 3/3 suites (state machine ordering revoke -> maintenance -> neutral -> write -> verify ->
+      switch, refusals, cancel in every state, health probes and timeout rollback, downgrade refusal, header and
+      length checks).
+  - test_id: TASK-110-build
+    <<: *common
+    result: PASS
+    steps: "pwsh -NoProfile -File ../.tools/build.ps1 m8-ota-1"
+    observed: >-
+      update_manager linked into the firmware (removed from EXCLUDE_COMPONENTS), CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y,
+      no new warning (the only warning is LVGL's own lv_sysmon.c). App 0x1e5ea0 B, 53 % of the 4 MiB slot free;
+      bootloader 0x5840 B. Update task stack raised from 4 KiB to 8 KiB by the integrator (TLS client handshake and
+      certificate chain check run in that task).
+  - test_id: TASK-110-board-boot
+    <<: *common
+    result: PASS_HW
+    evidence: "evidence/hardware/20261102-085901-m8-ota-1-status.log sha256=064c5d0fd642a4eb7eb991cd7b74c1e48ea5672ed9bc4ff9a29208f35b0ca83f"
+    observed: >-
+      One wired flash (one reset). `ota status`: state idle, input allowed, running ota_0 state=valid confirmed, next
+      ota_1 (4096 KiB), rollback enabled, signed ota NO (bring-up build), secure_version 0. USB mounted, HID ledger empty,
+      config load=ok with every field kept, internal heap free 113471 B (min 74548 B).
+  - test_id: AT-SEC-07-console
+    <<: *common
+    result: PASS_HW
+    evidence: "evidence/hardware/20261102-085917-m8-ota-1-http.log sha256=a39e5eb9e3e013a6b149aaf3e05faf5e909bd559c8eb2f73023053308c91d5b1"
+    observed: "`ota url http://...` refused (no_source) before any network or flash activity; plain http has no path. The CLIENT protocol has no OTA command (remote_protocol host suites, ADR-030)."
+  - test_id: TASK-110-board-reject-image
+    <<: *common
+    result: PASS_HW
+    evidence: |
+      evidence/hardware/20261102-085923-m8-ota-1-notimage.log sha256=38ae8cdd420d10435bd4b31ca9e48e3c5c1cae653bcb925af88ba07fc375f0a8
+      evidence/hardware/20261102-085928-m8-ota-1-after.log sha256=bd8a959a9fe4cc296ad57b11b237becc5d64f3216c8f78542aea2942e455b784
+    observed: >-
+      `ota url https://<public text file with Content-Length>`: TLS with the CA bundle completed in the update task,
+      the device entered maintenance (RELEASE_ALL reason maintenance), the first bytes failed the image header check
+      (state failed, last reason image_header, 0 / 4645 B written), maintenance ended, input allowed, ledger empty,
+      running slot still ota_0 valid, no reset (boot_count unchanged), internal heap min 73688 B.
+  - test_id: AT-FAULT-07
+    <<: *common
+    result: PASS_SW
+    observed: "Host suites only. Board half (abort mid-transfer keeps the old image bootable) NOT_RUN_HW: needs a valid image on an HTTPS source the device trusts."
+  - test_id: AT-FAULT-08
+    <<: *common
+    result: NOT_RUN_HW
+    observed: "Plan in docs/OTA.md (6 resets). Needs a signed image pair (ADR-031 signing block + owner decision on the key) and an HTTPS source the device trusts."
+  - test_id: AT-PERF-09
+    <<: *common
+    result: NOT_RUN_HW
+    observed: "Panel behavior during a real image write not measured (no full transfer yet)."
+  - test_id: AT-SEC-09
+    <<: *common
+    result: NOT_RUN_HW
+    observed: "End-to-end signed update and rollback need the signing block enabled; this build reports `signed ota NO`."

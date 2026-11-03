@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M6 / TASK-080: the ADR-017 Wi-Fi measurements on board #1 (AT-EXT-01 power save, AT-EXT-02 reconnect paths).
+# Benches added for them: `wifi ps none|min` and `wifi reconnect [full]` on the console (net_status bench API,
+# cycle timing in net_status_info_t), driven by test/hil/wifi_latency.py. No reset during the series, no HID.
+# Format: docs/spec/04 section 12. Raw logs are in ../evidence/hardware/ (SHA-256 below).
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M8 package"
+  board: "#1 ESP32-S3-Touch-LCD-7B, rev v0.2"
+  firmware: "m6-wifi-bench (one flash; boot_count 215 for the whole run)"
+  network: "home AP on channel 6, RSSI -31..-35 dBm at the bench; the test PC wired to the same LAN"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: AT-EXT-01
+    <<: *common
+    result: PASS_HW
+    requirement: TECH-070
+    steps: |
+      python -I test/hil/wifi_latency.py --save ../evidence/hardware --name m6 ping --host <device> --idle 10 60 --count 8
+    observed: >-
+      ICMP echo from the test PC, first packet after the idle period, 8 samples per cell, 0 lost.
+      WIFI_PS_NONE: 10 s idle p50 3 ms, p95 50 ms (one 75 ms outlier, the first sample); 60 s idle p50 3 ms, p95 6 ms.
+      WIFI_PS_MIN_MODEM: 10 s idle p50 26 ms, p95 115 ms; 60 s idle p50 94 ms, p95 115 ms.
+      Modem sleep adds one DTIM wake-up (about 25..100 ms) to the first packet; WIFI_PS_NONE stays at a few ms.
+      Decision recorded by the measurement: TECH-070 keeps WIFI_PS_NONE while the STA runs (the default in
+      app_main). The script restored `ps none` at the end (RESTORED ps=none).
+    evidence:
+      - {file: 20261102-114055-m6-ping.log, sha256: 18c20f48b35a5f13ccfa231a5782162f0d873cd32ca8d758248d1baf986b931e}
+  - test_id: AT-EXT-02
+    <<: *common
+    result: PASS_HW (partial)
+    requirement: TECH-071
+    steps: |
+      python -I test/hil/wifi_latency.py --save ../evidence/hardware --name m6 reconnect --count 20
+    observed: >-
+      20/20 cycles reconnected on the requested path (alternating cached BSSID/channel and full scan), 0 timeouts,
+      0 cached fallbacks, internal heap unchanged (83.8 KB). Time from the disconnect request to the IP:
+      cached p50 1577 ms (min 1081, p95 1621); full p50 1588 ms (min 1081, p95 1603). The boot connection over the
+      cache took 2024 ms. With a single AP on channel 6 the cache gives no measurable gain: the driver's default fast
+      scan stops at the first match on an early channel, and association + DHCP dominate (the samples fall on two
+      steps, about 1.08 s and 1.58 s). The cache is expected to matter on a crowded band or a late channel; that
+      condition was not available here.
+    not_run_hw: >-
+      The AP changing channel or BSSID (cache invalidation -> fallback to the scan) needs a change on the router;
+      covered on the host by the net_fsm suite (cached_fallback path).
+    evidence:
+      - {file: 20261102-112159-m6-reconnect.log, sha256: 1fc34f5ddd5d028b6fbe6844e4a20e6a0c62cb2557673a354c58175cb0e63e24}

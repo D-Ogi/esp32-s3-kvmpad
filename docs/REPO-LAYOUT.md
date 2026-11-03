@@ -34,15 +34,21 @@ esp32-s3-kvmpad/
 │   ├── kbd_layouts/          # generated layout tables, Unicode delivery     [TASK-071]
 │   ├── ime_engine/           # JP/zh/ko composition (ADR-024)                [TASK-072]
 │   ├── config_store/         # NVS schema + migrations                       [TASK-090]
+│   ├── net_status/           # Wi-Fi STA link owner + network status (ADR-015) [TASK-080]
 │   ├── remote_protocol/      # CLIENT v1: parser, validation, sessions       [TASK-100] 🔒
 │   ├── secure_remote/        # TLS/WSS, pairing, leases                      [TASK-100] 🔒
 │   ├── update_manager/       # signed OTA, rollback                          [TASK-110]
 │   └── diagnostics/          # metrics, counters, ring log                   [TASK-120]
 ├── test/
 │   ├── host_unit/  fuzz/  hil/          # L1 / L2 / L3–L4 (spec 04)
-│   ├── ui_store/  ui_nav/  ui_touch/    # UI Core tests (AGENTS-UI)
+│   ├── ui_store/  ui_nav/  ui_touch/  ui_components/ # UI Core tests (AGENTS-UI)
+│   ├── net_status/  config_store/      # TASK-080 / TASK-090 host tests
+│   ├── ui_views/                        # TASK-070A-C views and the product shell (ui_app)
+│   ├── remote_protocol/  pairing/       # TASK-100 protocol layer and pairing core
+│   ├── update_manager/                  # TASK-110 OTA state machine
 │   └── reports/                          # test reports (04 §12 format)
-├── simulator/{lvgl_sdl,fixtures,golden}/ # LVGL 9.6 SDL 800×480     [TASK-070D]
+├── simulator/{lvgl_sdl,fixtures,golden,tools}/ # LVGL 9.6 headless 1024×600, goldens [TASK-070D]
+├── clients/windows/          # native Windows CLIENT, .NET 9 (ADR-021, ADR-028)      [TASK-105]
 └── tools/                    # verify_spec_manifest.py, check_license_headers.py, kbd_layouts/ generator, flash, statistics
 ```
 
@@ -95,7 +101,7 @@ The name "KVM Essential" in the spec = KVMpad; the `kvm-essential/` tree in 02 �
 | `CMakeLists.txt`, `main/CMakeLists.txt`, `sdkconfig.defaults`, `idf_component.yml`, `dependencies.lock` | TASK-000 | TECH-002: they arise from a **working** `idf.py build` (ESP-IDF v6.1), not "from memory" |
 | `partitions.csv` | TASK-000 | ADR-009 resolved: 16 MiB Flash, 8 MiB PSRAM (`hardware/boards.md`); a table with ≥ 2 OTA slots plus a read-only `ime_data` partition for IME dictionaries (ADR-024 TECH-081) is created once the real binary size is known |
 | `.github/workflows/` | TASK-000 | CI requires a settled toolchain |
-| `clients/windows/` | TASK-105 | native CLIENT (ADR-021); only after TASK-100 and the 05 §4 gate |
+| `clients/windows/` | TASK-105 | created 2026-11-02 (ADR-028 ACCEPTED); build output stays in its gitignored `bin/`/`obj/`, the NuGet cache and `DOTNET_CLI_HOME` live outside the repository (`../.tools/`) |
 
 **Will never be created (ADR-014):** `components/ui_generated/`, `design/` — EEZ Studio, LVGL Pro Editor
 and other UI generators are out; TASK-061 cancelled. UI = LVGL 9.6 + native Observer + KVMpad UI Core, by hand in C.
@@ -103,8 +109,10 @@ and other UI generators are out; TASK-061 cancelled. UI = LVGL 9.6 + native Obse
 ## Gaps in the specification (to be resolved by an ADR, we do not guess)
 
 1. **TASK-080 (Wi-Fi STA/provisioning, status service, USB state publisher)** — the 02 §3.1 tree does not indicate a component.
-   Candidates: a new `net_status/` or `diagnostics/` + `usb_hid_device/`. → ADR-015.
+   Candidates: a new `net_status/` or `diagnostics/` + `usb_hid_device/`. → ADR-015 (ACCEPTED 2026-11-02: a new
+   `components/net_status/`; the USB state stays in `usb_hid_device/`).
 2. **`kbd_map` / `kbd_fsm` (TASK-070)** — `hid_core` has a "key map", but the place for the modifier FSM (one-shot/locked, Fn) is not specified.
-   Recommendation: the FSM in `hid_core` (the source of truth for the DOWN state), the view only a projection. → ADR-016.
+   Recommendation: the FSM in `hid_core` (the source of truth for the DOWN state), the view only a projection. → ADR-016
+   (ACCEPTED 2026-11-02, implemented as `components/hid_core/src/kbd_fsm.c`).
 3. **`ui_bindings`** — listed in 07 §8, absent from the 07 §2 tree; TASK-061 cancelled (ADR-014), so it will not resolve this.
    Recommendation: `ui_core/ui_bindings.c` (subject ↔ snapshot), resolved by TASK-060B.

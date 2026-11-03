@@ -62,6 +62,11 @@ and the full text and rationale are in the ADRs. This file is the traceability i
 | TECH-083 | MUST | `tools/check_license_headers.py` blocking in CI and in the PR checklist; foreign SPDX ids must be listed in `THIRD_PARTY_NOTICES.md` | 025 | TASK-000 | `tools`, CI | AT-EXT-28 |
 | TECH-084 | MUST | Required Notice + SPDX id as a retained string in the firmware image (`strings app.bin`); CLIENT `LegalCopyright` resource + About dialog | 025 | TASK-000/105 | `main`, CLIENT | AT-EXT-29 |
 | FR-751 | MUST | `Settings → About`: firmware version, license + Required Notice, third-party notices generated from `THIRD_PARTY_NOTICES.md` at build time | 025 | TASK-070C | `ui_views` | AT-EXT-29 |
+| TECH-085 | MUST | target board is the ESP32-S3-Touch-LCD-7B; read "7B" wherever 02/04/05/`AGENTS.md` name the 7 as the target; every non-board invariant unchanged | 026 | every task | all | 02 §1.2 trials |
+| TECH-086 | MUST | CH32V003 expander at `0x24` (registers `0x02..0x06`, EXIO1..6 roles); safe byte re-applied and verified by read-back before USB starts; EXIO5 = HIGH unreachable | 026 | TASK-010 | `board_hal` | 02 §1.2 item 4, `test_io_ext` |
+| TECH-087 | MUST | panel 1024×600 RGB565, PCLK 30 MHz, vendor porches; power-up order VDD → reset; frame-buffer budget recomputed for 1024×600 | 026 | TASK-020 | `board_hal` | TECH-020 bench, AT-UI-06 |
+| TECH-088 | MUST | GT911 `0x5D` (fallback `0x14`), configured 1024×600, mapped to `0..1023 × 0..599` by the TECH-011 transform | 026 | TASK-030 | `touch_input` | 02 §1.2 item 5, AT-PERF-04 |
+| FR-752 | MUST | `Settings → Keyboard → Input languages` (English always on, toggles `kbd.lang_ko` / `kbd.lang_zh` / `kbd.lang_ja`, default off, NVS); one language key on the KEYBOARD view replaces the `KO`/`ZH`/`JA` caps: a tap cycles through the languages that are on and usable, a long press opens a picker that names why one is not | 037 | TASK-070B/090 | `ui_views`, `config_store` | AT-EXT-27, `test_ui_view_keyboard`, `test_config_record` |
 
 ADR-021 (native Windows CLIENT) — ACCEPTED 2026-11-01, resolves ADR-002 (variant A). TASK-105 (CLIENT, `clients/windows/`)
 starts after TASK-100; the 05 §4 gate (`release_all` + epoch + HIL USB before any remote control) applies unchanged.

@@ -1,0 +1,190 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M8 / TASK-110, signed OTA on board #1 (ADR-031 plan, docs/OTA.md), first session. Development key (RSA-3072, kept
+# outside the repository), signed app images without secure boot (no eFuse touched), three test images built with
+# the workspace script .tools/build-ota-set.ps1: A (wired), B (good update), C (no touch reader: must roll back). A
+# development server certificate is pinned only in these test builds (KVM_OTA_TEST_CERT). The session stopped at the
+# 15-reset budget. Findings: an OTA write crash (fixed, ADR-034) and a health check that confirmed image C (fixed).
+# Series 2 (a new budget after the fix) ran every row of the plan on the board: all PASS_HW.
+# Format: docs/spec/04 section 12. Raw logs: ../evidence/hardware/ (outside the repository).
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M8 package (images ota-a / ota-b / ota-c-notouch)"
+  idf: "v6.1"
+  board: "Waveshare ESP32-S3-Touch-LCD-7B, board #1 (ESP32-S3 rev v0.2, 16 MiB flash, 8 MiB PSRAM)"
+  host_toolchain: "llvm-mingw 20261020 clang (ucrt x86_64), CMake 4.0.3, Ninja 1.12.1; ASan + UBSan"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-110-ota-row1-crash
+    <<: *common
+    result: FAIL
+    evidence: "evidence/hardware/20261102-185147-ota-row1.log sha256=584e6db7e5534fe2f16cf8fe2ecbbdfbe23d86354807e1a1a4fdf1b395301651"
+    observed: >-
+      Plan row 1 (EN reset at 50 % of RECEIVE) never reached its trigger. The board panicked at the first flash write
+      of the download (server: client gone after 65,536 of 2,887,680 B): "Cache disabled but cached memory region
+      accessed" in lcd_rgb_panel_fill_bounce_buffer from the GDMA interrupt, while the OTA task was in
+      spi_flash_op_block_func. Cause: permanent mappings of ime_data (IME fonts and OpenWnn dictionaries). With XIP from
+      PSRAM, ESP-IDF disables the cache for every flash write while any mapping exists. The same path is taken by NVS
+      writes. The series stopped at the first unexpected reset. Fixed by ADR-034 (PROPOSED): no permanent flash mappings.
+  - test_id: ADR-034-host
+    <<: *common
+    result: PASS
+    steps: |
+      cmake --build ../build-host-uicomp && ctest --test-dir ../build-host-uicomp   (-DKVM_HANZI_BLOB=../build-ime-data/font_hanzi_24_v2.bin)
+      cmake --build ../build-sim && ../build-sim/kvm_sim.exe
+      ctest in ../build-host-views and ../build-host-ui
+    observed: >-
+      test_ui_font_blob 39,752 checks, 0 failures; ui_components 5/5. Every blob of the suite (damage table, every
+      truncation, 3,000 plain and 3,000 compressed random corruptions) goes through the in-place and the streamed
+      loader: the same status, the same pixels for every sample glyph, no read outside the blob, nothing left
+      allocated. Every read and allocation of an open fails once in turn and is refused cleanly. The real hanzi blob
+      streamed: 4 parts, 16,580 glyphs, 156,468 B of tables, 602 reads to open, the same pixels as in place over 4,096
+      sampled code points. kvm_sim PASS (43 goldens, unchanged); views 7/7, ui 3/3.
+  - test_id: ADR-034-board-ime
+    <<: *common
+    result: PASS_HW
+    evidence: |
+      evidence/hardware/20261102-191341-a3-boot.log sha256=aa258c1aaa97c0c113c4b959adb4bba79f2ce2961d306c3e964c1f4e8f37dc11
+      evidence/hardware/20261102-191341-a3-ime.log sha256=116ba2ad50412dfb6950d60e737e4848940894ad4851812350bc3bb5d61cc1e1
+    observed: >-
+      Image A with ADR-034, wired flash: IME glue ZH ready and JA ready in 6,412 ms (was 5,422 ms mapped). Tables in
+      PSRAM: hanzi 156,436 B, kanji 68,156 B, plus the OpenWnn dictionaries (889,841 B). PSRAM free 643,276 B (was
+      1,773,684 B), internal heap free 73,171 B. The candidate strips were NOT looked at on the panel
+      (NOT_RUN_HW for the visual check: needs the owner at the board, ZH / JA layer by touch).
+  - test_id: AT-SEC-09
+    <<: *common
+    result: PASS_HW
+    evidence: "evidence/hardware/20261102-191514-ota-none-b.log sha256=6171d1cd7915b3f57a87f6d04d41417accb34803a7897e9ed2ec9d90092621d3"
+    observed: >-
+      `ota url https://<LAN server>/ota-b.bin` from image A with the IME loaded: 2,887,680 B received and written
+      in about 14 s with no panic (the ADR-034 fix), "Verifying image signature ... RSA-PSS ... Signature verified
+      successfully", boot partition switched to ota_1, restart, image B (ota_1) passed its health check and was
+      confirmed: running ota_1 state=valid confirmed, signed ota yes, rollback enabled. Internal heap min 22,472 B.
+  - test_id: AT-FAULT-08
+    <<: *common
+    result: FAIL
+    evidence: "evidence/hardware/20261102-191742-ota-none-c-rollback.log sha256=450c35187332c605c9b6304fbdd4fb71a65e5466c44cc9425b80ef4359fd4dd1"
+    observed: >-
+      Plan row 4 (an image whose touch reader does not start must roll back): image C was received, verified and
+      booted ("touch reader not started"), and the health check CONFIRMED it (health sweeps 4 alive 0xf missing 0x0);
+      no rollback. Cause: the heartbeat probe (update_platform_esp.c) called a counter alive for stale_us (3 s for touch)
+      after its first sample even when it never moved, and the four sweeps fit inside that window. Fix in software:
+      kvm_ota_heartbeat_alive() (update_health.c) is alive only after the counter moved since the first sample; host
+      tests reproduce the board case (frozen touch counter -> TIMEOUT, missing 0x2) - test_update_health 103 checks,
+      0 failures; images rebuilt. Re-run on the board in series 2 below (AT-FAULT-08-row1..6: PASS_HW).
+      The board was put back on image B (with touch) by OTA:
+      evidence/hardware/20261102-191855-ota-restore-b.log sha256=8269aa30531ae7928e25586095386c5031a1adae7e97c0238042c0fb41ea3302
+  - test_id: TASK-110-restart-rtcwdt
+    <<: *common
+    result: FINDING
+    evidence: |
+      evidence/hardware/20261102-191514-ota-none-b.log sha256=6171d1cd7915b3f57a87f6d04d41417accb34803a7897e9ed2ec9d90092621d3
+      evidence/hardware/20261102-153949-ja-reboot.log sha256=88eb100191942d5aed7813549dda2e484b162e19b4ea6fae9b88aab127b9d35e
+    observed: >-
+      Two of the four software restarts in this session ended through the 1 s RTC watchdog backstop of
+      esp_restart_noos (rst:0x10 RTCWDT_RTC_RST, reset_reason 7) instead of a CPU software reset. This also happened
+      before ADR-034, on a plain `reboot`. The device still restarts, about 1 s later. Not yet explained; the health
+      check must not treat reset_reason 7 after a requested restart as a crash.
+  - test_id: TASK-110-restart-rtcwdt-core
+    <<: *common
+    result: FINDING
+    build_sha: "d36ab0a + uncommitted package (local build, `reboot core0|core1` diagnostic)"
+    evidence: |
+      evidence/hardware/20261102-201629-rb-core1-1.log sha256=63d122a81f90e6fd663759c0ebc64e2e82d4479f6b7f2d04fc08c67ef27570d3
+      evidence/hardware/20261102-201641-rb-core0-1.log sha256=8847c297a8bc0308f50409e990f00d8f8299f922fcec04b7cd5925801f698e38
+      evidence/hardware/20261102-201656-rb-core1-r.log sha256=92c9c0c9d80005f0082af1bdcda1d7e1dd3d2e75c67b0fe4c2f59cc905782292
+      evidence/hardware/20261102-201713-rb-core1-r.log sha256=bbc44999a6073064ae3c211c1b8d18b901e7f36f8e39cb9bbca445e28c0b78ed
+      evidence/hardware/20261102-201722-rb-core0-r.log sha256=56ceaf3aa00ff069d4a4e9a62f9023a674a2f47d7d5d0e99dc8f285dfc042a42
+      evidence/hardware/20261102-202131-rb-fixed-1.log sha256=401e20f5964e682b45cd3632882e240676a947eab4910e289c24e103af0363f4
+    observed: >-
+      Hypothesis "only a restart called on the APP CPU hangs" (the console task has no core affinity, and the IDF
+      restart path differs per core) is refuted. esp_restart() from a task pinned to core 1: rst:0x10 twice, a clean
+      RTC_SW_CPU_RST once; from core 0: clean twice (a third run left no console log, boot_count confirms the
+      restart), then rst:0x10 once with every restart routed to core 0. The routing change was reverted. In every
+      rst:0x10 log nothing is printed between "rebooting" and the final ROM banner. 10 board resets used.
+    next: >-
+      External reports of the same symptom on ESP32-S3 boards with a 7-inch RGB panel point at the LCD_CAM scan-out
+      still running through the restart: esp_restart_noos resets GDMA but not LCD_CAM. One report measured 4/10
+      watchdog resets without a fix and 0/10 with LCD_CAM stopped and reset in a shutdown handler (Wi-Fi off did not
+      help) (github.com/ericdahl-dev/phrasedeck/issues/150; similar: github.com/prestonbrown/helixscreen/issues/1752).
+      board_lcd now registers such a shutdown handler (lcd_ll_stop + LCD_CAM reset under the RCC lock); built, not
+      yet on the board at the time of this entry. Verified later the same day: 8 of 8 clean RTC_SW_CPU_RST, report
+      2026-11-02_M5_ui-scanout-drift_d36ab0a.yaml TASK-110-restart-lcdcam-shutdown (ADR-035 item 3).
+  # ---- series 2 (new reset budget after the health-check fix; 13 of 15 resets used) ---------------------------------
+  # Images rebuilt with the heartbeat fix and the rollback record (update_platform_esp.c: RTC_NOINIT record written by
+  # the failing image, taken over by the next boot, shown by `ota status`). SHA256: ota-a f6c667c0..., ota-b
+  # 8c4b71ea..., ota-c df1d3b5e... (evidence/ota-images). Resets: 2 wired flashes of A, 11 from the plan rows below.
+  - test_id: AT-FAULT-08-row4
+    <<: *common
+    result: PASS_HW
+    evidence: "evidence/hardware/20261102-193411-s2-row4-c2.log sha256=f7e53d80ed0f8a784f7ecc5a2a420e9fa178e88978a39c9d6d4150cdc6b81898"
+    observed: >-
+      A -> C (no touch reader): C booted PENDING_VERIFY, the health check timed out after 20 s ("health check failed
+      (missing 0x8)"), esp_ota_mark_app_invalid_rollback_and_reboot, A booted again. `ota status` on A: last reason
+      health_timeout, rollbacks 1, "rolled back health_timeout, health missing 0x8 (touch)", running ota_0
+      state=valid. (The first series-2 run, before the rollback record existed, rolled back too but reported last
+      reason none: evidence/hardware/20261102-192752-s2-row4-c.log
+      sha256=920b8f687d98d3c826cd35b3caf9e9034cb786b553461d51baa6f3f44ffb54ca.)
+  - test_id: AT-FAULT-08-row1
+    <<: *common
+    result: PASS_HW
+    evidence: "evidence/hardware/20261102-193456-s2-row1.log sha256=bf425609da6ac22c654df5ff565e935480ed82b8f3675b2c05fe58a188bb9e70"
+    observed: >-
+      EN reset at RECEIVE 50 % of A -> B: the old image A booted, running ota_0 state=valid confirmed, input allowed.
+      Deviation from docs/OTA.md: `last reason` reads none, not the aborted attempt (the reason lives in RAM and a
+      power cut clears it; only a software rollback leaves a record).
+  - test_id: AT-FAULT-08-row2
+    <<: *common
+    result: PASS_HW
+    evidence: "evidence/hardware/20261102-193543-s2-row2.log sha256=2ea9b43d99cde7258a3074e0f456bda87c2f72a8b0c3907f374aa648d6c2dada8"
+    observed: "EN reset at `verify 100%`, before `boot partition switched`: A booted, running ota_0 state=valid, next slot ota_1."
+  - test_id: AT-FAULT-08-row3
+    <<: *common
+    result: PASS_HW
+    evidence: "evidence/hardware/20261102-193649-s2-row3.log sha256=f0730fc489aacdf7c46a91435b3ce825c25b60341e0e1f64408ba4f60f6fa46c"
+    observed: >-
+      EN reset right after `boot partition switched to ota_1`: B booted PENDING_VERIFY (ota state 0x1), the health check
+      confirmed it 0.6 s later (sweeps 4 alive 0xf missing 0x0) - the fixed heartbeat does not reject a good image.
+  - test_id: AT-FAULT-08-row6
+    <<: *common
+    result: PASS_HW
+    evidence: |
+      evidence/hardware/20261102-193711-s2-row6-status.log sha256=da987e0e0eae1672d176ad24023be80f7bc9abc823fff73457a11b65fed55f33
+      evidence/hardware/20261102-193711-s2-row6-config.log sha256=564633232950957e81ffa9b7262589dcb441b6967a5b2f346d1fc1d68df0c005
+    observed: >-
+      `reboot` after the confirmed update: B booted again, running ota_1 state=valid confirmed; `config`: load=ok
+      recovered=no, every field present, wifi_cache valid (NVS intact). The restart again went through the RTC
+      watchdog backstop (rst:0x10).
+  - test_id: AT-FAULT-08-row5
+    <<: *common
+    result: PASS_HW
+    evidence: "evidence/hardware/20261102-193842-s2-row5.log sha256=ef5ddd933ad9410964e2dc1bd6d15e61a2199f108ebff2d510201ad628878ac7"
+    observed: >-
+      B -> A, EN reset as soon as A reported `health_check 0%` (ota state 0x1, PENDING_VERIFY, before `image
+      confirmed`): the bootloader itself loaded ota_1 (B) at the next boot, running ota_1 state=valid. test/hil/
+      ota_fault.py `--at pending` now resets at the start of the health check; the old "3 s after BOOT_OK" was later
+      than the 0.6 s confirmation of a good image.
+  - test_id: AT-FAULT-07
+    <<: *common
+    result: PASS_HW
+    evidence: "evidence/hardware/20261102-193959-s2-f07-cancel2.log sha256=4a9db5f1869a656d16b0b8e6839dbbb2f8a95f08961cf43cfb80fe79a9277ad2"
+    observed: >-
+      `ota cancel` at RECEIVE 41 % (A -> B): "aborting 41%", state failed, last reason cancelled, input allowed, running
+      ota_0 state=valid confirmed, attempts 1 aborts 1, no reset. A reboot to show the old image still boots was not
+      spent (row 2 shows the same otadata case). An earlier try sent the cancel too late (the download had finished),
+      so that update completed normally: evidence/hardware/20261102-193922-s2-f07-after.log
+      sha256=9c1373bf568605778593a54adeb5e81bf6c90d2796d87d112af6a16098be0748.
+  - test_id: AT-PERF-09
+    <<: *common
+    result: PASS_HW
+    evidence: "evidence/hardware/20261102-194101-s2-perf09.log sha256=6efac715e39592b31ba71bd50796cca91e38095b910561bd8a497d1c47e9d719"
+    observed: >-
+      `ui bench full 4` (worst case, full-screen redraw every frame): 8.32 fps without an update, 7.25 fps while the
+      update wrote flash (RECEIVE 20 -> 55 %), render_max 120 -> 155 ms, flush_max 22.6 -> 44.9 ms, no fault; `ota
+      status` showed input BLOCKED (maintenance) for the whole write and allowed after the cancel. Visual check for a
+      permanent scanout drift after the write NOT_RUN_HW (needs eyes on the panel).
+risks:
+  - "The LVGL health probe relies on LV_USE_PERF_MONITOR=1. Without it, LVGL pauses the refresh timer on a static screen, refr_cycles stops and the fixed heartbeat would roll back a good image. A release build without the perf monitor needs another LVGL liveness counter."
+  - "A CJK glyph draw now waits for the flash driver during an erase, so the candidate strip can lag during an OTA download."

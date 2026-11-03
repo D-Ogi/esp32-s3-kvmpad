@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+#
+# M5 / TASK-070C: the DEVICE Settings card (Remote, paired clients, Shortcuts, Input/keep-awake, Keyboard, About)
+# and its firmware wiring (main/ui_shell.c, main/app_config.c, main/remote_glue.c). Format: docs/spec/04 section 12.
+---
+common: &common
+  build_sha: "d36ab0a + uncommitted M0-M8 package"
+  board: "#1 ESP32-S3-Touch-LCD-7B, rev v0.2"
+  firmware: "m5-settings-2 (0x212890 B, 48% of the app partition free), LVGL task stack 12 KiB"
+  when_utc: "2026-11-02"
+reports:
+  - test_id: TASK-070C-settings-host
+    <<: *common
+    result: PASS_SW
+    steps: |
+      ctest --test-dir ../build-host-views ; ../build-host-uicomp ; ../build-host-nav ; ../build-sim
+    observed: >-
+      views 7/7 (new test_ui_view_settings: snapshot republish, no optimistic toggle, relax-policy confirmation,
+      Forget confirmation, About carries the Required Notice, 200 open/close cycles without live-allocation growth),
+      uicomp 4/4, nav 1/1, simulator 39/39 goldens with 0 too_small / overlapping / outside. The integrator fixed two
+      layout defects before accepting (the pane width ignored the card border and clipped the right-hand controls;
+      the paired-client rows were exactly as tall as their buttons and clipped their edges) and added the
+      settings_clients_full fixture (8 of 8 clients, the list scrolls).
+  - test_id: AT-EXT-29
+    <<: *common
+    result: PASS_SW
+    requirement: FR-751, TECH-084
+    observed: >-
+      tools/gen_third_party_notices.py runs at configure time (python -I) for the firmware component and the host
+      builds; the firmware image contains the Required Notice and the notices text (byte search of kvmpad.bin:
+      "Required Notice: Copyright 2026 D-Ogi" x2, "Mbed TLS", "Vendored files"). The About pane is rendered in the
+      settings_about golden; on the board it needs a tap on the section list (owner).
+  - test_id: TASK-070C-settings-board
+    <<: *common
+    result: PASS_HW
+    steps: |
+      python -I test/hil/kvm_serial.py cmd "ui open settings"; cmd "ui snap 2"; cmd "ui close"; cmd "ui shell status"
+    observed: >-
+      The card opens from the local action (same gateway as the gear), shows the values of the saved record
+      (Remote Off, Ask before pairing On, Control approval Always, Pair a client disabled with the reason), and
+      closes; overlay shown=1 dismissed=1, the opening ran cancel_input (touch cancel + RELEASE_ALL request).
+      No reset afterwards (boot_count 221 throughout). LVGL task stack high-water: 5516 B free before, 3660 B free
+      with the card built (of 12 KiB).
+    defect_found_and_fixed: >-
+      With the former 8 KiB LVGL stack (1656 B free in normal use) building the card overflowed it: two panics
+      (core dump: "A stack overflow in task lvgl has been detected"). CONFIG_KVM_UI_TASK_STACK is now 12288
+      (Kconfig default and sdkconfig.defaults); internal heap free went from about 82 KB to 78 KB (minimum since
+      boot 39 KB). Reading the core dump with idf.py coredump-info resets the board twice more (esptool); that is
+      noted for the next diagnosis.
+    evidence:
+      - {file: 20261102-120835-m5s2-snap.log, sha256: 519658b2c7a58beb4ad5b14b8ebf1710527b4bd018e913748cc1c192cd4a5c63}
+      - {file: m5_settings_remote.png, sha256: dc5af611829e6877e7f7c4b0ae99d2d6513febcdbbe81cd9b87ccc32f6f97bc1}
+      - {file: 20261102-m5-settings-coredump.txt, note: "panic reason of the 8 KiB build"}
+not_run_hw:
+  - id: TASK-070C-settings-write
+    reason: >-
+      A change made on the card (toggle, approval policy, trusted flag, Forget) needs a finger: the console refuses a
+      synthetic tap while the product shell is on screen, by design, so it cannot reach the HOST. The path is
+      written (UI hook -> remote_glue queue -> app_config / transport Forget -> republish by app_config_seq) and
+      covered on the host for the UI half.
+  - id: AT-EXT-18-20-21-hw
+    reason: "Policy behavior on hardware follows the owner's pairing session (M7)."
