@@ -1,93 +1,49 @@
 # KVMpad
 
-### ESP32-S3 Touchscreen KVM Controller
+KVMpad turns a **Waveshare ESP32-S3-Touch-LCD-7B** into a USB keyboard and multitouch trackpad. Plug its native USB port into a computer to type, drag, scroll and use shortcuts. On Windows, the same 7-inch screen can also serve as an extended desktop. A portrait console combines that desktop, a touchpad and a keyboard on one screen.
 
-**Turn a 7-inch ESP32-S3 touchscreen into a powerful USB keyboard, multi-touch trackpad, and remote KVM control surface.**
+![KVMpad hybrid keyboard in the Night theme, with a touchpad above the keys and controls on the right](simulator/golden/keyboard_pad_above_night.png)
 
-KVMpad is a source-available, hardware-based keyboard and mouse controller built for the Waveshare ESP32-S3-Touch-LCD-7 (800×480).
+*The 1024 × 600 hybrid keyboard rendered by the project's LVGL simulator.*
 
-Featuring native USB HID, a gesture-driven multi-touch trackpad, an on-screen keyboard, system shortcuts, and Wi-Fi remote control, KVMpad makes interacting with headless PCs, servers, and development machines simple and intuitive.
+## What works today
 
-**Designed for ESP32-S3. Built with ESP-IDF, LVGL, and TinyUSB.**
+| Use case | How it works |
+| --- | --- |
+| Keyboard and mouse | Local USB input works offline. Place the touchpad above the keyboard or beside it on either side. In the top layout you can move the controls to the left or right. Day, Night, High contrast and backlight settings are under **Settings → Appearance**. |
+| Windows remote control | The Windows CLIENT discovers the board over Wi-Fi. Enter the six-digit PIN in the CLIENT and approve on the LCD. Subsequent connections verify the saved device certificate. The HOST companion reuses that pairing for extensions that need access to the PC. [CLIENT setup](clients/windows/README.md) |
+| USB monitor | With the USB monitor firmware profile and the signed driver distributed by Espressif, Windows can extend its desktop onto the board. Use **Extensions → USB monitor** for a standalone screen, or open **USB Monitor Console** to keep local input alongside the desktop. [Monitor setup and driver](components/usb_monitor/README.md) · [Portrait console](extensions/usb-monitor-console/) |
+| Live magnifier | Cursor Magnifier shows the area around the pointer on a Windows monitor. Choose the monitor in the Windows picker and approve it on the board. The HOST supports JPEG, Cinepak and H.264. [Capture setup and codec requirements](hosts/windows/README.md) |
+| Offline video | The media firmware plays H.264 video from microSD. The Windows CLIENT can prepare companion files for clips that exceed the board's decoder memory. Open **Extensions → Video files** on the board to select a clip. [Card preparation](clients/windows/README.md#prepare-an-h264-video-for-offline-playback) |
+| Extensions | Install a package from a FAT32 or exFAT microSD card and review its permissions on the LCD. Swipe up from the bottom of a multi-screen extension to switch screens or return Home. Pilot Panel includes an offline kneeboard with charts and checklists, plus radio, transponder and autopilot demos. [Pilot Panel](extensions/pilot-panel/) · [Extension examples](tools/kvmpack/examples/) |
 
-> KVMpad provides keyboard and mouse control. It does not capture or stream the host's video output.
+## Hardware and development status
 
-**Project status:** Work in progress — firmware under development. The specification (v1.1.0) is complete; no firmware is implemented yet and no hardware tests have been run. Milestones, gates and the current status of every task: [docs/ROADMAP.md](docs/ROADMAP.md).
+The development board has a **1024 × 600 RGB565 panel**, a five-point GT911 touch controller, 16 MiB of flash and 8 MiB of PSRAM. Use the **native USB** connector for keyboard, mouse and display traffic. The separate **USB-UART** connector provides the development console. The original 800 × 480 specification predates the change to the 7B. [Measured board record](hardware/boards.md) · [Board selection decision](docs/ADR/ADR-026-target-board-7b.md)
 
-![KVMpad UX overview](reference/kvm-essential-ux-overview.png)
+The firmware runs on the physical 7B. Hardware trials include typing into Windows while the portrait console displayed the desktop, returning to the regular HID interfaces on exit, and playing all 73 frames of a prepared 1080p H.264 test clip. Playback speed depends on the clip and playback mode. [Console trials](docs/ADR/ADR-046-portrait-monitor-console.md) · [Media measurements](test/reports/2026-11-19_device-media_022168e4.yaml)
 
-On the 7B, open the gear in the top bar and choose **Settings → Appearance** to set the color theme or adjust the panel backlight. Both choices persist across restarts.
+The USB monitor is still under development. The board has displayed a Windows extended desktop at 640 × 480 and received a native 1024 × 600 signal. The standalone monitor menu offers **Choose in Windows** alongside the two fixed sizes. Windows enumerated 17 resolutions during a driver trial. Switching between those resolutions in Windows Settings while the board continues to display the desktop still needs end-to-end hardware verification. Display latency remains an active area of work. [USB display trials](docs/ADR/ADR-043-usb-extended-display.md) · [Roadmap](docs/ROADMAP.md)
 
-## Hardware
+## Getting started
 
-| | |
-|---|---|
-| Board | Waveshare **ESP32-S3-Touch-LCD-7** (not 7B/7C, not the non-touch version) |
-| Display | 7″ 800×480 RGB565, landscape |
-| Touch | GT911, 5 points |
-| Host link | Native USB OTG → boot keyboard + boot mouse |
+- **Try the UI on a computer.** The desktop simulator runs the firmware's LVGL views and includes reproducible touch and keyboard scenarios. [Simulator build and run instructions](simulator/README.md)
+- **Connect a flashed board.** Start with the native USB port for local input. To control it over Wi-Fi, enable remote access on the board, choose **Pair a client**, then **Discover → Pair** in the Windows CLIENT. [Windows CLIENT build and pairing](clients/windows/README.md) · [HOST setup](hosts/windows/README.md)
+- **Create an extension.** Open **Tools → Extension Studio** in the Windows CLIENT, or run `py -3 tools/kvmpack/kvmpack.py studio` from the repository root with Python, Tk, Pillow and jsonschema installed. The SDK guide walks through building a checklist, previewing it and staging it for the card. [Extension SDK guide](tools/extension_sdk/README.md) · [Widget bindings](docs/EXTENSION-BINDINGS.md)
+- **Build the firmware.** The project uses ESP-IDF v6.1, FreeRTOS, LVGL 9.6 and TinyUSB. The media and USB monitor configurations are separate from the base defaults. For a USB monitor build, apply the defaults in the order listed in the monitor profile. The OTA guide covers the signing key and first wired installation. [Pinned dependencies](dependencies.lock) · [USB monitor build profile](sdkconfig.usb-monitor-eval) · [Signed firmware setup](docs/OTA.md)
 
-## Stack
+## Project documentation
 
-- ESP-IDF v6.1 · FreeRTOS
-- LVGL 9.6 + native Observer + a hand-written **KVMpad UI Core** (no UI generators; see [ADR-014](docs/ADR/ADR-014-no-ui-generators.md))
-- `esp_tinyusb` 3.0 (USB HID) · `esp_lcd_touch_gt911`
-- Remote path (planned, M7): TLS/WSS, physical pairing approval, ownership leases. Local control never needs Wi-Fi.
-
-Exact versions are pinned in `dependencies.lock` once the first verified build exists (TASK-000).
-
-## Repository layout
-
-```text
-components/   firmware components (board_hal, touch_input, gesture_engine, hid_core,
-              usb_hid_device, ui_*, remote_protocol, secure_remote, config_store, ...)
-main/         app_main
-test/         host unit, fuzz, HIL, UI tests and test reports
-simulator/    LVGL SDL desktop simulator (800×480)
-docs/spec/    full specification v1.1.0
-docs/ADR/     architecture decision records
-reference/    interactive HTML mockup (UX reference only)
-hardware/     measured board records
-tools/        helper scripts
-```
-
-The full map with dependency rules is in [docs/REPO-LAYOUT.md](docs/REPO-LAYOUT.md).
-
-## Documentation
-
-The specification package v1.1.0 is frozen and verified by a SHA256 manifest (`python -I tools/verify_spec_manifest.py`);
-changes are recorded as ADRs in `docs/ADR/`.
-
-| Document | Contents |
-|---|---|
-| [01 — Functional spec](docs/spec/01-FUNCTIONAL-AND-PROCESS-SPECIFICATION.md) | screens, gestures, keys, statuses, FR/NFR |
-| [02 — Technical spec](docs/spec/02-TECHNICAL-SPECIFICATION.md) | board, GPIO, GT911, CH422G, USB HID, LVGL, FreeRTOS, security, OTA |
-| [03 — Contracts & protocols](docs/spec/03-CONTRACTS-AND-PROTOCOLS.md) | C contracts, events, state machines, CLIENT protocol |
-| [04 — Test plan](docs/spec/04-TEST-PLAN-AND-ACCEPTANCE-CRITERIA.md) | unit, HIL, performance, security, acceptance |
-| [05 — Implementation plan](docs/spec/05-IMPLEMENTATION-PLAN.md) | tasks, milestones M0–M9, quality gates |
-| [06 — Decisions & risks](docs/spec/06-DECISIONS-AND-RISKS.md) | ADR-001…013, risks |
-| [07 — UI architecture](docs/spec/07-KVMpad-UI-FRAMEWORK-ARCHITECTURE.md) | KVMpad UI Core on LVGL 9.6 |
-| [AGENTS.md](AGENTS.md) · [AGENTS-UI.md](AGENTS-UI.md) | working contract for contributors |
+The [v1.1.0 specification](docs/spec/README.md) records the original requirements. Later hardware and product decisions are in the [architecture decision records](docs/ADR/README.md). The [hardware handbook](docs/HANDBOOK.md) and [test reports](test/reports/) document board behavior and the conditions of each measurement.
 
 ## Contributing
 
-Read [AGENTS.md](AGENTS.md) first — it applies to every contributor. One PR = one `TASK-xxx`,
-with requirement IDs (`FR-`, `TECH-`, `SEC-`) and the tests actually run (`AT-`).
-Hardware results without a physical board are always reported as `NOT_RUN_HW`.
+See the [contribution guide](CONTRIBUTING.md) for the repository layout, development workflow and test requirements. Report simulator and hardware results separately.
 
 ## License
 
-KVMpad is **source-available** under the [PolyForm Noncommercial License 1.0.0](LICENSE.md)
-(SPDX: `PolyForm-Noncommercial-1.0.0`).
+KVMpad is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE.md). Commercial use requires a separate license from the author. Bundled third-party components retain their own licenses. [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ```text
 Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
 ```
-
-- ✅ Personal use, hobby projects, research, education, and use by charitable, educational,
-  public-research, public-safety/health, environmental or government organizations.
-- ❌ Any commercial use, including selling devices or firmware, needs a separate commercial license from the author.
-
-Every authored source file carries this notice in its header, the firmware image and the CLIENT binary embed it, and
-`Settings → About` shows it on the device (ADR-025). Third-party components (ESP-IDF, LVGL, TinyUSB, Espressif components,
-keyboard layout data, IME engines, fonts) keep their own licenses — see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
