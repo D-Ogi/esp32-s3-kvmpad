@@ -11,6 +11,9 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,6 +35,11 @@ esp_err_t ui_bench_start(ui_bench_scene_t scene);
 
 /** Stop the animations; the static screen stays. */
 void ui_bench_stop(void);
+
+#if CONFIG_KVM_UI_BENCH_TAP
+/** True while a touch benchmark scene owns the visible screen. */
+bool ui_bench_screen_active(void);
+#endif
 
 /** Screen rectangle of the bench pad (inclusive), for the touch router. False before the first scene. */
 bool ui_bench_pad_area(int16_t *x1, int16_t *y1, int16_t *x2, int16_t *y2);

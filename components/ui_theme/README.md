@@ -13,6 +13,23 @@
 
 **Files:** `include/ui_tokens.h`, `include/ui_theme.h`, `src/ui_theme.c`, `CMakeLists.txt`
 
+## Control appearance
+
+Open the gear in the top bar. Settings opens on **Appearance** the first time and remembers the last section visited until restart. Under **Appearance**, tap **Day**, **Night** or **High contrast**, or adjust the display brightness from 10% to 100%.
+The check mark identifies the selected palette. The firmware saves the choice through its
+settings writer and restores it when the shell starts. Day is the default for existing devices.
+
+The palette covers the Mouse, Keyboard and Shortcuts views, their Settings overlay, the
+extension library, Device tools and HOST Bridge. Packages supply the colors of their own
+content. Photographs, video frames and captured screen pixels use their source colors.
+The navigation and menu buttons use 24 × 24 A4 masks in `kvm_control_icons.h`. LVGL tints each
+mask for the button state. Labels and touch targets stay on the parent button.
+
+On the 7B, Day and Night use an opaque touchpad with a lit upper rim and two short inset
+reflections. The navigation tabs sit in one rounded track. High contrast uses a solid black pad,
+a continuous white edge and a yellow selected tab. The glass finish uses native outlines,
+line segments and two 26 px corner arcs. The touch surface keeps the same input rectangle.
+
 ## What is where
 
 `ui_tokens.h` holds the values: panel geometry, spacing, radii, border widths, touch targets, the
@@ -91,7 +108,8 @@ that are not in the mockup; an owner decision can replace both values without to
   `tools/fonts/gen_hangul_font.py` rasterizes compatibility jamo and the 2350 KS X 1001 syllables of Noto Sans KR
   (OFL-1.1, `fonts/OFL-NotoSansKR.txt`, listed in `THIRD_PARTY_NOTICES.md`) at 24 px 4 bpp, uncompressed, with
   Montserrat 24 as the fallback for Latin. About 0.6 MB of flash. A syllable outside KS X 1001 still composes and is
-  sent; only its preview glyph is missing.
+  sent; only its preview glyph is missing. Media firmware can read this same subset from a compressed
+  `font_hangul_24.bin` in `ime_data`. [Optional language modules](../../docs/ADR/ADR-042-optional-languages.md)
 - `UI_FONT_HANZI` (TASK-072) is not in the app image: the 3.3 MB hanzi font (16 580 glyphs of Noto Sans SC, 24 px
   4 bpp, LVGL-compressed, KVMFONT1 version 2) lives in the `ime_data` partition as a KVMFONT1 blob
   (`tools/fonts/gen_hanzi_font_blob.py`). `UI_FONT_KANJI` is the same for the JA strip: 1.3 MB,

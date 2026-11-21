@@ -36,7 +36,8 @@
 #define BOARD_EXP_REG_INPUT     0x04    // pin levels, bit n = EXIOn
 #define BOARD_EXP_REG_PWM       0x05    // backlight dimming duty, inverted: 0 = full brightness
 #define BOARD_EXP_REG_ADC       0x06    // battery voltage (16-bit)
-#define BOARD_EXP_VERIFY_ATTEMPTS 5   // bounded safe-state re-apply + read-back at init (ADR-026)
+#define BOARD_EXP_CONFIG_ATTEMPTS 2
+#define BOARD_EXP_VERIFY_ATTEMPTS 5   // pin samples per successful configuration write
 #define BOARD_EXP_VERIFY_DELAY_MS 10
 #define BOARD_EXP_PWM_MAX       247     // Waveshare caps the duty at 97 % (97 * 255 / 100)
 
@@ -44,7 +45,10 @@
 #define BOARD_EXIO_TP_RST       1       // CTP_RST, GT911 reset, active LOW
 #define BOARD_EXIO_BL_EN        2       // DISP, backlight enable
 #define BOARD_EXIO_LCD_RST      3       // LCD_RST, active LOW
-#define BOARD_EXIO_SD_CS        4       // microSD chip select, active LOW (card unused in v1)
+#define BOARD_EXIO_SD_CS        4       // SD DAT3 stays high in one-bit SDMMC mode
+#define BOARD_SD_CLK           12
+#define BOARD_SD_CMD           11
+#define BOARD_SD_D0            13
 #define BOARD_EXIO_USB_SEL      5       // USB_SEL: LOW = USB, HIGH = CAN (CAN is disabled in v1)
 #define BOARD_EXIO_LCD_VDD_EN   6       // LCD_VDD_EN, panel supply / VCOM enable
 

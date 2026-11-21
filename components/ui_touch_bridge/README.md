@@ -19,13 +19,17 @@ to the gesture FSM (`gesture_engine`), without contention.
 | `include/touch_router.h`, `src/touch_router.c` | Pure C router (host-tested). Target chosen at touch-down and captured per `track_id`: `CHROME` (drives the LVGL pointer), `PAD` (goes to the gesture FSM), `BLOCKED` (ignored until lifted) |
 | `include/ui_touch_bridge.h`, `src/ui_touch_bridge.c` | Firmware task (priority 6, core 1): owns the router and the gesture FSM, one queue for samples and commands, 10 ms gesture tick, the LVGL indev read callback copies the pointer state under a spinlock |
 
+With the HOST touchpad disabled, a local chart can claim a two-finger pinch. The reader preserves the first pair, its latest position and finger lifts until the LVGL task can process them. A captured pair cancels the single pointer press. The remaining finger is released before a new drag starts. A third contact, a sensor fault or a gap ends the gesture.
+
 Conflict rules (one owner per contact, decided at touch-down):
 
 - a pad contact while a chrome contact is pressed → `BLOCKED` (no pad gesture under a held button);
 - a chrome contact while a pad contact is held → `BLOCKED` (a rail tap during a drag never presses a button);
 - a second chrome contact → `BLOCKED` (LVGL has one pointer);
-- an invalid sample or `ui_touch_bridge_cancel()` → the LVGL press is reset with `lv_indev_reset()` under the UI lock, so the
-  release is **not** a click, and the gesture FSM is cancelled (releases only).
+- After an invalid sample or `ui_touch_bridge_cancel()`, the LVGL input callback resets the press before
+  reporting a release. Held track IDs stay blocked until a valid scan shows they have lifted. If a new
+  press has already arrived, the callback requests another read in the same timer tick. The gesture FSM
+  releases its held buttons on cancellation.
 
 ## API
 

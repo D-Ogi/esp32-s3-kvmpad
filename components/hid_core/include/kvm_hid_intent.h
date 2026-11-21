@@ -8,6 +8,15 @@
 #pragma once
 
 #include <stdint.h>
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+#if defined(CONFIG_TINYUSB_HID_COUNT) && CONFIG_TINYUSB_HID_COUNT == 4
+#include "hpe_reports.h"
+#define KVM_HID_HAS_HPE 1
+#else
+#define KVM_HID_HAS_HPE 0
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,6 +40,10 @@ typedef enum {
     KVM_HID_CONSUMER_DOWN, // ADR-018 (TECH-074)
     KVM_HID_CONSUMER_UP,   // ADR-018 (TECH-074)
     KVM_HID_KEEPALIVE,     // ADR-020 (TECH-076), origin SYSTEM only
+    KVM_HID_RADIAL,
+    KVM_HID_JOYSTICK,
+    KVM_HID_PTP_FRAME,
+    KVM_HID_STUDIO_ACTION,
 } kvm_hid_action_type_t;
 
 /** Mouse button ids of 03 §3 (button mask bits 0..2, 03 §5.3). */
@@ -44,6 +57,10 @@ typedef struct {
     uint32_t epoch;
     uint32_t seq;
     uint64_t timestamp_us;
+#if KVM_HID_HAS_HPE
+    bool pad_input;  // gesture FSM origin, excludes standalone mouse controls
+    uint32_t pad_generation;
+#endif
     union {
         struct {
             uint8_t usage_id; // USB HID usage page 0x07; 0xE0..0xE7 are the modifiers
@@ -63,6 +80,12 @@ typedef struct {
         struct {
             uint16_t usage; // usage page 0x0C, allowlist only (TECH-075)
         } consumer;
+#if KVM_HID_HAS_HPE
+        struct { int16_t delta; bool pressed; } radial;
+        struct { uint16_t tile_id, action_id; uint32_t peer_nonce; } studio;
+        hpe_joystick_t joystick;
+        struct { hpe_frame_t frame; uint32_t generation; } ptp;
+#endif
     } data;
 } kvm_hid_intent_t;
 

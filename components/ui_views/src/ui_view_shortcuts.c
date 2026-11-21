@@ -334,7 +334,7 @@ static tile_ink_t tile_ink(bool featured, bool on)
         return (tile_ink_t){UI_COLOR_DISABLED_INK, UI_COLOR_DISABLED_INK, UI_COLOR_DISABLED_INK, UI_COLOR_WELL};
     }
     if (featured) {
-        return (tile_ink_t){UI_COLOR_ON_INVERSE, UI_COLOR_SUBTLE, UI_COLOR_ON_INVERSE, UI_COLOR_CHIP_FEATURED};
+        return (tile_ink_t){UI_COLOR_ON_INVERSE, UI_COLOR_INVERSE_SUBTLE, UI_COLOR_ON_INVERSE, UI_COLOR_CHIP_FEATURED};
     }
     return (tile_ink_t){UI_COLOR_INK, UI_COLOR_MUTED, UI_COLOR_INK, UI_COLOR_WELL};
 }
@@ -482,7 +482,7 @@ static lv_obj_t *make_card(lv_obj_t *parent, int index, ui_view_shortcuts_t *s)
         // The reference's single dark tile. Only the colors change: the geometry and the touch target do not.
         lv_obj_set_style_bg_color(card, lv_color_hex(UI_COLOR_INVERSE), LV_PART_MAIN);
         lv_obj_set_style_border_color(card, lv_color_hex(UI_COLOR_INVERSE), LV_PART_MAIN);
-        lv_obj_set_style_bg_color(card, lv_color_hex(0x33343Au), SEL_PRESSED);
+        lv_obj_set_style_bg_color(card, lv_color_hex(UI_COLOR_INVERSE_PRESSED), SEL_PRESSED);
         lv_obj_set_style_text_color(card, lv_color_hex(UI_COLOR_ON_INVERSE), LV_PART_MAIN);
     } else {
         lv_obj_set_style_bg_color(card, lv_color_hex(UI_COLOR_PRESSED_QUIET), SEL_PRESSED);

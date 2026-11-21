@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kvmpad.dev/schemas/kvmpack-manifest-v1.json",
+  "title": "KVMpad Extension Pack Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "version", "min_firmware", "title", "description", "category", "entry_view", "permissions", "required_permissions", "usb", "host", "limits"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*){2,}$", "maxLength": 100},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "min_firmware": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "title": {"type": "string", "minLength": 1, "maxLength": 48},
+    "description": {"type": "string", "minLength": 1, "maxLength": 180},
+    "category": {"enum": ["CONTROL", "TELEMETRY", "LIVE_VIEW", "COMPOSITE"]},
+    "entry_view": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_\\-]{0,47}$"},
+    "permissions": {"type": "array", "uniqueItems": true, "maxItems": 12, "items": {"$ref": "#/$defs/permission"}},
+    "required_permissions": {"type": "array", "uniqueItems": true, "maxItems": 12, "items": {"$ref": "#/$defs/permission"}},
+    "usb": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "requires"],
+      "properties": {
+        "mode": {"enum": ["static_superset", "monitor_controls"]},
+        "requires": {"type": "array", "uniqueItems": true, "maxItems": 8, "items": {"enum": ["hid.keyboard", "hid.mouse", "hid.radial", "hid.joystick", "hid.ptp", "usb.monitor"]}}
+      },
+      "if": {"properties": {"mode": {"const": "monitor_controls"}}},
+      "then": {"properties": {"requires": {"contains": {"const": "usb.monitor"}, "items": {"enum": ["usb.monitor", "hid.keyboard", "hid.mouse"]}}}},
+      "else": {"properties": {"requires": {"not": {"contains": {"const": "usb.monitor"}}}}}
+    },
+    "host": {
+      "type": "object", "additionalProperties": false,
+      "required": ["requires"],
+      "properties": {
+        "requires": {"type": "array", "uniqueItems": true, "maxItems": 8, "items": {"enum": ["telemetry.sim", "capture.windows", "obs.control", "none"]}}
+      }
+    },
+    "limits": {
+      "type": "object", "additionalProperties": false,
+      "required": ["max_events_per_sec", "max_memory_kib"],
+      "properties": {
+        "max_events_per_sec": {"type": "integer", "minimum": 1, "maximum": 100},
+        "max_memory_kib": {"type": "integer", "minimum": 16, "maximum": 512}
+      }
+    }
+  },
+  "$defs": {
+    "permission": {"enum": ["ui.basic", "hid.keyboard", "hid.mouse", "hid.radial", "hid.joystick", "host.telemetry.read", "host.screen.region", "host.actions", "storage.profile.settings", "usb.monitor"]}
+  }
+}

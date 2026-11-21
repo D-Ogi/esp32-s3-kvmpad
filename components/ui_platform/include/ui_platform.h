@@ -57,6 +57,11 @@ typedef struct {
     uint32_t lvgl_task_stack_hwm; // bytes left on the LVGL task stack, 0 if unknown
 } ui_platform_metrics_t;
 
+#if CONFIG_KVM_UI_ADAPTER_TEAR_DOUBLE_PARTIAL && CONFIG_KVM_UI_BENCH
+/** LVGL owner only, for a chart benchmark. Zero restores the product setting. */
+void ui_platform_set_benchmark_band(unsigned width);
+#endif
+
 void ui_platform_metrics_reset(void);
 void ui_platform_metrics_get(ui_platform_metrics_t *out);
 
@@ -69,6 +74,9 @@ uint32_t ui_platform_fps_x100(void);
  */
 typedef void (*ui_platform_row_cb_t)(const uint16_t *row, uint16_t w, uint16_t y, void *ctx);
 esp_err_t ui_platform_snapshot(uint16_t div, ui_platform_row_cb_t cb, void *ctx, uint16_t *out_w, uint16_t *out_h);
+/** Check the selected view in the LVGL task immediately before rendering. A refused view emits no rows. */
+esp_err_t ui_platform_snapshot_if(bool (*view_ready)(void), uint16_t div, ui_platform_row_cb_t cb,
+                                  void *ctx, uint16_t *out_w, uint16_t *out_h);
 
 /**
  * LVGL heap (ADR-027 TECH-091): live lv_malloc() blocks and bytes, and how many fell back to internal

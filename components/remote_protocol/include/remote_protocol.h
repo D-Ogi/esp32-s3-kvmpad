@@ -129,6 +129,7 @@ typedef struct {
     kvm_owner_kind_t owner;
     uint32_t lease_epoch;
     char device_id[24];    // e.g. "kvm-7f3a"
+    char usb_serial[13];   // Physical USB identity advertised to a paired display client.
     char fw[16];           // e.g. "1.0.0"
     char host_layout[24];  // ADR-024 / FR-745: an enumerated id from kbd_layouts, never free text
 } kvm_rp_status_t;
@@ -196,6 +197,11 @@ typedef struct {
      */
     kvm_rp_err_t (*pair_frame)(void *ctx, uint64_t session_id, const char *type,
                                const kvm_json_doc_t *doc, int payload);
+    bool (*pack_request)(void *ctx, uint64_t session, const char *type, const kvm_json_doc_t *doc,
+                         int payload, const char **state, uint32_t *offset);
+    kvm_rp_err_t (*host_attach)(void *ctx, uint64_t session, const kvm_json_doc_t *doc, int payload);
+    bool (*host_detach)(void *ctx, uint64_t session);
+    bool (*display_profile)(void *ctx, uint64_t session, const char *serial, bool native);
 
     void *ctx;
 } kvm_rp_hooks_t;
@@ -266,6 +272,9 @@ typedef struct {
     bool pairing_only;  // SEC-103: only `pair.*`, zero status, zero HID
     bool stale;         // no heartbeat within heartbeat_stale_us while owning control
     bool approval_pending;
+    bool pack_only;
+    uint16_t pack_requests;
+    uint64_t pack_rate_us;
     uint64_t id;                     // arbiter session id (uint64, never sent on the wire)
     char label[KVM_RP_LABEL_MAX];    // wire `session_id`
     char name[KVM_RP_NAME_MAX];      // sanitized client name (UI only)

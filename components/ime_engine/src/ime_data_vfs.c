@@ -37,8 +37,9 @@ static StaticSemaphore_t s_lock_buf;
 static portMUX_TYPE s_init_mux = portMUX_INITIALIZER_UNLOCKED;
 static const esp_partition_t *s_part;
 static ime_data_vfs_status_t s_st;
-static bool s_tried;
-static esp_err_t s_result = ESP_ERR_INVALID_STATE;
+static bool s_directory_checked;
+static esp_err_t s_directory_result;
+static bool s_hash_checked[IME_DATA_MAX_ENTRIES];
 static vfd_t s_fd[IME_VFS_FDS];
 
 static void lock(void)
@@ -51,7 +52,8 @@ static void unlock(void)
     xSemaphoreGive(s_lock);
 }
 
-static bool verify(const ime_data_entry_t *e)
+// Only a completed digest comparison is final for a file on this read-only partition.
+static bool check_hash(const ime_data_entry_t *e, bool *matches)
 {
     uint8_t *buf = heap_caps_malloc(HASH_CHUNK, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (buf == NULL) {
@@ -68,8 +70,10 @@ static bool verify(const ime_data_entry_t *e)
     uint8_t digest[32];
     size_t dlen = 0;
     if (ok) {
-        ok = psa_hash_finish(&op, digest, sizeof(digest), &dlen) == PSA_SUCCESS && dlen == sizeof(digest) &&
-             memcmp(digest, e->sha256, sizeof(digest)) == 0;
+        ok = psa_hash_finish(&op, digest, sizeof(digest), &dlen) == PSA_SUCCESS && dlen == sizeof(digest);
+    }
+    if (ok) {
+        *matches = memcmp(digest, e->sha256, sizeof(digest)) == 0;
     } else {
         (void)psa_hash_abort(&op);
     }
@@ -247,6 +251,61 @@ static const esp_vfs_fs_ops_t k_ops = {
     .fstat_p = vfs_fstat,
 };
 
+static esp_err_t read_directory(void)
+{
+    if (s_directory_checked) {
+        return s_directory_result;
+    }
+    s_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "ime_data");
+    s_st.partition_found = s_part != NULL;
+    if (s_part == NULL) {
+        s_directory_checked = true;
+        s_directory_result = ESP_ERR_NOT_FOUND;
+        return s_directory_result;
+    }
+    s_st.partition_size = s_part->size;
+    uint8_t *dir = heap_caps_malloc(IME_DATA_DIR_LEN, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (dir == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    const esp_err_t read_err = esp_partition_read(s_part, 0, dir, IME_DATA_DIR_LEN);
+    if (read_err != ESP_OK) {
+        heap_caps_free(dir);
+        return read_err;
+    }
+    s_st.parse = ime_data_parse(dir, IME_DATA_DIR_LEN, s_part->size, s_st.entry, IME_DATA_MAX_ENTRIES, &s_st.count);
+    heap_caps_free(dir);
+    s_directory_checked = true;
+    s_directory_result = s_st.parse == IME_DATA_OK ? ESP_OK : ESP_ERR_INVALID_STATE;
+    if (s_st.parse != IME_DATA_OK) {
+        ESP_LOGW(TAG, "no usable image: %s", ime_data_status_name(s_st.parse));
+    }
+    return s_directory_result;
+}
+
+static esp_err_t check_pending_files(void)
+{
+    uint32_t i = 0;
+    while (i < s_st.count && s_hash_checked[i]) {
+        i++;
+    }
+    if (i == s_st.count) {
+        return ESP_OK;
+    }
+    if (psa_crypto_init() != PSA_SUCCESS) {
+        // Previously verified files on an already registered VFS stay usable.
+        return s_st.mounted ? ESP_OK : ESP_FAIL;
+    }
+    const int64_t t0 = esp_timer_get_time();
+    for (; i < s_st.count; i++) {
+        if (!s_hash_checked[i]) {
+            s_hash_checked[i] = check_hash(&s_st.entry[i], &s_st.verified[i]);
+        }
+    }
+    s_st.verify_ms += (uint32_t)((esp_timer_get_time() - t0) / 1000);
+    return ESP_OK;
+}
+
 esp_err_t ime_data_mount(void)
 {
     portENTER_CRITICAL(&s_init_mux);
@@ -255,53 +314,17 @@ esp_err_t ime_data_mount(void)
     }
     portEXIT_CRITICAL(&s_init_mux);
     lock();
-    if (s_tried) {
-        const esp_err_t r = s_result;
-        unlock();
-        return r;
+    esp_err_t result = read_directory();
+    if (result == ESP_OK) {
+        result = check_pending_files();
     }
-    s_tried = true;
-    s_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "ime_data");
-    s_st.partition_found = s_part != NULL;
-    if (s_part == NULL) {
-        s_result = ESP_ERR_NOT_FOUND;
-        unlock();
-        return s_result;
+    if (result == ESP_OK && !s_st.mounted) {
+        result = esp_vfs_register_fs(IME_DATA_MOUNT, &k_ops, ESP_VFS_FLAG_CONTEXT_PTR | ESP_VFS_FLAG_STATIC, NULL);
+        s_st.mounted = result == ESP_OK;
+        ESP_LOGI(TAG, "%u file(s), mount %s", (unsigned)s_st.count, esp_err_to_name(result));
     }
-    s_st.partition_size = s_part->size;
-    uint8_t *dir = heap_caps_malloc(IME_DATA_DIR_LEN, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (dir == NULL || esp_partition_read(s_part, 0, dir, IME_DATA_DIR_LEN) != ESP_OK) {
-        heap_caps_free(dir);
-        s_result = ESP_ERR_NO_MEM;
-        unlock();
-        return s_result;
-    }
-    s_st.parse = ime_data_parse(dir, IME_DATA_DIR_LEN, s_part->size, s_st.entry, IME_DATA_MAX_ENTRIES, &s_st.count);
-    heap_caps_free(dir);
-    if (s_st.parse != IME_DATA_OK) {
-        ESP_LOGW(TAG, "no usable image: %s", ime_data_status_name(s_st.parse));
-        s_result = ESP_ERR_INVALID_STATE;
-        unlock();
-        return s_result;
-    }
-    if (psa_crypto_init() != PSA_SUCCESS) {
-        s_result = ESP_FAIL;
-        unlock();
-        return s_result;
-    }
-    const int64_t t0 = esp_timer_get_time();
-    uint32_t good = 0;
-    for (uint32_t i = 0; i < s_st.count; i++) {
-        s_st.verified[i] = verify(&s_st.entry[i]);
-        good += s_st.verified[i] ? 1u : 0u;
-    }
-    s_st.verify_ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
-    s_result = esp_vfs_register_fs(IME_DATA_MOUNT, &k_ops, ESP_VFS_FLAG_CONTEXT_PTR | ESP_VFS_FLAG_STATIC, NULL);
-    s_st.mounted = s_result == ESP_OK;
-    ESP_LOGI(TAG, "%u file(s), %u verified in %u ms, mount %s", (unsigned)s_st.count, (unsigned)good,
-             (unsigned)s_st.verify_ms, esp_err_to_name(s_result));
     unlock();
-    return s_result;
+    return result;
 }
 
 esp_err_t ime_data_file(const char *name, ime_data_file_t *out)

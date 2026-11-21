@@ -129,7 +129,10 @@ Steps: `tap_nav <0..2>`, `tap_host`, `tap_client`, `tap_key <legend>`, `hold_key
 `tap_mouse left|right|drag|help`, `tap_shortcut <0..5>`, `tap_media <0..5>`, `tap_layout`, `tap_pair`,
 `tap_settings`, `tap_section <0..5>`, `tap_toggle <setting id>`, `tap_approval <0..2>`,
 `tap_trusted <index>`, `tap_forget <index>`, `tap_confirm 0|1`, `tap_lang`, `hold_lang`,
-`pick_lang en|ko|zh|ja`, `wait <ms>`.
+`pick_lang en|ko|zh|ja`, `tap_workspace`, `pick_workspace full|above|above-left|left|right`,
+`tap_rail`, `wait <ms>`.
+Fixtures with `extensions 1` include the optional Extensions entry in the shell.
+Set `palette day`, `palette night`, or `palette high-contrast` to render a fixture using the corresponding system appearance.
 
 The language key of the KEYBOARD view (ADR-037) is held for 600 ms by `hold_lang`, past LVGL's 400 ms
 long-press time, so the picker opens and the short click does not fire; `pick_lang` taps one of its rows.

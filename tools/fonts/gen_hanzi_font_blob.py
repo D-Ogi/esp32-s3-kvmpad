@@ -33,9 +33,12 @@ import struct
 import subprocess
 import sys
 
-# --set zh: Noto Sans SC, the PinyinIME characters; --set ja: Noto Sans JP, the kana and kanji of JIS X 0208.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import gen_hangul_font
+
 FONT_SHA256 = {"zh": "faa6c9df652116dde789d351359f3d7e5d2285a2b2a1f04a2d7244df706d5ea9",
-               "ja": "dff723ba59d57d136764a04b9b2d03205544f7cd785a711442d6d2d085ac5073"}
+               "ja": "dff723ba59d57d136764a04b9b2d03205544f7cd785a711442d6d2d085ac5073",
+               "ko": gen_hangul_font.FONT_SHA256}
 LV_FONT_CONV_VERSION = "1.5.3"
 SIZE = 24
 BPP = 4
@@ -65,6 +68,8 @@ def sha256(path: str) -> str:
 
 
 def code_points(which: str) -> list[int]:
+    if which == "ko":
+        return sorted(set(range(0x3131, 0x3164)).union(gen_hangul_font.ksx1001_syllables()))
     return code_points_zh() if which == "zh" else code_points_ja()
 
 
@@ -225,8 +230,8 @@ def pack(parts: list[dict]) -> bytes:
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--font", required=True, help="NotoSansSC-Regular.otf (--set zh) or NotoSansJP-Regular.otf (--set ja)")
-    ap.add_argument("--set", choices=("zh", "ja"), default="zh", help="character set: pinyin dictionary or JIS X 0208")
+    ap.add_argument("--font", required=True, help="pinned Noto Sans SC, JP or KR Regular OTF for the selected language")
+    ap.add_argument("--set", choices=("zh", "ja", "ko"), default="zh", help="pinyin, JIS X 0208 or KS X 1001 and jamo")
     ap.add_argument("--lv-font-conv", required=True, help="lv_font_conv.js of the npm package 1.5.3")
     ap.add_argument("--node", default="node", help="the Node.js executable")
     ap.add_argument("--work", required=True, help="scratch directory outside the repository")

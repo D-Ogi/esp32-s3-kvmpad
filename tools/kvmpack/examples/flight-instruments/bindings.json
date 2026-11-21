@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "id": "ias",
+      "topic": "sim.airspeed_kt",
+      "type": "float",
+      "max_age_ms": 1000
+    },
+    {
+      "id": "alt",
+      "topic": "sim.altitude_ft",
+      "type": "float",
+      "max_age_ms": 1000
+    },
+    {
+      "id": "hdg",
+      "topic": "sim.heading_deg",
+      "type": "float",
+      "max_age_ms": 1000
+    },
+    {
+      "id": "vsi",
+      "topic": "sim.vertical_speed_fpm",
+      "type": "float",
+      "max_age_ms": 1000
+    },
+    {
+      "id": "pitch",
+      "topic": "sim.attitude.pitch_deg",
+      "type": "float",
+      "max_age_ms": 1000
+    },
+    {
+      "id": "roll",
+      "topic": "sim.attitude.roll_deg",
+      "type": "float",
+      "max_age_ms": 1000
+    },
+    {
+      "id": "roll2",
+      "topic": "sim.attitude.roll_deg",
+      "type": "float",
+      "max_age_ms": 1000
+    }
+  ],
+  "state": [],
+  "connections": [
+    {
+      "from": "ias",
+      "to": "gauge_ias.value",
+      "transform": "identity"
+    },
+    {
+      "from": "alt",
+      "to": "gauge_alt.value",
+      "transform": "identity"
+    },
+    {
+      "from": "hdg",
+      "to": "heading.value",
+      "transform": "identity"
+    },
+    {
+      "from": "vsi",
+      "to": "vspeed.value",
+      "transform": "identity"
+    },
+    {
+      "from": "pitch",
+      "to": "horizon.pitch",
+      "transform": "identity"
+    },
+    {
+      "from": "roll",
+      "to": "horizon.roll",
+      "transform": "identity"
+    },
+    {
+      "from": "roll2",
+      "to": "roll_text.value",
+      "transform": "identity"
+    }
+  ],
+  "actions": []
+}

@@ -35,6 +35,12 @@ esp_err_t config_store_nvs_init(kvm_config_store_t *store, const kvm_config_debo
 // The backend used by config_store_nvs_init(); exposed for a store the caller wants to own itself.
 const kvm_config_backend_t *config_store_nvs_backend(void);
 
+// Versioned side record for optional AccessPad timing. Schema-4 firmware ignores this key.
+esp_err_t config_store_nvs_access_read(uint64_t *out);
+esp_err_t config_store_nvs_access_write(uint64_t word);
+esp_err_t config_store_nvs_palette_read(uint8_t *value);
+esp_err_t config_store_nvs_palette_write(uint8_t value);
+
 // Monotonic millisecond clock for the store's now_ms arguments.
 uint64_t config_store_nvs_now_ms(void);
 

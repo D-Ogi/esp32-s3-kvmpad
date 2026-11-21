@@ -68,7 +68,8 @@ typedef struct {
     lv_obj_t *pad;
     lv_obj_t *live;
     lv_obj_t *offline;    // "Host disconnected" notice, shown instead of the invitation below
-    lv_obj_t *idle_title; // "Just move." - hidden while the notice is up
+    lv_obj_t *idle_contact;
+    lv_obj_t *idle_title;
     lv_obj_t *idle_sub;
     lv_obj_t *hint;
     lv_obj_t *btn_left;

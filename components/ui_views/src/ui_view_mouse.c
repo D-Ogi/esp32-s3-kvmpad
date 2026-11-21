@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "hid_core.h"
+#include "kvm_control_icons.h"
 #include "kvm_hid_intent.h"
 #include "ui_overlay.h"
 #include "ui_theme.h"
@@ -25,7 +26,7 @@ static const ui_action_key_desc_t k_right = {.label = "Right click", .icon = LV_
                                              .width = KEY_W, .height = FOOT_H, .font = UI_FONT_BODY};
 // Not checkable: LV_STATE_CHECKED is a projection of the authoritative drag-lock state, never a local toggle.
 static const ui_action_key_desc_t k_drag = {.label = "Drag lock", .icon = LV_SYMBOL_LOOP,
-                                            .control_id = UI_CTRL_MOUSE_DRAG_LOCK, .variant = UI_KEY_MODIFIER,
+                                            .control_id = UI_CTRL_MOUSE_DRAG_LOCK, .variant = UI_KEY_NORMAL,
                                             .width = KEY_W, .height = FOOT_H, .font = UI_FONT_BODY};
 
 #define HELP_W 72
@@ -192,7 +193,10 @@ static bool help_build(void *ctx, lv_obj_t *card)
 
     lv_obj_t *foot = plain(card);
     lv_obj_set_width(foot, lv_pct(100));
-    lv_obj_set_height(foot, LV_SIZE_CONTENT);
+    // The pressed button moves down one pixel. Keep that feedback inside the card's bottom padding
+    // without resizing the content-sized card and repainting all its gesture rows.
+    lv_obj_set_height(foot, UI_SPACE_S + UI_MODAL_BTN_H);
+    lv_obj_set_overflow_visible(foot, true);
     lv_obj_set_style_pad_top(foot, UI_SPACE_S, LV_PART_MAIN);
     lv_obj_set_flex_flow(foot, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(foot, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -249,10 +253,12 @@ static void refresh(ui_view_mouse_t *m)
     lv_label_set_text_static(m->drag_label, drag ? "Release" : "Drag lock"); // FR-107: a visible Release
     lv_obj_set_hidden(m->offline, host);
     // The invitation and the notice say opposite things: only one of them belongs on the pad at a time.
+    lv_obj_set_hidden(m->idle_contact, !host);
     lv_obj_set_hidden(m->idle_title, !host);
     lv_obj_set_hidden(m->idle_sub, !host);
+    lv_obj_set_hidden(m->live, !host);
     lv_label_set_text_static(m->live, drag ? "Dragging" : "Ready");
-    lv_obj_set_style_text_color(m->live, lv_color_hex(drag ? UI_COLOR_ACCENT_INK : UI_COLOR_MUTED), LV_PART_MAIN);
+    lv_obj_set_checked(m->live, drag);
     lv_label_set_text_static(m->hint, drag ? "Drag lock is on - move to drag." : "Tap to click. Hold for a right-click.");
 }
 
@@ -293,20 +299,30 @@ static lv_obj_t *create_cb(void *ctx, lv_obj_t *slot)
     // Touch surface: visual only (the bridge routes its touches to the gesture engine, 07 §6).
     lv_obj_t *pad = plain(root);
     ui_theme_apply(pad, UI_STYLE_CARD, LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_color(pad, lv_color_hex(UI_COLOR_WELL), LV_PART_MAIN);
+    ui_theme_touch_surface(pad);
     lv_obj_set_width(pad, lv_pct(100));
     lv_obj_set_flex_grow(pad, 1);
 
-    lv_obj_t *tag = text(pad, "TOUCH SURFACE", UI_STYLE_TEXT_MUTED);
-    lv_obj_align(tag, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_t *tag = text(pad, "Touchpad", UI_STYLE_TEXT_BODY);
+    lv_obj_align(tag, LV_ALIGN_TOP_LEFT, UI_SPACE_S, UI_SPACE_S);
     m->live = text(pad, "Ready", UI_STYLE_TEXT_LABEL);
-    lv_obj_align(m->live, LV_ALIGN_TOP_RIGHT, 0, 0);
-    m->idle_title = text(pad, "Just move.", UI_STYLE_TEXT_TITLE);
-    lv_obj_align(m->idle_title, LV_ALIGN_CENTER, 0, -18);
-    m->idle_sub = text(pad, "Move your finger to control the host.  Two fingers to scroll.", UI_STYLE_TEXT_MUTED);
-    lv_obj_align(m->idle_sub, LV_ALIGN_CENTER, 0, 18);
+    ui_theme_apply(m->live, UI_STYLE_TOUCH_STATUS, LV_STATE_DEFAULT);
+    ui_theme_apply(m->live, UI_STYLE_CONTROL_SELECTED, LV_STATE_CHECKED);
+    lv_obj_align(m->live, LV_ALIGN_TOP_RIGHT, -UI_SPACE_S, UI_SPACE_XS);
 
-    // The notice is sized by its own text and centered, so the "TOUCH SURFACE" / state line at the top of the
+    m->idle_contact = lv_image_create(pad);
+    lv_image_set_src(m->idle_contact, &kvm_icon_mouse);
+    lv_image_set_inner_align(m->idle_contact, LV_IMAGE_ALIGN_CENTER);
+    lv_obj_set_size(m->idle_contact, UI_TOUCH_COMFORT, UI_TOUCH_COMFORT);
+    lv_obj_set_clickable(m->idle_contact, false);
+    ui_theme_apply(m->idle_contact, UI_STYLE_TOUCH_CONTACT, LV_STATE_DEFAULT);
+    lv_obj_align(m->idle_contact, LV_ALIGN_CENTER, 0, -42);
+    m->idle_title = text(pad, "Move the pointer", UI_STYLE_TEXT_TITLE);
+    lv_obj_align(m->idle_title, LV_ALIGN_CENTER, 0, 14);
+    m->idle_sub = text(pad, "One finger to move. Two fingers to scroll.", UI_STYLE_TEXT_MUTED);
+    lv_obj_align(m->idle_sub, LV_ALIGN_CENTER, 0, 44);
+
+    // The notice is sized by its own text and centered, so the Touchpad heading at the top of the
     // pad stays readable: a card the size of the pad's content area would start exactly on top of them.
     m->offline = plain(pad);
     ui_theme_apply(m->offline, UI_STYLE_CARD, LV_STATE_DEFAULT);
@@ -330,6 +346,7 @@ static lv_obj_t *create_cb(void *ctx, lv_obj_t *slot)
     m->btn_help = lv_button_create(foot);
     lv_obj_remove_style_all(m->btn_help);
     ui_theme_apply_button(m->btn_help, UI_BTN_SECONDARY);
+    ui_theme_apply(m->btn_help, UI_STYLE_MOUSE_KEY, LV_STATE_DEFAULT);
     lv_obj_set_size(m->btn_help, HELP_W, FOOT_H);
     lv_obj_set_scrollable(m->btn_help, false);
     lv_obj_t *qm = lv_label_create(m->btn_help);
@@ -348,6 +365,9 @@ static lv_obj_t *create_cb(void *ctx, lv_obj_t *slot)
         lv_obj_delete(root);
         return NULL;
     }
+    ui_theme_apply(m->btn_left, UI_STYLE_MOUSE_KEY, LV_STATE_DEFAULT);
+    ui_theme_apply(m->btn_right, UI_STYLE_MOUSE_KEY, LV_STATE_DEFAULT);
+    ui_theme_apply(m->btn_drag, UI_STYLE_MOUSE_KEY, LV_STATE_DEFAULT);
     m->drag_label = lv_obj_get_child(m->btn_drag, (int32_t)lv_obj_get_child_count(m->btn_drag) - 1);
     lv_obj_add_event_cb(m->btn_drag, drag_clicked, LV_EVENT_CLICKED, m);
 
@@ -375,7 +395,7 @@ static void destroy_cb(void *ctx)
     ui_view_mouse_t *m = ctx;
     release_held(m);
     m->root = m->pad = m->live = m->offline = m->hint = NULL;
-    m->idle_title = m->idle_sub = NULL;
+    m->idle_contact = m->idle_title = m->idle_sub = NULL;
     m->btn_left = m->btn_right = m->btn_drag = m->drag_label = m->btn_help = NULL;
 }
 

@@ -23,9 +23,17 @@
 #include "tinyusb.h"
 #include "tinyusb_default_config.h"
 #include "tusb.h"
+#if CONFIG_KVM_USB_MONITOR_EVAL
+#include "usb_monitor_port.h"
+#endif
 
-#if CONFIG_TINYUSB_HID_COUNT != 3
-#error "ADR-018: CONFIG_TINYUSB_HID_COUNT must be 3 (keyboard, mouse, consumer)"
+#if KVM_HPE_FOUR
+#include "hpe_descriptors.h"
+#include "hpe_studio.h"
+#include "esp_app_desc.h"
+#include "hpe_cert.h"
+#elif CONFIG_TINYUSB_HID_COUNT != 3
+#error "Select the three- or four-interface KVMpad configuration"
 #endif
 
 static const char *TAG = "usb_hid";
@@ -35,7 +43,11 @@ static const char *TAG = "usb_hid";
 // prototype only. A distributed product needs its own VID/PID (separate ADR).
 #define KVM_USB_VID       0x303A
 #define KVM_USB_PID       0x400C
-#define KVM_USB_BCD       0x0100   // device release 1.00 (prototype)
+#if KVM_HPE_FOUR
+#define KVM_USB_BCD       0x0101
+#else
+#define KVM_USB_BCD       0x0100
+#endif
 #define KVM_USB_POWER_MA  500
 
 enum {
@@ -45,6 +57,9 @@ enum {
     STRID_SERIAL,
     STRID_KEYBOARD,
     STRID_MOUSE,
+#if KVM_HPE_FOUR
+    STRID_PTP,
+#endif
     STRID_CONSUMER,
     STRID_COUNT,
 };
@@ -58,9 +73,14 @@ enum {
 
 static const uint8_t s_report_keyboard[] = {TUD_HID_REPORT_DESC_KEYBOARD()};
 static const uint8_t s_report_mouse[] = {TUD_HID_REPORT_DESC_MOUSE()};
+#if KVM_HPE_FOUR
+#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + 3 * TUD_HID_DESC_LEN + TUD_HID_INOUT_DESC_LEN)
+_Static_assert(CFG_TUD_HID_EP_BUFSIZE == 64, "IF3 has a 64-byte interrupt OUT transfer");
+#else
 static const uint8_t s_report_consumer[] = {TUD_HID_REPORT_DESC_CONSUMER()};
 
 #define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + KVM_HID_ITF_COUNT * TUD_HID_DESC_LEN)
+#endif
 
 // No remote-wakeup attribute: waking the HOST is not a v1 feature (spec 03 §5.3).
 static const uint8_t s_config_fs[] = {
@@ -69,9 +89,16 @@ static const uint8_t s_config_fs[] = {
                        EP_KEYBOARD, EP_SIZE, POLL_MS_INPUT),
     TUD_HID_DESCRIPTOR(KVM_HID_ITF_MOUSE, STRID_MOUSE, HID_ITF_PROTOCOL_MOUSE, sizeof(s_report_mouse), EP_MOUSE,
                        EP_SIZE, POLL_MS_INPUT),
+#if KVM_HPE_FOUR
+    TUD_HID_DESCRIPTOR(KVM_HID_ITF_PTP, STRID_PTP, HID_ITF_PROTOCOL_NONE, sizeof(s_report_ptp), 0x83, 64, 1),
+    TUD_HID_INOUT_DESCRIPTOR(KVM_HID_ITF_CONSUMER, STRID_CONSUMER, HID_ITF_PROTOCOL_NONE,
+                             sizeof(s_report_control), 0x05, 0x84, 64, 4),
+#else
     TUD_HID_DESCRIPTOR(KVM_HID_ITF_CONSUMER, STRID_CONSUMER, HID_ITF_PROTOCOL_NONE, sizeof(s_report_consumer),
                        EP_CONSUMER, EP_SIZE, POLL_MS_CONSUMER),
+#endif
 };
+_Static_assert(sizeof(s_config_fs) == CONFIG_TOTAL_LEN, "USB configuration length");
 
 static const tusb_desc_device_t s_device = {
     .bLength = sizeof(tusb_desc_device_t),
@@ -91,6 +118,9 @@ static const tusb_desc_device_t s_device = {
 };
 
 static char s_serial[13];
+#if CONFIG_KVM_USB_MONITOR_EVAL
+const char *usb_hid_device_serial(void) { return s_serial; }
+#endif
 static const char *s_strings[STRID_COUNT] = {
     [STRID_LANGID] = (const char[]){0x09, 0x04},
     [STRID_MANUFACTURER] = "D-Ogi",
@@ -98,7 +128,12 @@ static const char *s_strings[STRID_COUNT] = {
     [STRID_SERIAL] = s_serial,
     [STRID_KEYBOARD] = "KVMpad Keyboard",
     [STRID_MOUSE] = "KVMpad Mouse",
+#if KVM_HPE_FOUR
+    [STRID_PTP] = "KVMpad Precision Touchpad",
+    [STRID_CONSUMER] = "KVMpad Radial and Control Deck",
+#else
     [STRID_CONSUMER] = "KVMpad Consumer Control",
+#endif
 };
 
 // ---- State -----------------------------------------------------------------------------------
@@ -111,6 +146,100 @@ static TaskHandle_t s_tusb_task;                   // recorded in the TinyUSB-ta
 
 #define ST_LOCK()   portENTER_CRITICAL(&s_mux)
 #define ST_UNLOCK() portEXIT_CRITICAL(&s_mux)
+
+#ifdef KVM_MEDIA_SYNTHETIC_DIAG
+static struct {
+    bool active, available;
+    int64_t start, last, queued, deadline;
+    usb_hid_service_window_t window;
+} s_service;
+
+static uint32_t link_changes(void)
+{
+    return s_st.mounts + s_st.umounts + s_st.suspends + s_st.resumes;
+}
+
+// Count both partial intervals at the window edges, including a window with no service.
+static void service_gap(int64_t now)
+{
+    uint32_t gap = (uint32_t)(now - s_service.last);
+    if (gap > s_service.window.max_gap_us) s_service.window.max_gap_us = gap;
+    if (gap > 20000) ++s_service.window.gaps_over_20ms;
+    s_service.last = now;
+}
+
+static void service_close(int64_t now)
+{
+    usb_hid_service_window_t *w = &s_service.window;
+    w->expired = now >= s_service.deadline;
+    int64_t end = w->expired ? s_service.deadline : now;
+    service_gap(end);
+    w->elapsed_us = (uint32_t)(end - s_service.start);
+    w->pending_us = s_service.queued ? (uint32_t)(end - s_service.queued) : 0;
+    w->sent = s_st.reports_sent - w->sent;
+    w->complete = s_st.report_complete - w->complete;
+    w->refused = s_st.reports_refused - w->refused;
+    w->failed = s_st.report_failed - w->failed;
+    w->link_changes = link_changes() - w->link_changes;
+    s_service.active = false;
+}
+
+bool usb_hid_service_begin(unsigned limit_ms)
+{
+    if (limit_ms < 100 || limit_ms > 120000) return false;
+    ST_LOCK();
+    int64_t now = esp_timer_get_time();
+    if (s_service.active && now >= s_service.deadline) service_close(now);
+    bool ok = !s_service.active && s_st.state == KVM_USB_MOUNTED && s_tr.pump;
+    if (ok) {
+        s_service.active = s_service.available = true;
+        s_service.last = s_service.start = now;
+        s_service.deadline = now + (int64_t)limit_ms * 1000;
+        s_service.queued = 0;
+        s_service.window = (usb_hid_service_window_t){
+            .sent = s_st.reports_sent, .complete = s_st.report_complete, .refused = s_st.reports_refused,
+            .failed = s_st.report_failed, .link_changes = link_changes(),
+        };
+    }
+    ST_UNLOCK();
+    return ok;
+}
+
+bool usb_hid_service_end(usb_hid_service_window_t *out)
+{
+    ST_LOCK();
+    bool available = s_service.available;
+    if (available) {
+        if (s_service.active) service_close(esp_timer_get_time());
+        *out = s_service.window;
+        s_service.available = false;
+    }
+    ST_UNLOCK();
+    return available;
+}
+
+// Called only on entry to the real TinyUSB task callback with s_mux held.
+static void service_arrived(void)
+{
+    int64_t now = esp_timer_get_time();
+    if (now >= s_service.deadline) {
+        service_close(now);
+        return;
+    }
+    service_gap(now);
+    ++s_service.window.services;
+    if (s_service.queued) {
+        uint32_t defer = (uint32_t)(now - s_service.queued);
+        if (defer > s_service.window.max_defer_us) s_service.window.max_defer_us = defer;
+        ++s_service.window.timed_requests;
+        s_service.queued = 0;
+    }
+    bool ready = s_st.state == KVM_USB_MOUNTED;
+    for (unsigned itf = 0; ready && itf < usb_hid_device_interface_count(); ++itf)
+        ready = tud_hid_n_ready(itf);
+    if (ready) ++s_service.window.all_ready;
+}
+#endif
 
 const char *usb_hid_state_name(kvm_usb_state_t s)
 {
@@ -143,10 +272,19 @@ static void set_state(kvm_usb_state_t s)
 // endpoint is still busy (retried from tud_hid_report_complete_cb).
 static void send_neutral(uint8_t itf)
 {
-    uint8_t buf[8];
+    uint8_t buf[HPE_PTP_WIRE];
     uint8_t protocol = tud_hid_n_get_protocol(itf);
     size_t len = kvm_hid_build_neutral(itf, protocol, buf);
-    bool ok = tud_hid_n_ready(itf) && tud_hid_n_report(itf, 0, buf, (uint16_t)len);
+    uint8_t id = 0;
+#if KVM_HPE_FOUR
+    if (itf == KVM_HID_ITF_PTP) {
+        const hpe_frame_t empty = {0};
+        len = hpe_encode_ptp(buf, &empty);
+    } else if (itf == KVM_HID_ITF_CONSUMER) {
+        id = HPE_CONSUMER;
+    }
+#endif
+    bool ok = len && tud_hid_n_ready(itf) && tud_hid_n_report(itf, id, buf, (uint16_t)len);
     s_neutral_pending[itf] = !ok;
     ST_LOCK();
     if (ok) {
@@ -170,16 +308,65 @@ static void notify_state(void)
     s_tr.on_state(s_tr.ctx, st, epoch);
 }
 
+static void configuration_lost(kvm_usb_state_t state)
+{
+    memset(s_neutral_pending, 0, sizeof(s_neutral_pending));
+    ST_LOCK();
+    s_st.state = state;
+    s_st.ptp = (hpe_features_t)HPE_FEATURE_DEFAULTS;
+    s_st.led_state = 0;
+    s_st.led_known = false;
+    s_st.remote_wakeup_enabled = false;
+    ST_UNLOCK();
+    notify_state();
+}
+
+// TinyUSB calls its class reset in the USB task on bus reset, unplug and
+// SET_CONFIGURATION(0). A bus reset alone does not invoke tud_umount_cb.
+void __real_hidd_reset(uint8_t rhport);
+void __wrap_hidd_reset(uint8_t rhport)
+{
+    __real_hidd_reset(rhport);
+#if CONFIG_KVM_USB_MONITOR_EVAL
+    if (usb_monitor_port_owns_bus()) {
+        usb_monitor_port_reset();
+        if (!usb_hid_device_interface_count()) return;
+    }
+#endif
+    // The class reset runs before TinyUSB clears the previous configuration.
+    if (tud_mounted())
+        configuration_lost(KVM_USB_ENUMERATING);
+}
+
 static void usb_event_cb(tinyusb_event_t *event, void *arg)
 {
     (void)arg;
     s_tusb_task = xTaskGetCurrentTaskHandle();
+#if CONFIG_KVM_USB_MONITOR_EVAL
+    if (usb_monitor_port_owns_bus()) {
+        if (event->id == TINYUSB_EVENT_ATTACHED)
+            usb_monitor_port_mount();
+        if (event->id == TINYUSB_EVENT_SUSPENDED)
+            usb_monitor_port_suspend(true);
+        if (event->id == TINYUSB_EVENT_RESUMED)
+            usb_monitor_port_suspend(false);
+        if (event->id == TINYUSB_EVENT_DETACHED)
+            usb_monitor_port_unmount();
+        if (!usb_hid_device_interface_count()) return;
+        if ((event->id == TINYUSB_EVENT_ATTACHED || event->id == TINYUSB_EVENT_RESUMED) &&
+            !usb_hid_device_monitor_mounted()) return;
+    }
+#endif
     switch (event->id) {
     case TINYUSB_EVENT_ATTACHED: {
         ST_LOCK();
         s_st.state = KVM_USB_MOUNTED;
         s_st.mounts++;
+        s_st.ptp = (hpe_features_t)HPE_FEATURE_DEFAULTS;
+        s_st.ptp_generation++;
         s_st.usb_epoch++;
+        s_st.led_known = false;
+        s_st.led_state = 0;
         s_st.last_mount_us = (uint64_t)esp_timer_get_time();
         for (int i = 0; i < KVM_HID_ITF_COUNT; i++) {
             s_st.protocol[i] = KVM_HID_PROTOCOL_REPORT; // HID 1.11: report protocol after configuration
@@ -190,7 +377,7 @@ static void usb_event_cb(tinyusb_event_t *event, void *arg)
             s_tr.on_state(s_tr.ctx, KVM_USB_MOUNTED, epoch); // the scheduler sends the neutral start (TECH-035)
         } else {
             // TECH-035 without a scheduler: start every mount from a neutral keyboard, mouse and consumer.
-            for (uint8_t i = 0; i < KVM_HID_ITF_COUNT; i++) {
+            for (uint8_t i = 0; i < usb_hid_device_interface_count(); i++) {
                 send_neutral(i);
             }
         }
@@ -199,13 +386,10 @@ static void usb_event_cb(tinyusb_event_t *event, void *arg)
     }
     case TINYUSB_EVENT_DETACHED:
         // Logical state resets now; nothing queued for the old epoch is replayed (TECH-035).
-        memset(s_neutral_pending, 0, sizeof(s_neutral_pending));
         ST_LOCK();
-        s_st.state = KVM_USB_DETACHED;
         s_st.umounts++;
-        s_st.led_state = 0;
         ST_UNLOCK();
-        notify_state();
+        configuration_lost(KVM_USB_DETACHED);
         ESP_LOGI(TAG, "detached");
         break;
     case TINYUSB_EVENT_SUSPENDED:
@@ -236,7 +420,12 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
     switch (instance) {
     case KVM_HID_ITF_KEYBOARD: return s_report_keyboard;
     case KVM_HID_ITF_MOUSE: return s_report_mouse;
+#if KVM_HPE_FOUR
+    case KVM_HID_ITF_PTP: return s_report_ptp;
+    case KVM_HID_ITF_CONSUMER: return s_report_control;
+#else
     case KVM_HID_ITF_CONSUMER: return s_report_consumer;
+#endif
     default: return NULL;
     }
 }
@@ -244,12 +433,26 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t *buffer,
                                uint16_t reqlen)
 {
-    (void)report_id;
     ST_LOCK();
     s_st.get_report_requests++;
     uint8_t led = s_st.led_state;
     ST_UNLOCK();
-    if (instance == KVM_HID_ITF_KEYBOARD && report_type == HID_REPORT_TYPE_OUTPUT && reqlen >= 1) {
+#if KVM_HPE_FOUR
+    if (instance == KVM_HID_ITF_PTP && report_type == HID_REPORT_TYPE_FEATURE) {
+        return (uint16_t)hpe_feature_get(&s_st.ptp, report_id, buffer, reqlen);
+    }
+    if (instance == KVM_HID_ITF_CONSUMER && report_type == HID_REPORT_TYPE_FEATURE && report_id == HPE_STUDIO_FEATURE) {
+        // Capabilities reflect the transport implemented here. Agent feedback needs a session.
+        uint8_t caps[15] = {1, 0, HPE_DEVICE_CAPS, 0, 8, 51};
+        caps[6] = s_tr.get_profile ? s_tr.get_profile(s_tr.ctx) : HPE_MOUSE_PROFILE;
+        memcpy(caps + 7, esp_app_get_description()->app_elf_sha256, 4);
+        uint16_t n = reqlen < sizeof(caps) ? reqlen : (uint16_t)sizeof(caps);
+        memcpy(buffer, caps, n);
+        return n;
+    }
+    if (instance >= KVM_HID_ITF_PTP || report_id != 0) return 0;
+#endif
+    if (instance == KVM_HID_ITF_KEYBOARD && report_id == 0 && report_type == HID_REPORT_TYPE_OUTPUT && reqlen >= 1) {
         buffer[0] = led;
         return 1;
     }
@@ -269,22 +472,50 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_t
 void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer,
                            uint16_t bufsize)
 {
-    (void)report_id;
-    if (instance != KVM_HID_ITF_KEYBOARD || bufsize < 1) {
+#if KVM_HPE_FOUR
+    if (instance == KVM_HID_ITF_PTP && report_type == HID_REPORT_TYPE_FEATURE) {
+        ST_LOCK();
+        hpe_features_t prev = s_st.ptp;
+        bool accepted = hpe_feature_set(&s_st.ptp, report_id, buffer, bufsize);
+        bool changed = accepted && (prev.mode != s_st.ptp.mode || ((prev.selective ^ s_st.ptp.selective) & 1));
+        if (changed) s_st.ptp_generation++;
+        uint32_t generation = s_st.ptp_generation;
+        bool native = s_st.ptp.mode == 3;
+        bool surface = (s_st.ptp.selective & 1) != 0;
+        ST_UNLOCK();
+        if (changed && s_tr.on_ptp_route) s_tr.on_ptp_route(s_tr.ctx, native, surface, generation);
         return;
     }
-    if (report_type == HID_REPORT_TYPE_OUTPUT || report_type == HID_REPORT_TYPE_INVALID) {
-        uint8_t led = buffer[0] & 0x1F;
+    if (instance == KVM_HID_ITF_CONSUMER && report_type == HID_REPORT_TYPE_OUTPUT) {
+        hpe_packet_t packet;
+        bool valid = hpe_decode_output(report_id, buffer, bufsize, &packet);
+        valid = valid && s_tr.on_studio_output && s_tr.on_studio_output(s_tr.ctx, &packet);
         ST_LOCK();
-        bool changed = led != s_st.led_state;
-        s_st.led_state = led;
-        s_st.led_reports++;
+        if (valid) s_st.studio_frames++;
+        else s_st.studio_invalid++;
         ST_UNLOCK();
-        if (changed) {
-            // Lock-LED state only: authoritative domain data for the UI (AGENTS-UI #5), not a keystroke.
-            ESP_LOGI(TAG, "LED output 0x%02X (num=%d caps=%d scroll=%d)", led, !!(led & KVM_HID_LED_NUM_LOCK),
-                     !!(led & KVM_HID_LED_CAPS_LOCK), !!(led & KVM_HID_LED_SCROLL_LOCK));
-        }
+        return;
+    }
+#endif
+    if (instance != KVM_HID_ITF_KEYBOARD || report_id != 0 || report_type != HID_REPORT_TYPE_OUTPUT ||
+        !buffer || bufsize != 1) {
+        return;
+    }
+    uint8_t led = buffer[0] & 0x1F;
+    ST_LOCK();
+    if (s_st.state != KVM_USB_MOUNTED) {
+        ST_UNLOCK();
+        return;
+    }
+    bool changed = !s_st.led_known || led != s_st.led_state;
+    s_st.led_state = led;
+    s_st.led_known = true;
+    s_st.led_reports++;
+    ST_UNLOCK();
+    if (changed) {
+        // Lock-LED state only: authoritative domain data for the UI (AGENTS-UI #5), not a keystroke.
+        ESP_LOGI(TAG, "LED output 0x%02X (num=%d caps=%d scroll=%d)", led, !!(led & KVM_HID_LED_NUM_LOCK),
+                 !!(led & KVM_HID_LED_CAPS_LOCK), !!(led & KVM_HID_LED_SCROLL_LOCK));
     }
 }
 
@@ -309,6 +540,9 @@ bool tud_hid_set_idle_cb(uint8_t instance, uint8_t idle_rate)
 
 void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_t len)
 {
+#if CONFIG_KVM_USB_MONITOR_EVAL
+    if (instance >= usb_hid_device_interface_count()) return;
+#endif
     (void)report;
     (void)len;
     ST_LOCK();
@@ -327,14 +561,17 @@ void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_
 void tud_hid_report_failed_cb(uint8_t instance, hid_report_type_t report_type, uint8_t const *report,
                               uint16_t xferred_bytes)
 {
+#if CONFIG_KVM_USB_MONITOR_EVAL
+    if (instance >= usb_hid_device_interface_count()) return;
+#endif
     (void)report_type;
     (void)report;
     (void)xferred_bytes;
     ST_LOCK();
     s_st.report_failed++;
     ST_UNLOCK();
-    if (instance < KVM_HID_ITF_COUNT && s_tr.on_complete != NULL) {
-        s_tr.on_complete(s_tr.ctx, instance); // the endpoint is free again; the scheduler decides
+    if (report_type == HID_REPORT_TYPE_INPUT && instance < KVM_HID_ITF_COUNT && s_tr.on_failed) {
+        s_tr.on_failed(s_tr.ctx, instance);
     }
 }
 
@@ -354,6 +591,9 @@ static void pump_trampoline(void *param)
     ST_LOCK();
     s_pump_queued = false; // requests made while the pump runs schedule the next run
     s_st.pumps++;
+#ifdef KVM_MEDIA_SYNTHETIC_DIAG
+    if (s_service.active) service_arrived();
+#endif
     ST_UNLOCK();
     s_tr.pump(s_tr.ctx);
 }
@@ -369,6 +609,13 @@ void usb_hid_device_request_pump(void)
         s_pump_queued = true;
         queue_it = true;
         s_st.pump_requests++;
+#ifdef KVM_MEDIA_SYNTHETIC_DIAG
+        if (s_service.active) {
+            int64_t now = esp_timer_get_time();
+            if (now >= s_service.deadline) service_close(now);
+            else s_service.queued = now;
+        }
+#endif
     }
     ST_UNLOCK();
     if (queue_it) {
@@ -385,7 +632,11 @@ bool usb_hid_device_send(uint8_t itf, const uint8_t *report, uint8_t len)
         ST_UNLOCK();
         return false; // TECH-034
     }
-    bool ok = itf < KVM_HID_ITF_COUNT && tud_mounted() && !tud_suspended() && tud_hid_n_ready(itf) &&
+    // The scheduler stages the complete on-wire bytes, including IDs for IF2/IF3.
+#if CONFIG_KVM_USB_MONITOR_EVAL
+    if (itf >= usb_hid_device_interface_count() || (usb_monitor_port_owns_bus() && !usb_hid_device_monitor_mounted())) return false;
+#endif
+    bool ok = report && len && len <= CFG_TUD_HID_EP_BUFSIZE && itf < KVM_HID_ITF_COUNT && tud_mounted() && !tud_suspended() && tud_hid_n_ready(itf) &&
               tud_hid_n_report(itf, 0, report, len);
     ST_LOCK();
     if (ok) {
@@ -399,13 +650,112 @@ bool usb_hid_device_send(uint8_t itf, const uint8_t *report, uint8_t len)
 
 uint8_t usb_hid_device_protocol(uint8_t itf)
 {
-    if (itf >= KVM_HID_ITF_COUNT || s_tusb_task == NULL || xTaskGetCurrentTaskHandle() != s_tusb_task) {
+    if (itf >= usb_hid_device_interface_count() || s_tusb_task == NULL || xTaskGetCurrentTaskHandle() != s_tusb_task) {
         return KVM_HID_PROTOCOL_REPORT;
     }
     return tud_hid_n_get_protocol(itf);
 }
 
+// The pinned HID class reports SETUP.wLength at ACK even for a short OUT. For the
+// one-byte keyboard report, the core copies the received byte from its EP0 buffer
+// to our byte before DATA. Start them distinct: equality then proves receipt for
+// every possible value, including 0 (all LEDs off). Publish only after ACK.
+static bool keyboard_led_control(uint8_t port, uint8_t stage, tusb_control_request_t const *r)
+{
+    static uint8_t led;
+    static uint32_t epoch;
+    if (stage == CONTROL_STAGE_SETUP) {
+        ST_LOCK();
+        bool mounted = s_st.state == KVM_USB_MOUNTED;
+        epoch = s_st.usb_epoch;
+        ST_UNLOCK();
+        if (!mounted) return false;
+        led = (uint8_t)~usbd_get_ctrl_buf()[0];
+        return tud_control_xfer(port, r, &led, 1);
+    }
+    if (stage == CONTROL_STAGE_DATA) return led == usbd_get_ctrl_buf()[0];
+    if (stage == CONTROL_STAGE_ACK) {
+        ST_LOCK();
+        bool current = s_st.usb_epoch == epoch && s_st.state == KVM_USB_MOUNTED;
+        ST_UNLOCK();
+        if (current) tud_hid_set_report_cb(KVM_HID_ITF_KEYBOARD, 0, HID_REPORT_TYPE_OUTPUT, &led, 1);
+    }
+    return true;
+}
+
+bool __real_hidd_control_xfer_cb(uint8_t port, uint8_t stage, tusb_control_request_t const *request);
+bool __wrap_hidd_control_xfer_cb(uint8_t port, uint8_t stage, tusb_control_request_t const *r)
+{
+    uint8_t keyboard = KVM_HID_ITF_KEYBOARD;
+#if CONFIG_KVM_USB_MONITOR_EVAL
+    if (usb_monitor_port_owns_bus()) {
+        if (!usb_hid_device_interface_count() || !usb_hid_device_monitor_mounted()) return false;
+        keyboard = 1; // MI_00 is the vendor interface on the composite device.
+        // Neither boot device implements feature reports. In particular MI_02
+        // is now the mouse and must not expose the normal touchpad's certificate.
+        if ((r->bmRequestType == 0xa1 && r->bRequest == HID_REQ_CONTROL_GET_REPORT) ||
+            (r->bmRequestType == 0x21 && r->bRequest == HID_REQ_CONTROL_SET_REPORT)) {
+            if ((r->wValue >> 8) == HID_REPORT_TYPE_FEATURE) return false;
+        }
+    }
+#endif
+    if (r->bmRequestType == 0x21 && r->bRequest == HID_REQ_CONTROL_SET_REPORT &&
+        r->wIndex == keyboard && r->wValue == (HID_REPORT_TYPE_OUTPUT << 8) && r->wLength == 1)
+        return keyboard_led_control(port, stage, r);
+#if KVM_HPE_FOUR
+    // Delegate the 257-byte certificate directly to the core's multi-packet transfer.
+    if (r->bmRequestType == 0xa1 && r->bRequest == HID_REQ_CONTROL_GET_REPORT &&
+        r->wIndex == KVM_HID_ITF_PTP && r->wValue == ((HID_REPORT_TYPE_FEATURE << 8) | HPE_CERT)) {
+        if (stage != CONTROL_STAGE_SETUP) return true;
+        return tud_control_xfer(port, r, (void *)s_ptp_cert_report, sizeof(s_ptp_cert_report));
+    }
+#endif
+    return __real_hidd_control_xfer_cb(port, stage, r);
+}
+
 // ---- Start -----------------------------------------------------------------------------------
+#if CONFIG_KVM_USB_MONITOR_EVAL
+static void monitor_lost_hid(void)
+{
+    configuration_lost(KVM_USB_DETACHED);
+}
+
+esp_err_t usb_hid_device_set_monitor(bool active)
+{
+    return usb_hid_device_set_monitor_mode(active, false);
+}
+
+static esp_err_t select_display(bool active, bool native, bool controls, bool windows_modes)
+{
+    ST_LOCK();
+    bool ready = s_st.state != KVM_USB_UNINITIALIZED && s_st.state != KVM_USB_ERROR;
+    ST_UNLOCK();
+    if (!ready) return ESP_ERR_INVALID_STATE;
+    usb_monitor_port_select(active, native, controls, windows_modes);
+    return ESP_OK;
+}
+
+esp_err_t usb_hid_device_set_monitor_mode(bool active, bool native)
+{
+    return select_display(active, native, false, false);
+}
+
+esp_err_t usb_hid_device_set_monitor_controls(bool active, bool native)
+{
+    return select_display(active, native, true, false);
+}
+
+esp_err_t usb_hid_device_set_monitor_windows(bool controls)
+{
+    return select_display(true, true, controls, true);
+}
+#else
+uint8_t usb_hid_device_interface_count(void)
+{
+    return KVM_HID_ITF_COUNT;
+}
+#endif
+
 esp_err_t usb_hid_device_start(void)
 {
     ESP_RETURN_ON_FALSE(s_st.state == KVM_USB_UNINITIALIZED, ESP_ERR_INVALID_STATE, TAG, "already started");
@@ -418,8 +768,14 @@ esp_err_t usb_hid_device_start(void)
     cfg.descriptor.string = s_strings;
     cfg.descriptor.string_count = STRID_COUNT;
     cfg.descriptor.full_speed_config = s_config_fs;
+#if CONFIG_KVM_USB_MONITOR_EVAL
+    ESP_RETURN_ON_ERROR(usb_monitor_port_init(monitor_lost_hid), TAG, "monitor port");
+#endif
     esp_err_t err = tinyusb_driver_install(&cfg);
     if (err != ESP_OK) {
+#if CONFIG_KVM_USB_MONITOR_EVAL
+        usb_monitor_port_deinit();
+#endif
         set_state(KVM_USB_ERROR);
         ESP_LOGE(TAG, "tinyusb_driver_install: %s", esp_err_to_name(err));
         return err;
@@ -429,7 +785,7 @@ esp_err_t usb_hid_device_start(void)
         s_st.state = KVM_USB_ENUMERATING;
     }
     ST_UNLOCK();
-    ESP_LOGI(TAG, "TinyUSB started: VID 0x%04X PID 0x%04X (prototype IDs, TECH-037), 3 HID interfaces, serial %s",
-             KVM_USB_VID, KVM_USB_PID, s_serial);
+    ESP_LOGI(TAG, "TinyUSB started: VID 0x%04X PID 0x%04X (prototype IDs, TECH-037), %d HID interfaces, serial %s",
+             KVM_USB_VID, KVM_USB_PID, KVM_HID_ITF_COUNT, s_serial);
     return ESP_OK;
 }

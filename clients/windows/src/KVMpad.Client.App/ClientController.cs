@@ -30,6 +30,10 @@ internal sealed class ClientController : IDisposable
     private CaptureLedger _ledger = new();
     private SessionLogic? _logic;
     private RemoteSession? _session;
+    private ConnectedHost? _host;
+    private readonly SemaphoreSlim _disconnectGate = new(1);
+    public string? ConnectedDeviceId { get; private set; }
+    public bool HostRunning => _host?.Running == true;
     private CaptureController? _capture;
     private CancellationTokenSource? _sessionCts;
     private Task? _sessionTask;
@@ -90,11 +94,8 @@ internal sealed class ClientController : IDisposable
     /// handshake — which is what makes the pin mean anything (SEC-102). Nothing here logs or reports the
     /// code, and a failure is described by reason only, never by which half of the secret was wrong.
     /// </remarks>
-    public async Task<bool> PairAsync(DiscoveredDevice device, string code)
+    public async Task<bool> PairAsync(string host, int port, string code, string? deviceId)
     {
-        if (device is null)
-            throw new ArgumentNullException(nameof(device));
-
         IPakeHandshake pake;
         try
         {
@@ -106,7 +107,7 @@ internal sealed class ClientController : IDisposable
             return false;
         }
 
-        var transport = new PairingWebSocketTransport(device.ConnectHost, device.Port);
+        var transport = new PairingWebSocketTransport(host, port);
         PairingContext? context = null;
         try
         {
@@ -118,11 +119,12 @@ internal sealed class ClientController : IDisposable
             var client = new PairingClient(transport, pake);
             PairingResult result = await client.RunAsync(context, CancellationToken.None).ConfigureAwait(false);
 
+            deviceId ??= DeviceListEntry.IdForManualPairing(_store.List(), result.DeviceName, result.PinnedFingerprint);
             var paired = new PairedDevice(
-                device.InstanceName,
+                deviceId,
                 result.DeviceName,
-                device.ConnectHost,
-                device.Port,
+                host,
+                port,
                 result.PinnedFingerprint,
                 result.Token,
                 DateTimeOffset.UtcNow);
@@ -173,10 +175,22 @@ internal sealed class ClientController : IDisposable
     /// Opens a session to a paired device. A device that is not paired has no token and no pin, so there is
     /// nothing to connect with — pairing comes first, always (ADR-022).
     /// </summary>
-    public async Task ConnectAsync(PairedDevice device, CancellationToken cancellationToken)
+    public async Task ConnectAsync(PairedDevice device, CancellationToken cancellationToken, bool refreshAddress = true)
     {
-        await DisconnectAsync().ConfigureAwait(false);
+        await _disconnectGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await DisconnectCoreAsync().ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (refreshAddress)
+                device = await MdnsBrowser.ResolvePairedAsync(device, cancellationToken).ConfigureAwait(false);
+            Connect(device, cancellationToken);
+        }
+        finally { _disconnectGate.Release(); }
+    }
 
+    private void Connect(PairedDevice device, CancellationToken cancellationToken)
+    {
         _ledger = new CaptureLedger();
         var options = new SessionOptions
         {
@@ -185,7 +199,11 @@ internal sealed class ClientController : IDisposable
         };
         _logic = new SessionLogic(SystemClock.Instance, options, _ledger);
         var transport = new ClientWebSocketTransport(device.ToEndpoint());
-        _session = new RemoteSession(transport, _logic);
+        ConnectedDeviceId = device.DeviceId;
+        var session = new RemoteSession(transport, _logic);
+        _session = session;
+        _host = new ConnectedHost(_logic, (ready, token) => HostCompanion.RunAsync(session, transport, ready, token),
+                                  SetStatus);
         _capture = new CaptureController(_logic, PostFrames, _settings.ToCaptureOptions());
 
         _logic.StateChanged += OnSessionStateChanged;
@@ -196,7 +214,6 @@ internal sealed class ClientController : IDisposable
 
         _sessionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         CancellationToken token = _sessionCts.Token;
-        RemoteSession session = _session;
 
         _sessionTask = Task.Run(async () =>
         {
@@ -210,7 +227,7 @@ internal sealed class ClientController : IDisposable
             }
             catch (Exception ex)
             {
-                Notice?.Invoke("The connection to " + device.DeviceName + " failed: " + ex.Message);
+                Notice?.Invoke(HostDiagnostics.HandshakeFailure(transport)?.Message ?? HostDiagnostics.Describe(ex));
             }
             finally
             {
@@ -225,15 +242,27 @@ internal sealed class ClientController : IDisposable
 
     public async Task DisconnectAsync()
     {
+        await _disconnectGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await DisconnectCoreAsync().ConfigureAwait(false);
+        }
+        finally { _disconnectGate.Release(); }
+    }
+
+    private async Task DisconnectCoreAsync()
+    {
         CaptureController? capture = _capture;
         capture?.ExitCapture(ReleaseReason.Shutdown);
+        Task hostClosed = _host?.CloseAsync() ?? Task.CompletedTask;
 
         RemoteSession? session = _session;
         if (session is not null)
         {
             try
             {
-                await session.CloseAsync(CancellationToken.None).ConfigureAwait(false);
+                using var close = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                await session.CloseAsync(close.Token).ConfigureAwait(false);
             }
             catch (Exception)
             {
@@ -254,6 +283,7 @@ internal sealed class ClientController : IDisposable
             }
         }
 
+        await hostClosed.ConfigureAwait(false);
         if (session is not null)
             await session.DisposeAsync().ConfigureAwait(false);
 
@@ -261,9 +291,24 @@ internal sealed class ClientController : IDisposable
         _sessionCts = null;
         _sessionTask = null;
         _session = null;
+        _host = null;
+        ConnectedDeviceId = null;
         _capture = null;
         _logic = null;
         SetStatus();
+    }
+
+    public void StopHost() => _host?.Stop();
+
+    public async Task StartHostAsync(string deviceId)
+    {
+        var host = _host;
+        if (_logic?.HasAuthenticatedSession != true || host == null || !string.Equals(deviceId, ConnectedDeviceId, StringComparison.OrdinalIgnoreCase))
+        {
+            Notice?.Invoke(new HostFailure(HostFailureReason.NoSession).Message);
+            return;
+        }
+        await host.StartAsync().ConfigureAwait(false);
     }
 
     public async Task RequestControlAsync()
@@ -440,7 +485,7 @@ internal sealed class ClientController : IDisposable
 
     private void OnSessionError(string code, bool retryable)
     {
-        Notice?.Invoke("The device reported " + code + ".");
+        Notice?.Invoke(Core.Protocol.ErrorCodes.IsKnown(code) ? "The device reported " + code + "." : "The device reported an unrecognized protocol error.");
         SetStatus();
     }
 
@@ -502,6 +547,9 @@ internal sealed class ClientController : IDisposable
 
         if (logic.LastErrorCode is { Length: > 0 } error)
             line += "  ·  last error " + error;
+
+        if (_host?.Status is { } hostStatus)
+            line += "  ·  " + hostStatus;
 
         StatusLine = line;
         Changed?.Invoke();

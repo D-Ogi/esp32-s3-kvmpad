@@ -74,6 +74,14 @@ public sealed class RemoteSession : IAsyncDisposable
 
             if (_logic.State != ClientSessionState.Disconnected)
                 _logic.OnTransportClosed();
+            if (_logic.EndReason is SessionEndReason.ProtocolError or SessionEndReason.HeartbeatStale && _transport.IsOpen)
+            {
+                // A board that still has its end open keeps the authenticated CLIENT slot. Close after
+                // both loops finish, so the close handshake has sole ownership of WebSocket receives.
+                using var grace = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                try { await _transport.CloseAsync(grace.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (grace.IsCancellationRequested) { }
+            }
             Ended?.Invoke(_logic.EndReason);
         }
     }
@@ -147,7 +155,6 @@ public sealed class RemoteSession : IAsyncDisposable
             {
                 FrameRejected?.Invoke(ex.Message);
                 _logic.OnTransportClosed(SessionEndReason.ProtocolError);
-                await _transport.CloseAsync(CancellationToken.None).ConfigureAwait(false);
                 return;
             }
 

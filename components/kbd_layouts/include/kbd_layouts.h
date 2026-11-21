@@ -90,6 +90,8 @@ const kbd_key_t *kbd_layouts_key(const kbd_layout_t *layout, kbd_slot_t slot);
 
 /** Legend of `key` at `level` (0..3); "" when there is none. Never NULL. */
 const char *kbd_layouts_legend(const kbd_key_t *key, unsigned level);
+/** True when the two legends are a recognized lower/upper case pair. */
+bool kbd_layouts_case_pair(const char *base, const char *shift);
 
 /**
  * How `layout` types the code point `cp` with one keystroke: a usage plus Shift (0x02) and / or AltGr (Right Alt,

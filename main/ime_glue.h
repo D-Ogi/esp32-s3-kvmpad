@@ -2,12 +2,10 @@
 // Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
 // Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
 //
-// ime_glue (TASK-072, ADR-024 FR-746): brings the on-device decoders and their candidate fonts up off the boot
-// path. A low-priority worker mounts ime_data (SHA-256 of every file), opens the PinyinIME system dictionary and
-// maps the hanzi font in place (ZH), then maps the OpenWnn dictionaries and the kanji font (JA, ADR-033); the LVGL
-// owner then installs the fonts into the theme and the decoders into the KEYBOARD view. After the hand-over the
-// decoders are only ever called from the LVGL task. A layer whose files are missing or invalid simply stays disabled
-// (fail closed) and does not take the other one down; nothing else depends on them.
+// TASK-072 / ADR-042: a worker mounts the verified flash image and opens one requested
+// language at a time. The LVGL owner installs the candidate font and takes ownership of
+// the decoder. Disabling the language detaches and closes its dictionary. Published
+// font tables remain available to existing widget styles until reboot.
 #pragma once
 
 #include <stdbool.h>
@@ -28,11 +26,11 @@ typedef enum {
     IME_GLUE_FAILED,
 } ime_glue_state_t;
 
-/** Start the worker once; later calls return the first result. */
-esp_err_t ime_glue_start(void);
+/** Reserve the singleton engines for the UI before the shell starts. */
+void ime_glue_claim(void);
 
-/** LVGL owner context, lock held: hand the font and the decoder to `app` once the worker is done. Cheap otherwise. */
-void ime_glue_install(ui_app_t *app);
+/** LVGL owner context. Load enabled modules off-thread and detach disabled dictionaries. */
+void ime_glue_sync(ui_app_t *app, bool zh, bool ja, bool ko);
 
 ime_glue_state_t ime_glue_state(void);
 const char *ime_glue_state_name(ime_glue_state_t s);
@@ -48,10 +46,11 @@ typedef struct {
     uint32_t zh_ms;         // hanzi font + PinyinIME dictionary
     uint32_t kanji_font_ms; // ui_font_blob_load() of the kanji font (part of ja_ms)
     uint32_t ja_ms;         // kanji font + OpenWnn open
+    uint32_t ko_ms;         // optional Hangul font
     uint32_t total_ms;
 } ime_glue_timing_t;
 
-/** The worker's timing once it is done (READY, INSTALLED or FAILED after the mount); false before. */
+/** Timing of the latest load, with the latest per-language durations. */
 bool ime_glue_timing(ime_glue_timing_t *out);
 
 /** True when the worker brought the JA (`ja`) or ZH layer up (READY or INSTALLED). */

@@ -1,0 +1,263 @@
+{
+  "version": 1,
+  "root": {
+    "id": "flight_yoke",
+    "type": "Column",
+    "bounds": {
+      "x": 0,
+      "y": 0,
+      "w": 1024,
+      "h": 568
+    },
+    "props": {
+      "layout": "absolute"
+    },
+    "children": [
+      {
+        "id": "yoke",
+        "type": "AxisPad",
+        "bounds": {
+          "x": 0,
+          "y": 0,
+          "w": 640,
+          "h": 568
+        },
+        "props": {
+          "title": "Pitch / Roll",
+          "spring_center": true,
+          "axes": [
+            "X",
+            "Y"
+          ],
+          "invert_y": false,
+          "dead_zone_percent": 0,
+          "curve": "linear"
+        },
+        "events": {
+          "change": "act_yoke"
+        }
+      },
+      {
+        "id": "throttle",
+        "type": "Slider",
+        "bounds": {
+          "x": 666,
+          "y": 46,
+          "w": 334,
+          "h": 84
+        },
+        "props": {
+          "title": "Throttle",
+          "min": 0,
+          "max": 1,
+          "orientation": "horizontal"
+        },
+        "events": {
+          "change": "act_throttle"
+        }
+      },
+      {
+        "id": "yaw",
+        "type": "Slider",
+        "bounds": {
+          "x": 666,
+          "y": 166,
+          "w": 334,
+          "h": 84
+        },
+        "props": {
+          "title": "Yaw",
+          "min": -1,
+          "max": 1,
+          "spring_center": true
+        },
+        "events": {
+          "change": "act_yaw"
+        }
+      },
+      {
+        "id": "brake",
+        "type": "Button",
+        "bounds": {
+          "x": 666,
+          "y": 298,
+          "w": 158,
+          "h": 75
+        },
+        "props": {
+          "label": "BRAKE"
+        },
+        "events": {
+          "press": "act_brake_down",
+          "release": "act_brake_up"
+        }
+      },
+      {
+        "id": "flaps",
+        "type": "Button",
+        "bounds": {
+          "x": 842,
+          "y": 298,
+          "w": 158,
+          "h": 75
+        },
+        "props": {
+          "label": "FLAPS +"
+        },
+        "events": {
+          "press": "act_flaps_down",
+          "release": "act_flaps_up"
+        }
+      },
+      {
+        "id": "pov",
+        "type": "Text",
+        "bounds": {
+          "x": 780,
+          "y": 438,
+          "w": 106,
+          "h": 50
+        },
+        "props": {
+          "text": "POV"
+        }
+      },
+      {
+        "id": "hat_n",
+        "type": "Button",
+        "bounds": {
+          "x": 780,
+          "y": 382,
+          "w": 106,
+          "h": 50
+        },
+        "props": {
+          "label": "N"
+        },
+        "events": {
+          "press": "hat_n_down",
+          "release": "hat_n_up"
+        }
+      },
+      {
+        "id": "hat_ne",
+        "type": "Button",
+        "bounds": {
+          "x": 894,
+          "y": 382,
+          "w": 106,
+          "h": 50
+        },
+        "props": {
+          "label": "NE"
+        },
+        "events": {
+          "press": "hat_ne_down",
+          "release": "hat_ne_up"
+        }
+      },
+      {
+        "id": "hat_e",
+        "type": "Button",
+        "bounds": {
+          "x": 894,
+          "y": 438,
+          "w": 106,
+          "h": 50
+        },
+        "props": {
+          "label": "E"
+        },
+        "events": {
+          "press": "hat_e_down",
+          "release": "hat_e_up"
+        }
+      },
+      {
+        "id": "hat_se",
+        "type": "Button",
+        "bounds": {
+          "x": 894,
+          "y": 494,
+          "w": 106,
+          "h": 50
+        },
+        "props": {
+          "label": "SE"
+        },
+        "events": {
+          "press": "hat_se_down",
+          "release": "hat_se_up"
+        }
+      },
+      {
+        "id": "hat_s",
+        "type": "Button",
+        "bounds": {
+          "x": 780,
+          "y": 494,
+          "w": 106,
+          "h": 50
+        },
+        "props": {
+          "label": "S"
+        },
+        "events": {
+          "press": "hat_s_down",
+          "release": "hat_s_up"
+        }
+      },
+      {
+        "id": "hat_sw",
+        "type": "Button",
+        "bounds": {
+          "x": 666,
+          "y": 494,
+          "w": 106,
+          "h": 50
+        },
+        "props": {
+          "label": "SW"
+        },
+        "events": {
+          "press": "hat_sw_down",
+          "release": "hat_sw_up"
+        }
+      },
+      {
+        "id": "hat_w",
+        "type": "Button",
+        "bounds": {
+          "x": 666,
+          "y": 438,
+          "w": 106,
+          "h": 50
+        },
+        "props": {
+          "label": "W"
+        },
+        "events": {
+          "press": "hat_w_down",
+          "release": "hat_w_up"
+        }
+      },
+      {
+        "id": "hat_nw",
+        "type": "Button",
+        "bounds": {
+          "x": 666,
+          "y": 382,
+          "w": 106,
+          "h": 50
+        },
+        "props": {
+          "label": "NW"
+        },
+        "events": {
+          "press": "hat_nw_down",
+          "release": "hat_nw_up"
+        }
+      }
+    ]
+  }
+}

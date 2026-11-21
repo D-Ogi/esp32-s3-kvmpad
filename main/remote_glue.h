@@ -66,6 +66,11 @@ typedef struct {
 /** Lock-free read of the last link state (safe from the LVGL task: no transport mutex is taken). */
 void remote_glue_get_link(remote_glue_link_t *out);
 
+#if CONFIG_KVM_USB_MONITOR_EVAL
+/** Called by the display owner before applying a queued USB profile change. */
+bool remote_glue_take_display_profile(bool *native);
+#endif
+
 /** Load or create the device identity and start the WSS server. Call after net_status_start(). */
 esp_err_t remote_glue_start(void);
 

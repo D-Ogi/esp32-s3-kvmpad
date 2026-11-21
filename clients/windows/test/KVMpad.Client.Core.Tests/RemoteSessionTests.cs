@@ -49,14 +49,16 @@ public sealed class RemoteSessionTests
 
         Task run = session.RunAsync(cts.Token);
 
-        Assert.True(await WaitForAsync(() => transport.Sent.Count >= 2, TimeSpan.FromSeconds(5)));
+        Assert.True(await WaitForAsync(() => transport.Sent.Count >= 1, TimeSpan.FromSeconds(5)));
         Assert.Equal(MessageTypes.Hello, ProtocolCodec.Decode(transport.Sent[0]).Type);
-        Assert.Equal(MessageTypes.StatusGet, ProtocolCodec.Decode(transport.Sent[1]).Type);
 
         transport.Enqueue(
             """{"v":1,"type":"hello.ack","seq":1,"session_id":"c-xyz","payload":{"protocol":1,"device_id":"kvm-9","capabilities":["keyboard","mouse"]}}""");
 
         Assert.True(await WaitForAsync(() => logic.State == ClientSessionState.Connected, TimeSpan.FromSeconds(5)));
+        Assert.True(await WaitForAsync(() => transport.Sent.Count >= 2, TimeSpan.FromSeconds(5)));
+        Assert.Equal(MessageTypes.StatusGet, ProtocolCodec.Decode(transport.Sent[1]).Type);
+        Assert.Equal("c-xyz", ProtocolCodec.Decode(transport.Sent[1]).SessionId);
         Assert.Equal("c-xyz", logic.SessionId);
         Assert.Equal("kvm-9", logic.DeviceId);
         Assert.Contains("keyboard", logic.DeviceCapabilities);
@@ -134,6 +136,35 @@ public sealed class RemoteSessionTests
         Assert.True(transport.CloseRequested);
 
         await session.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task FatalSessionErrorClosesTheBoardConnectionAndInvalidatesHostBeforeReportingTheError()
+    {
+        var (session, logic, transport) = NewSession();
+        await using var lifetime = session;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        Task run = session.RunAsync(timeout.Token);
+        Assert.False(logic.HasAuthenticatedSession);
+        transport.Enqueue("""{"v":1,"type":"hello.ack","seq":1,"session_id":"old","payload":{}}""");
+        transport.Enqueue("""{"v":1,"type":"control.granted","seq":2,"session_id":"old","lease_epoch":5,"payload":{}}""");
+        Assert.True(await WaitForAsync(() => logic.CanSendInput, TimeSpan.FromSeconds(2)));
+        Assert.True(logic.HasAuthenticatedSession);
+        Assert.True(logic.QueueInput(new KeyboardKeyPayload(HidUsage.LeftCtrl, true)));
+        bool? hadSessionAtNotification = null;
+        logic.ErrorReceived += (_, _) => hadSessionAtNotification = logic.SessionId != null;
+        transport.Enqueue("""{"v":1,"type":"error","seq":3,"session_id":"old","payload":{"code":"ERR_SESSION","retryable":false}}""");
+        await run;
+        Assert.True(transport.CloseRequested);
+        Assert.False(transport.IsOpen);
+        Assert.Equal(false, hadSessionAtNotification);
+        Assert.Null(logic.SessionId);
+        Assert.False(logic.HasAuthenticatedSession);
+        Assert.Null(logic.LeaseEpoch);
+        Assert.Empty(logic.Ledger.PressedKeys);
+        Assert.Equal(SessionEndReason.ProtocolError, logic.EndReason);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => logic.AttachHostAsync(8765, [1], default));
+        Assert.DoesNotContain(transport.SentDecoded, m => m.Type == "host.attach");
     }
 
     [Fact]

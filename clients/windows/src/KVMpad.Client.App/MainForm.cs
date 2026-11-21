@@ -4,7 +4,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Drawing;
+using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -28,13 +32,17 @@ internal sealed class MainForm : Form
 {
     private readonly AppSettings _settings;
     private readonly ClientController _controller;
+    private readonly ControlIcons _icons = new(Path.Combine(AppContext.BaseDirectory, "assets", "control-icons"));
 
     private readonly ListView _devices;
+    private readonly TabControl _pages = new() { Dock = DockStyle.Fill, AccessibleName = "Client sections", Padding = new Point(14, 6) };
     private readonly Label _status;
     private readonly Button _discover;
     private readonly Button _pair;
     private readonly Button _connect;
+    private readonly Button _advanced;
     private readonly Button _disconnect;
+    private readonly Button _host;
     private readonly Button _requestControl;
     private readonly Button _releaseControl;
     private readonly Button _capture;
@@ -52,12 +60,13 @@ internal sealed class MainForm : Form
         _controller = controller;
 
         Text = "KVMpad Client";
-        ClientSize = new Size(760, 540);
-        MinimumSize = new Size(640, 460);
+        ClientSize = new Size(760, 510);
+        MinimumSize = new Size(480, 360);
         StartPosition = FormStartPosition.CenterScreen;
 
         _devices = new ListView
         {
+            AccessibleName = "KVMpad devices",
             View = View.Details,
             FullRowSelect = true,
             MultiSelect = false,
@@ -69,7 +78,21 @@ internal sealed class MainForm : Form
         _devices.Columns.Add("Paired", 70);
         _devices.Columns.Add("Pairing open", 90);
         _devices.Columns.Add("Protocol", 70);
-        _devices.SelectedIndexChanged += (_, _) => UpdateButtons();
+        _devices.SizeChanged += (_, _) => {
+            // Keep the endpoint and status fields visible as the compact desktop narrows.
+            int available = _devices.ClientSize.Width - (_devices.Columns[2].Width +
+                _devices.Columns[3].Width + _devices.Columns[4].Width) - LogicalToDeviceUnits(5);
+            int address = Math.Max(LogicalToDeviceUnits(130), available * 4 / 9);
+            int device = Math.Max(LogicalToDeviceUnits(100), available - address);
+            if (_devices.Columns[0].Width != device) _devices.Columns[0].Width = device;
+            if (_devices.Columns[1].Width != address) _devices.Columns[1].Width = address;
+        };
+        _devices.SelectedIndexChanged += async (_, _) => {
+            if (_controller.ConnectedDeviceId is string connected && SelectedId() is string selected &&
+                !string.Equals(selected, connected, StringComparison.OrdinalIgnoreCase))
+                await _controller.DisconnectAsync();
+            UpdateButtons();
+        };
 
         _status = new Label
         {
@@ -78,17 +101,31 @@ internal sealed class MainForm : Form
             TextAlign = ContentAlignment.MiddleLeft,
             Padding = new Padding(8, 0, 0, 0),
             Height = 28,
-            BorderStyle = BorderStyle.Fixed3D,
+            Text = _controller.StatusLine,
+            AccessibleName = "Connection status",
         };
 
         _discover = MakeButton("Discover", async (_, _) => await DiscoverAsync().ConfigureAwait(true));
         _pair = MakeButton("Pair…", async (_, _) => await PairAsync().ConfigureAwait(true));
         _connect = MakeButton("Connect", async (_, _) => await ConnectAsync().ConfigureAwait(true));
         _disconnect = MakeButton("Disconnect", async (_, _) => await _controller.DisconnectAsync().ConfigureAwait(true));
+        _host = MakeButton("Start HOST", async (_, _) => {
+            if (_controller.HostRunning) _controller.StopHost();
+            else if (SelectedId() is string id) await _controller.StartHostAsync(id);
+        });
         _requestControl = MakeButton("Request control", async (_, _) => await _controller.RequestControlAsync().ConfigureAwait(true));
         _releaseControl = MakeButton("Release control", async (_, _) => await _controller.ReleaseControlAsync().ConfigureAwait(true));
         _capture = MakeButton("Start capture", (_, _) => _controller.ToggleCapture());
-        var advanced = MakeButton("Advanced…", (_, _) => ShowAdvanced());
+        _advanced = MakeButton("Advanced…", async (_, _) => await ShowAdvancedAsync().ConfigureAwait(true));
+        var studio = MakeButton("Extension Studio…", async (_, _) => await LaunchToolAsync(
+            "studio", "extension_studio.py", "Extension Studio requires Python 3 with Tk, jsonschema and Pillow."));
+        var video = MakeButton("Prepare card video…", async (_, _) => await LaunchToolAsync(
+            "media", "card_video_import.py", "Card video preparation requires Python 3.11 or newer with Tk."));
+        var display = MakeButton("USB display…", (_, _) =>
+        {
+            using var dialog = new UsbDisplayDialog(_controller.Logic);
+            dialog.ShowDialog(this);
+        });
         var about = MakeButton("About", (_, _) =>
         {
             using var dialog = new AboutForm();
@@ -107,6 +144,7 @@ internal sealed class MainForm : Form
 
         _typeText = new TextBox
         {
+            AccessibleName = "Text to type on the host",
             Multiline = true,
             ScrollBars = ScrollBars.Vertical,
             Dock = DockStyle.Fill,
@@ -117,41 +155,66 @@ internal sealed class MainForm : Form
         _typeSend = MakeButton("Type text", async (_, _) => await TypeTextAsync().ConfigureAwait(true));
         _typeCancel = MakeButton("Cancel typing", (_, _) => _controller.CancelTypeText());
 
-        var deviceButtons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = true };
-        deviceButtons.Controls.AddRange([_discover, _pair, _connect, _disconnect, advanced]);
-
-        var controlButtons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = true };
-        controlButtons.Controls.AddRange([_requestControl, _releaseControl, _capture, _shortcut, shortcutSend, about]);
-
-        var typeButtons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = true };
-        typeButtons.Controls.AddRange([_typeSend, _typeCancel]);
-
-        var layout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 7,
-            Padding = new Padding(10),
+        _shortcut.AccessibleName = "Host shortcut";
+        _pages.DrawItem += (_, e) => {
+            if (e.Index < 0) return;
+            var page = _pages.TabPages[e.Index];
+            var area = e.Bounds;
+            using var fill = new SolidBrush(page.BackColor);
+            e.Graphics.FillRectangle(fill, area);
+            TextRenderer.DrawText(e.Graphics, page.Text, _pages.Font, area, page.ForeColor,
+                                  TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            if (e.Index != _pages.SelectedIndex) return;
+            int line = Math.Max(2, LogicalToDeviceUnits(2));
+            using var stroke = new SolidBrush(page.ForeColor);
+            e.Graphics.FillRectangle(stroke, area.Left + 4, area.Bottom - line, area.Width - 8, line);
+            if ((e.State & DrawItemState.Focus) != 0)
+                ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(area, -3, -3), page.ForeColor, page.BackColor);
         };
+
+        _icons.Add(_connect, "connect", IconRole.Client);
+        _icons.Add(_disconnect, "disconnect", IconRole.Client);
+        _icons.Add(_host, "host", IconRole.Host);
+        _icons.Add(_advanced, "settings", IconRole.Neutral);
+        _icons.Add(studio, "extensions", IconRole.Neutral);
+        _icons.Add(video, "video", IconRole.Neutral);
+        _icons.Add(display, "host", IconRole.Neutral);
+        _icons.Add(_capture, "mouse", IconRole.Client);
+        _icons.Add(shortcutSend, "shortcuts", IconRole.Client);
+        _icons.Add(_typeSend, "keyboard", IconRole.Client);
+        HandleCreated += (_, _) => RefreshAppearance(DeviceDpi);
+        DpiChanged += (_, e) => RefreshAppearance(e.DeviceDpiNew);
+        SystemColorsChanged += (_, _) => RefreshAppearance(DeviceDpi);
+
+        var devices = AddPage(_pages, "Devices");
+        devices.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        devices.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        devices.Controls.Add(_devices, 0, 0);
+        devices.Controls.Add(ActionRow(_discover, _pair, _connect, _disconnect, _host, _advanced), 0, 1);
+
+        var input = AddPage(_pages, "Host input");
+        input.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        input.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        input.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        input.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        input.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        input.Controls.Add(ActionRow(_requestControl, _releaseControl, _capture), 0, 0);
+        input.Controls.Add(ActionRow(_shortcut, shortcutSend), 0, 1);
+        input.Controls.Add(new Label { Text = "Type using the host keyboard layout. Press Esc to cancel.", AutoSize = true }, 0, 2);
+        input.Controls.Add(_typeText, 0, 3);
+        input.Controls.Add(ActionRow(_typeSend, _typeCancel), 0, 4);
+
+        var tools = AddPage(_pages, "Tools");
+        tools.Controls.Add(ActionRow(display, studio, video, about), 0, 0);
+
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, Padding = new Padding(10) };
+        layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
-
-        layout.Controls.Add(_devices, 0, 0);
-        layout.Controls.Add(deviceButtons, 0, 1);
-        layout.Controls.Add(controlButtons, 0, 2);
-        layout.Controls.Add(new Label
-        {
-            Text = "Type text on the host (uses the host keyboard layout; press Cancel typing or Esc to stop)",
-            AutoSize = true,
-        }, 0, 3);
-        layout.Controls.Add(_typeText, 0, 4);
-        layout.Controls.Add(typeButtons, 0, 5);
-        layout.Controls.Add(_status, 0, 6);
+        layout.Controls.Add(_pages, 0, 0);
+        _status.AutoSize = true;
+        _status.MinimumSize = new Size(0, 26);
+        layout.Controls.Add(_status, 0, 1);
         Controls.Add(layout);
 
         _tray = new NotifyIcon
@@ -177,18 +240,107 @@ internal sealed class MainForm : Form
 
         Load += async (_, _) =>
         {
+            var work = Screen.FromControl(this).WorkingArea;
+            if (Width > work.Width || Height > work.Height) {
+                Size = new Size(Math.Min(Width, work.Width), Math.Min(Height, work.Height));
+                Location = new Point(Math.Clamp(Left, work.Left, Math.Max(work.Left, work.Right - Width)),
+                                     Math.Clamp(Top, work.Top, Math.Max(work.Top, work.Bottom - Height)));
+            }
             RefreshDeviceList();
             await DiscoverAsync().ConfigureAwait(true);
         };
         FormClosing += OnFormClosing;
         UpdateButtons();
+        RefreshAppearance(DeviceDpi);
+    }
+
+    private void RefreshAppearance(int dpi)
+    {
+#pragma warning disable WFO5001
+        bool dark = Application.IsDarkModeEnabled;
+#pragma warning restore WFO5001
+        bool contrast = SystemInformation.HighContrast;
+        var canvas = contrast ? SystemColors.Window : ColorTranslator.FromHtml(dark ? "#16202b" : "#f4f6f8");
+        var face = contrast ? SystemColors.Control : ColorTranslator.FromHtml(dark ? "#263442" : "#ffffff");
+        var ink = contrast ? SystemColors.WindowText : ColorTranslator.FromHtml(dark ? "#ecf2f8" : "#172332");
+        var edge = contrast ? SystemColors.ControlText : ColorTranslator.FromHtml(dark ? "#526174" : "#aebbc6");
+        BackColor = canvas;
+        ForeColor = ink;
+        _pages.DrawMode = contrast ? TabDrawMode.Normal : TabDrawMode.OwnerDrawFixed;
+        _icons.Apply(dpi, dark, contrast, SystemColors.ControlText);
+        foreach (TabPage page in _pages.TabPages) {
+            page.UseVisualStyleBackColor = false;
+            page.BackColor = canvas;
+            page.ForeColor = ink;
+            foreach (Control row in page.Controls[0].Controls) {
+                if (row is not FlowLayoutPanel) continue;
+                foreach (Control action in row.Controls) {
+                    if (action is not Button button) continue;
+                    button.FlatStyle = FlatStyle.Flat;
+                    button.BackColor = face;
+                    button.ForeColor = contrast ? SystemColors.ControlText : ink;
+                    button.FlatAppearance.BorderColor = edge;
+                }
+            }
+        }
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        base.WndProc(ref m);
+        const int SettingChanged = 0x001A, ThemeChanged = 0x031A;
+        if (m.Msg is SettingChanged or ThemeChanged && IsHandleCreated && !Disposing)
+            RefreshAppearance(DeviceDpi);
     }
 
     private static Button MakeButton(string text, EventHandler handler)
     {
-        var button = new Button { Text = text, AutoSize = true, Margin = new Padding(0, 0, 8, 6) };
+        var button = new ActionButton { Text = text, AutoSize = true, Margin = new Padding(0, 0, 8, 6) };
         button.Click += handler;
         return button;
+    }
+
+    private sealed class ActionButton : Button
+    {
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            if (Enabled || SystemInformation.HighContrast) {
+                base.OnPaint(e);
+                return;
+            }
+            // Native flat disabled buttons draw black captions even on a dark custom surface.
+            e.Graphics.Clear(BackColor);
+            ControlPaint.DrawBorder(e.Graphics, ClientRectangle, FlatAppearance.BorderColor, ButtonBorderStyle.Solid);
+            var area = Rectangle.Inflate(ClientRectangle, -3, -1);
+            if (Image is { } icon) {
+                e.Graphics.DrawImageUnscaled(icon, area.Left, (Height - icon.Height) / 2);
+                area.X += icon.Width;
+                area.Width -= icon.Width;
+            }
+            var ink = ColorTranslator.FromHtml(BackColor.GetBrightness() < 0.5 ? "#b2c0cc" : "#526174");
+            TextRenderer.DrawText(e.Graphics, Text, Font, area, ink, TextFormatFlags.HorizontalCenter |
+                                  TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
+        }
+    }
+
+    private static TableLayoutPanel AddPage(TabControl pages, string title)
+    {
+        var page = new TabPage(title) { UseVisualStyleBackColor = true, Padding = new Padding(10) };
+        var content = new TableLayoutPanel { ColumnCount = 1, Dock = DockStyle.Fill };
+        content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        page.Controls.Add(content);
+        pages.TabPages.Add(page);
+        return content;
+    }
+
+    private static FlowLayoutPanel ActionRow(params Control[] controls)
+    {
+        var actions = new FlowLayoutPanel {
+            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            Dock = DockStyle.Fill, Margin = new Padding(0, 4, 0, 0),
+        };
+        actions.Controls.AddRange(controls);
+        return actions;
     }
 
     private ContextMenuStrip BuildTrayMenu()
@@ -244,38 +396,46 @@ internal sealed class MainForm : Form
             return;
         }
 
-        using var dialog = new PairDialog(device);
+        await PairAtAddressAsync(device.DisplayName, device.ConnectHost, device.Port,
+            SelectedEntry?.Paired?.DeviceId ?? device.InstanceName).ConfigureAwait(true);
+    }
+
+    private async Task PairAtAddressAsync(string displayName, string host, int port, string? deviceId)
+    {
+        using var dialog = new PairDialog(displayName);
         if (dialog.ShowDialog(this) != DialogResult.OK)
             return;
 
-        await _controller.PairAsync(device, dialog.Code).ConfigureAwait(true);
+        if (await _controller.PairAsync(host, port, dialog.Code, deviceId).ConfigureAwait(true))
+            RefreshDeviceList(_settings.LastDeviceId);
     }
 
     private async Task ConnectAsync()
     {
-        PairedDevice? paired = SelectedPaired();
+        PairedDevice? paired = SelectedEntry?.PairedForConnection;
         if (paired is null)
         {
             ShowNotice("That device is not paired on this computer yet. Use Pair… first.");
             return;
         }
 
-        DiscoveredDevice? seen = SelectedDiscovered();
-        if (seen is not null && seen.Port > 0)
-            paired = paired.WithEndpoint(seen.ConnectHost, seen.Port);
-
         await _controller.ConnectAsync(paired, CancellationToken.None).ConfigureAwait(true);
     }
 
-    private void ShowAdvanced()
+    private async Task ShowAdvancedAsync()
     {
-        using var dialog = new AdvancedConnectDialog();
-        if (dialog.ShowDialog(this) != DialogResult.OK || dialog.Host.Length == 0)
+        var paired = DeviceListEntry.Merge([], _controller.Store.List()).Select(row => row.Paired!).ToArray();
+        using var dialog = new AdvancedConnectDialog(paired, SelectedId());
+        if (dialog.ShowDialog(this) != DialogResult.OK)
             return;
-
-        ShowNotice(
-            "Noted " + dialog.Host + ":" + dialog.Port + ". Pairing with a hand-entered address needs the PAKE "
-            + "implementation from ADR-029; until it lands, pair over a network where the device is discovered.");
+        if (dialog.Pairing is { } saved)
+        {
+            await _controller.ConnectAsync(saved.WithEndpoint(dialog.Host, dialog.Port), CancellationToken.None, refreshAddress: false)
+                .ConfigureAwait(true);
+            RefreshDeviceList(saved.DeviceId);
+        }
+        else
+            await PairAtAddressAsync(dialog.Host, dialog.Host, dialog.Port, null).ConfigureAwait(true);
     }
 
     private async Task TypeTextAsync()
@@ -312,75 +472,51 @@ internal sealed class MainForm : Form
 
     // ---- view ------------------------------------------------------------------------------------
 
-    private void RefreshDeviceList()
+    private void RefreshDeviceList(string? preferredId = null)
     {
-        IReadOnlyList<PairedDevice> paired = _controller.Store.List();
-        var byId = new Dictionary<string, PairedDevice>(StringComparer.OrdinalIgnoreCase);
-        foreach (PairedDevice device in paired)
-            byId[device.DeviceId] = device;
-
+        string? selected = preferredId ?? SelectedId() ?? _controller.ConnectedDeviceId ?? _settings.LastDeviceId;
+        var rows = DeviceListEntry.Merge(_discovered, _controller.Store.List());
         _devices.BeginUpdate();
         _devices.Items.Clear();
-
-        var listed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (DiscoveredDevice device in _discovered)
+        foreach (var row in rows)
         {
-            string id = InstanceLabel(device.InstanceName);
-            listed.Add(id);
-            var item = new ListViewItem(device.DisplayName) { Tag = device };
-            item.SubItems.Add(device.ConnectHost + ":" + device.Port);
-            item.SubItems.Add(byId.ContainsKey(id) ? "yes" : "no");
-            item.SubItems.Add(device.PairingOpen ? "yes" : "no");
-            item.SubItems.Add(device.IsCompatible ? "v1" : "v" + device.ProtocolVersion);
+            var seen = row.Discovered;
+            var paired = row.Paired;
+            var item = new ListViewItem(seen?.DisplayName ?? paired!.DeviceName) { Tag = row };
+            item.SubItems.Add(seen != null ? $"{seen.ConnectHost}:{seen.Port}" : $"{paired!.Host}:{paired.Port}");
+            item.SubItems.Add(paired == null ? "no" : "yes");
+            item.SubItems.Add(seen == null ? "-" : seen.PairingOpen ? "yes" : "no");
+            item.SubItems.Add("v" + (seen?.ProtocolVersion ?? 1));
             _devices.Items.Add(item);
+            if (selected != null && string.Equals(DeviceListEntry.InstanceKey(selected),
+                    DeviceListEntry.InstanceKey(row.DeviceId), StringComparison.OrdinalIgnoreCase))
+                item.Selected = true;
         }
-
-        foreach (PairedDevice device in paired)
-        {
-            if (listed.Contains(device.DeviceId))
-                continue;
-            var item = new ListViewItem(device.DeviceName) { Tag = device };
-            item.SubItems.Add(device.Host + ":" + device.Port);
-            item.SubItems.Add("yes");
-            item.SubItems.Add("-");
-            item.SubItems.Add("v1");
-            _devices.Items.Add(item);
-        }
-
         _devices.EndUpdate();
         UpdateButtons();
     }
 
-    private static string InstanceLabel(string instanceName)
-    {
-        int dot = instanceName.IndexOf('.');
-        return dot > 0 ? instanceName[..dot] : instanceName;
-    }
+    private DeviceListEntry? SelectedEntry => _devices.SelectedItems.Count == 0
+        ? null : _devices.SelectedItems[0].Tag as DeviceListEntry;
 
-    private DiscoveredDevice? SelectedDiscovered()
-        => _devices.SelectedItems.Count > 0 ? _devices.SelectedItems[0].Tag as DiscoveredDevice : null;
+    private DiscoveredDevice? SelectedDiscovered() => SelectedEntry?.Discovered;
 
-    private PairedDevice? SelectedPaired()
-    {
-        if (_devices.SelectedItems.Count == 0)
-            return null;
-        object? tag = _devices.SelectedItems[0].Tag;
-        if (tag is PairedDevice paired)
-            return paired;
-        if (tag is DiscoveredDevice discovered)
-            return _controller.Store.Find(InstanceLabel(discovered.InstanceName));
-        return null;
-    }
+    private string? SelectedId() => SelectedEntry?.DeviceId;
 
     private void UpdateButtons()
     {
         bool hasSelection = _devices.SelectedItems.Count > 0;
-        bool connected = _controller.Logic is not null;
+        bool connected = _controller.Logic is { } logic && (logic.State != Core.Session.ClientSessionState.Disconnected
+            || logic.EndReason == Core.Session.SessionEndReason.None);
         bool controlling = _controller.Logic?.CanSendInput ?? false;
 
         _pair.Enabled = SelectedDiscovered() is not null;
         _connect.Enabled = hasSelection && !connected;
+        _advanced.Enabled = !connected;
         _disconnect.Enabled = connected;
+        _host.Enabled = _controller.Logic?.HasAuthenticatedSession == true &&
+            string.Equals(SelectedId(), _controller.ConnectedDeviceId, StringComparison.OrdinalIgnoreCase);
+        _host.Text = _controller.HostRunning ? "Stop HOST" : "Start HOST";
         _requestControl.Enabled = _controller.Logic?.State == Core.Session.ClientSessionState.Connected;
         _releaseControl.Enabled = controlling;
         _capture.Enabled = controlling;
@@ -391,6 +527,7 @@ internal sealed class MainForm : Form
 
     private void OnControllerChanged()
     {
+        if (IsDisposed || Disposing) return;
         if (InvokeRequired)
         {
             BeginInvoke(OnControllerChanged);
@@ -413,6 +550,36 @@ internal sealed class MainForm : Form
 
     private void SetStatusText(string text) => _status.Text = text;
 
+    private async Task LaunchToolAsync(string folder, string script, string requirement)
+    {
+        string directory = Path.Combine(AppContext.BaseDirectory, folder);
+        string launcher = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "py.exe");
+        if (!File.Exists(launcher))
+            launcher = "py.exe";
+        var start = new ProcessStartInfo(launcher)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = directory
+        };
+        start.ArgumentList.Add("-3");
+        start.ArgumentList.Add("-B");
+        start.ArgumentList.Add(Path.Combine(directory, script));
+        try
+        {
+            using var process = Process.Start(start);
+            if (process == null)
+                throw new InvalidOperationException();
+            await process.WaitForExitAsync().ConfigureAwait(true);
+            if (process.ExitCode == 0 || IsDisposed) return;
+        }
+        catch (Exception e) when (e is Win32Exception or InvalidOperationException or IOException)
+        {
+            if (IsDisposed) return;
+        }
+        ShowNotice("The desktop tool could not start. Check the Python Windows launcher. " + requirement);
+    }
+
     private void ShowNotice(string message)
         => MessageBox.Show(this, message, "KVMpad Client", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
@@ -430,8 +597,12 @@ internal sealed class MainForm : Form
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing)
+        if (disposing) {
+            _controller.Changed -= OnControllerChanged;
+            _controller.Notice -= OnControllerNotice;
+            _icons.Dispose();
             _tray.Dispose();
+        }
         base.Dispose(disposing);
     }
 

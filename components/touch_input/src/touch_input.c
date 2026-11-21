@@ -31,7 +31,6 @@ static const char *TAG = "touch_input";
 #define QUEUE_LEN            16
 #define POLL_ACTIVE_MS       20    // sanity read while fingers are down
 #define POLL_IDLE_MS         100   // sanity read when idle (a lost edge never strands a touch)
-#define GAP_CANCEL_US        120000 // TECH-064
 #define LOCK_TIMEOUT_MS      10
 #define ERRORS_BEFORE_RECOVERY 3
 #define BACKOFF_MIN_MS       10
@@ -202,7 +201,7 @@ static void touch_task(void *arg)
         sample.timestamp_us = (uint64_t)t1;
         kvm_touch_decode_t d = kvm_touch_decode_gt911(status, buf, sizeof(buf), &s_xf, &sample);
         if (d == KVM_TOUCH_DECODE_NOT_READY) {
-            if (active && (t1 - last_frame_us) > GAP_CANCEL_US) {
+            if (active && (t1 - last_frame_us) > KVM_TOUCH_GAP_CANCEL_US) {
                 kvm_touch_make_invalid(&sample);
                 publish(&sample, &seq);
                 STAT_INC(gap_cancels);

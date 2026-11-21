@@ -17,6 +17,9 @@
 #include "hid_keymap.h"
 #include "kbd_fsm.h"
 #include "kvm_hid_intent.h"
+#if KVM_HID_HAS_HPE
+#include "hpe_studio.h"
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -124,7 +127,7 @@ typedef struct {
     }
 
 #define KVM_HID_QUEUE_CAP 128 // 02 §11.2: explicit cap of 128 critical events + coalescing mouse move
-#define KVM_HID_ITFS 3
+#define KVM_HID_ITFS (3 + KVM_HID_HAS_HPE)
 
 typedef struct {
     uint32_t accepted;
@@ -167,6 +170,11 @@ typedef struct {
     kvm_owner_kind_t owner_kind;
     uint32_t owner_epoch;
     bool maintenance;
+#if KVM_HID_HAS_HPE
+    uint32_t release_generation;  // any neutralization invalidates preceding touch capture
+    uint32_t pad_generation;
+    bool pad_native_requested, pad_surface_enabled, neutralizing;
+#endif
     uint8_t modifiers_down; // ledger modifier bitmap (what the HOST was told)
     uint8_t mods_armed;     // ADR-016 one-shot modifiers
     uint8_t mods_locked;    // ADR-016 locked modifiers
@@ -207,13 +215,20 @@ typedef struct {
     uint8_t a;      // usage / button / modifier mask
     uint16_t b;     // chord id / consumer usage
     uint32_t epoch;
+#if KVM_HID_HAS_HPE
+    union { hpe_frame_t ptp; hpe_joystick_t joystick; } advanced;
+#endif
     int32_t x, y;   // move dx/dy or wheel horizontal/vertical, accumulated
 } kvm_hid_qentry_t;
 
 typedef struct {
     bool pending;   // built, not yet accepted by the endpoint
     uint8_t len;
+#if KVM_HID_HAS_HPE
+    uint8_t buf[HPE_STUDIO_WIRE];
+#else
     uint8_t buf[8];
+#endif
 } kvm_hid_staged_t;
 
 typedef struct {
@@ -223,6 +238,7 @@ typedef struct {
     uint64_t last_heartbeat_us;
     kvm_host_usb_t usb;
     uint32_t usb_epoch;
+    uint8_t interface_count; // HID instances exposed by the mounted USB configuration
     bool maintenance;
 
     // ledger (02 §7.2)
@@ -230,6 +246,15 @@ typedef struct {
     uint8_t keys[6];      // press order, 0 = empty slot
     uint8_t buttons;
     uint16_t consumer;
+#if KVM_HID_HAS_HPE
+    bool radial_pressed, joystick_active, ptp_native, ptp_surface, neutral_barrier;
+    uint8_t ptp_inflight_tips;
+    uint8_t control_neutral_phase;
+    uint32_t ptp_generation;
+    hpe_frame_t ptp_active, ptp_lift;
+    hpe_studio_t studio;
+    uint8_t active_profile;
+#endif
 
     kvm_kbd_fsm_t kbd;
 
@@ -266,8 +291,13 @@ void kvm_hid_core_init(kvm_hid_core_t *core, const kvm_hid_port_t *port, const k
 /** USB state from usb_hid_device. A new `usb_epoch` with MOUNTED means a fresh mount (TECH-035). */
 void kvm_hid_core_set_usb(kvm_hid_core_t *core, kvm_host_usb_t state, uint32_t usb_epoch, uint64_t now_us);
 
+#if KVM_HID_HAS_HPE
+void kvm_hid_core_ptp_route(kvm_hid_core_t *core, bool native, bool surface_enabled, uint32_t generation);
+#endif
+
 /** The HOST read (or the stack failed) the last report on `itf`. */
 void kvm_hid_core_on_report_complete(kvm_hid_core_t *core, uint8_t itf);
+void kvm_hid_core_on_report_failed(kvm_hid_core_t *core, uint8_t itf);
 
 /** Run the scheduler and the timers (lease expiry, completion timeout, keep-alive). Call often. */
 void kvm_hid_core_poll(kvm_hid_core_t *core, uint64_t now_us);

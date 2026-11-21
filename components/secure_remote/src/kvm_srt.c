@@ -5,6 +5,7 @@
 // Secure remote transport session glue (TASK-100). See kvm_srt.h.
 
 #include "kvm_srt.h"
+#include "kvm_pairing_wire.h"
 
 #include <string.h>
 
@@ -276,9 +277,26 @@ static void h_send(void *ctx, uint64_t session_id, const char *frame, size_t len
     }
 }
 
+static bool detach_host(kvm_srt_t *srt, kvm_srt_conn_t *cn)
+{
+    if (!cn || !cn->host_attached) return false;
+    cn->host_attached = false;
+    srt->hooks.host_detach(cn->id);
+    return true;
+}
+
+static bool h_host_detach(void *ctx, uint64_t session)
+{
+    kvm_srt_t *srt = ctx;
+    return detach_host(srt, conn_of(srt, session));
+}
+
 static void h_close_session(void *ctx, uint64_t session_id, kvm_rp_err_t reason)
 {
     kvm_srt_t *srt = (kvm_srt_t *)ctx;
+    detach_host(srt, conn_of(srt, session_id));
+    if (srt->hooks.pack_disconnect)
+        srt->hooks.pack_disconnect(srt->hooks.ctx, session_id);
     (void)reason;
     if (srt->hooks.close != NULL) {
         srt->hooks.close(srt->hooks.ctx, session_id, KVM_SRT_CONN_CONTROL);
@@ -291,6 +309,57 @@ static void h_status_fill(void *ctx, kvm_rp_status_t *out)
     if (srt->hooks.status_fill != NULL) {
         srt->hooks.status_fill(srt->hooks.ctx, out);
     }
+}
+
+static bool h_pack(void *ctx, uint64_t session, const char *type, const kvm_json_doc_t *doc,
+                   int payload, const char **state, uint32_t *offset)
+{
+    kvm_srt_t *srt = ctx;
+    int idx = client_index_of(srt, session);
+    if (idx < 0 || !srt->hooks.pack_request)
+        return false;
+    const char *name = "";
+    kvm_pair_record_t record;
+    if (strcmp(type, "pack.offer") == 0) {
+        if (!kvm_srt_clients_get(srt, (uint8_t)idx, &record))
+            return false;
+        name = record.name;
+    }
+    return srt->hooks.pack_request(srt->hooks.ctx, session, name, type, doc, payload, state, offset);
+}
+
+static bool h_display_profile(void *ctx, uint64_t session, const char *serial, bool native)
+{
+    kvm_srt_t *srt = ctx;
+    return srt->wifi_connected && client_index_of(srt, session) >= 0 && control_count(srt) == 1 &&
+           srt->hooks.display_profile(session, serial, native);
+}
+
+static kvm_rp_err_t h_host_attach(void *ctx, uint64_t session, const kvm_json_doc_t *doc, int payload)
+{
+    kvm_srt_t *srt = ctx;
+    kvm_srt_conn_t *cn = conn_of(srt, session);
+    if (!cn || cn->client_index < 0 || !cn->peer_ipv4[0] || !srt->wifi_connected) return KVM_RP_ERR_CONTROL_DENIED;
+    int64_t port;
+    if (kvm_json_count(doc, payload) != 2 ||
+        !kvm_json_get_i64(doc, kvm_json_member(doc, payload, "port"), &port) || port < 1 || port > UINT16_MAX)
+        return KVM_RP_ERR_BAD_FRAME;
+    // The session owner serializes all frames. Use the existing frame buffer
+    // for the base64 field instead of allocating another KiB of HTTPS task stack.
+    size_t n = kvm_json_str_copy(doc, kvm_json_member(doc, payload, "leaf"), srt->pout, sizeof(srt->pout));
+    uint8_t leaf[KVM_JSON_MAX_FRAME / 4 * 3];
+    size_t length;
+    if (n == (size_t)-1 || n != strlen(srt->pout) ||
+        !kvm_pair_b64_decode(srt->pout, leaf, sizeof(leaf), &length)) return KVM_RP_ERR_BAD_FRAME;
+    // Only the final quartet may contain pad bytes or unused low bits.
+    size_t tail = (length - 1) % 3 + 1;
+    char quartet[5];
+    if (!kvm_pair_b64_encode(leaf + length - tail, tail, quartet, sizeof(quartet)) ||
+        memcmp(quartet, srt->pout + n - 4, 4) != 0) return KVM_RP_ERR_BAD_FRAME;
+    if (!srt->hooks.host_attach(session, cn->peer_ipv4, (uint16_t)port, leaf, length))
+        return KVM_RP_ERR_CONTROL_DENIED;
+    cn->host_attached = true;
+    return KVM_RP_OK;
 }
 
 // ---- lifecycle -----------------------------------------------------------------------------
@@ -325,6 +394,10 @@ kvm_pair_err_t kvm_srt_init(kvm_srt_t *srt, const kvm_srt_config_t *cfg,
         // configuration in which remote_protocol answers every `pair.*` frame on the control
         // endpoint with ERR_PAIRING_EXPIRED.
         .pair_frame = NULL,
+        .pack_request = hooks->pack_request ? h_pack : NULL,
+        .host_attach = hooks->host_attach && hooks->host_detach ? h_host_attach : NULL,
+        .host_detach = hooks->host_attach && hooks->host_detach ? h_host_detach : NULL,
+        .display_profile = hooks->display_profile ? h_display_profile : NULL,
         .ctx = srt,
     };
     kvm_rp_init(&srt->rp, cfg->rp, &rph);
@@ -375,6 +448,9 @@ void kvm_srt_set_host(kvm_srt_t *srt, kvm_host_usb_t usb, bool maintenance, bool
     srt->host_usb = usb;
     srt->maintenance = maintenance;
     srt->wifi_connected = wifi_connected;
+    if (maintenance || !wifi_connected) {
+        for (int i = 0; i < KVM_SRT_MAX_CONNS; ++i) detach_host(srt, &srt->conn[i]);
+    }
     kvm_rp_set_host(&srt->rp, usb, maintenance, wifi_connected, now_us);
     enforce_pair_preconditions(srt);
 }
@@ -793,6 +869,7 @@ int kvm_srt_conn_open(kvm_srt_t *srt, uint64_t conn_id, const kvm_srt_admission_
             cn->kind = (uint8_t)adm->kind;
             cn->id = conn_id;
             cn->client_index = adm->client_index;
+            memcpy(cn->peer_ipv4, adm->peer_ipv4, sizeof(cn->peer_ipv4));
             cn->opened_us = now_us;
             if (adm->kind == KVM_SRT_CONN_PAIRING) {
                 kvm_srt_pair_label(cn->label, adm->label_entropy);
@@ -823,7 +900,8 @@ void kvm_srt_conn_frame(kvm_srt_t *srt, uint64_t conn_id, const char *frame, siz
         return;
     }
     if (cn->kind == (uint8_t)KVM_SRT_CONN_CONTROL) {
-        (void)kvm_rp_on_frame(&srt->rp, conn_id, frame, len, now_us);
+        kvm_rp_err_t result = kvm_rp_on_frame(&srt->rp, conn_id, frame, len, now_us);
+        if (result == KVM_RP_OK && cn->host_attached) cn->host_last_frame_us = now_us;
     } else {
         pair_frame(srt, cn, frame, len);
         // Every pairing handler can post an event -- the Accept screen, a failed attempt, a
@@ -844,6 +922,9 @@ void kvm_srt_conn_close(kvm_srt_t *srt, uint64_t conn_id, kvm_srt_loss_t loss, u
         return;
     }
     const kvm_srt_conn_kind_t kind = (kvm_srt_conn_kind_t)cn->kind;
+    detach_host(srt, cn);
+    if (kind == KVM_SRT_CONN_CONTROL && srt->hooks.pack_disconnect)
+        srt->hooks.pack_disconnect(srt->hooks.ctx, conn_id);
     if ((unsigned)loss < (unsigned)KVM_SRT_LOSS_COUNT) {
         srt->c.losses[loss]++;
     }
@@ -928,6 +1009,11 @@ void kvm_srt_tick(kvm_srt_t *srt, uint64_t now_us)
     }
     srt->now_us = now_us;
     kvm_rp_poll(&srt->rp, now_us);
+    for (int i = 0; i < KVM_SRT_MAX_CONNS; ++i) {
+        kvm_srt_conn_t *cn = &srt->conn[i];
+        if (cn->host_attached && now_us - cn->host_last_frame_us >= srt->rp.cfg.heartbeat_stale_us)
+            detach_host(srt, cn);
+    }
 
     if (!srt->pair_ready) {
         return;

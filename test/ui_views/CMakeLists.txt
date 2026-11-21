@@ -57,6 +57,7 @@ add_library(ui_stack STATIC
     ${UI_THEME}/src/ui_theme.c
     ${UI_THEME}/src/ui_font_blob.c
     ${UI_THEME}/src/ui_icon_star.c
+    ${UI_THEME}/src/kvm_control_icons.c
     ${UI_COMP}/src/ui_status_item.c ${UI_COMP}/src/ui_topbar.c ${UI_COMP}/src/ui_action_key.c
     ${UI_COMP}/src/ui_segmented.c ${UI_COMP}/src/ui_modal.c ${UI_COMP}/src/ui_toast.c
     ${REPO}/components/ime_engine/src/ime_hangul.c
@@ -136,3 +137,13 @@ add_executable(test_ui_app test_ui_app.c ${UI_VIEWS}/src/ui_app.c ${VIEW_SRCS})
 target_compile_options(test_ui_app PRIVATE ${STRICT})
 target_link_libraries(test_ui_app PRIVATE ui_stack)
 add_test(NAME test_ui_app COMMAND test_ui_app)
+
+add_executable(test_pack_autopilot test_pack_autopilot.c ${REPO}/main/pack_autopilot_view.c)
+target_include_directories(test_pack_autopilot PRIVATE ${REPO}/main)
+target_compile_options(test_pack_autopilot PRIVATE -UNDEBUG ${STRICT})
+target_link_libraries(test_pack_autopilot PRIVATE ui_stack)
+add_test(NAME test_pack_autopilot COMMAND test_pack_autopilot)
+
+add_executable(test_portrait_copy test_portrait_copy.c)
+target_compile_options(test_portrait_copy PRIVATE -UNDEBUG ${STRICT})
+add_test(NAME test_portrait_copy COMMAND test_portrait_copy)

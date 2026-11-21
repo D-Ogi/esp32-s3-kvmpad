@@ -1185,8 +1185,8 @@ kvm_rp_err_t kvm_rp_on_frame(kvm_rp_t *rp, uint64_t session_id, const char *fram
     // type
     int tt = kvm_json_member(d, root, "type");
     char type[RP_TYPE_MAX];
-    if (kvm_json_type(d, tt) != KVM_JSON_STRING ||
-        kvm_json_str_copy(d, tt, type, sizeof(type)) == (size_t)-1) {
+    size_t type_len = kvm_json_str_copy(d, tt, type, sizeof(type));
+    if (type_len == (size_t)-1 || type_len != strlen(type)) {
         return reject_abuse(rp, s, KVM_RP_ERR_BAD_FRAME, 0);
     }
 
@@ -1237,6 +1237,58 @@ kvm_rp_err_t kvm_rp_on_frame(kvm_rp_t *rp, uint64_t session_id, const char *fram
     }
     if (is_pair) {
         return handle_pair(rp, s, type, pl, (uint64_t)seq);
+    }
+    if (strncmp(type, "pack.", 5) == 0 && rp->hooks.pack_request) {
+        if (!s->authenticated || !s->operator_role || rp->maintenance ||
+            rp->owner_session == s->id || s->approval_pending)
+            return reject(rp, s, KVM_RP_ERR_CONTROL_DENIED, (uint64_t)seq);
+        if (now_us - s->pack_rate_us >= 1000000u) {
+            s->pack_rate_us = now_us;
+            s->pack_requests = 0;
+        }
+        if (s->pack_requests >= 160)
+            return reject_abuse(rp, s, KVM_RP_ERR_RATE_LIMIT, (uint64_t)seq);
+        s->pack_requests++;
+        s->pack_only = true;
+        const char *state = NULL;
+        uint32_t offset = 0;
+        if (!rp->hooks.pack_request(rp->hooks.ctx, s->id, type, d, pl, &state, &offset) || !state)
+            return reject_abuse(rp, s, KVM_RP_ERR_BAD_FRAME, (uint64_t)seq);
+        kvm_rp_send_pack_status(rp, s, (uint64_t)seq, state, offset);
+        return KVM_RP_OK;
+    }
+    if (strcmp(type, "host.detach") == 0 && rp->hooks.host_detach) {
+        if (pl < 0 || kvm_json_count(d, pl) != 0)
+            return reject(rp, s, KVM_RP_ERR_BAD_FRAME, (uint64_t)seq);
+        if (!s->authenticated || !s->operator_role || !rp->hooks.host_detach(rp->hooks.ctx, s->id))
+            return reject(rp, s, KVM_RP_ERR_CONTROL_DENIED, (uint64_t)seq);
+        kvm_rp_send_ack(rp, s, "host.detached", (uint64_t)seq);
+        return KVM_RP_OK;
+    }
+    if (s->pack_only && strcmp(type, "session.close") != 0)
+        return reject_abuse(rp, s, KVM_RP_ERR_CONTROL_DENIED, (uint64_t)seq);
+    if (strcmp(type, "display.profile.request") == 0 && rp->hooks.display_profile) {
+        if (!s->authenticated || !s->operator_role || rp->maintenance || rp->owner_session || s->approval_pending)
+            return reject(rp, s, KVM_RP_ERR_CONTROL_DENIED, (uint64_t)seq);
+        char serial[13];
+        int mode = kvm_json_member(d, pl, "mode");
+        bool native = kvm_json_str_eq(d, mode, "1024x600");
+        if (pl < 0 || kvm_json_count(d, pl) != 2 || (!native && !kvm_json_str_eq(d, mode, "640x480")) ||
+            kvm_json_str_copy(d, kvm_json_member(d, pl, "usb_serial"), serial, sizeof(serial)) != 12 ||
+            strspn(serial, "0123456789ABCDEF") != 12)
+            return reject(rp, s, KVM_RP_ERR_BAD_FRAME, (uint64_t)seq);
+        if (!rp->hooks.display_profile(rp->hooks.ctx, s->id, serial, native))
+            return reject(rp, s, KVM_RP_ERR_CONTROL_DENIED, (uint64_t)seq);
+        kvm_rp_send_ack(rp, s, "display.profile.queued", (uint64_t)seq);
+        return KVM_RP_OK;
+    }
+    if (strcmp(type, "host.attach") == 0 && rp->hooks.host_attach) {
+        if (!s->authenticated || !s->operator_role || rp->maintenance)
+            return reject(rp, s, KVM_RP_ERR_CONTROL_DENIED, (uint64_t)seq);
+        kvm_rp_err_t e = rp->hooks.host_attach(rp->hooks.ctx, s->id, d, pl);
+        if (e != KVM_RP_OK) return reject(rp, s, e, (uint64_t)seq);
+        kvm_rp_send_ack(rp, s, "host.attached", (uint64_t)seq);
+        return KVM_RP_OK;
     }
     if (strcmp(type, "status.get") == 0) {
         return handle_status(rp, s, pl, (uint64_t)seq);

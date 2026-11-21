@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+config KVM_USB_MONITOR_EVAL
+    bool "USB extended monitor evaluation profile"
+    depends on KVM_UI_PLATFORM
+    depends on TINYUSB_HID_COUNT = 4
+    default n
+    help
+        Offer the Espressif USB extended monitor in Extensions. Opening the
+        monitor switches the USB port from HID to the display-only device.
+        Home closes the monitor and restores the normal HID configuration.
+        Use sdkconfig.usb-monitor-eval to configure the vendor endpoints and HID control-transfer handling together.

@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+
+menu "KVMpad four-interface HID"
+    depends on TINYUSB_HID_COUNT = 4
+    config KVM_PTP_WIDTH_TENTH_MM
+        int "Measured width of active touch region (0.1 mm, 0 = uncalibrated)"
+        range 0 32767
+        default 0
+    config KVM_PTP_HEIGHT_TENTH_MM
+        int "Measured height of active touch region (0.1 mm, 0 = uncalibrated)"
+        range 0 32767
+        default 0
+    config KVM_HPE_JOYSTICK_QUALIFIED
+        bool "Enable joystick capability for installed packs after target qualification"
+        default n
+        help
+            Set only for a configuration verified with FLIGHT-01..04/08 and
+            the Radial regression on the target. The USB report is present in
+            all four-interface developer builds for qualification.
+endmenu

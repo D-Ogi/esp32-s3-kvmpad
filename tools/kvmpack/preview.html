@@ -1,0 +1,1010 @@
+<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0 -->
+<!-- Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md. -->
+<!-- Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad) -->
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'none'; base-uri 'none'">
+<title>KVMpad Studio preview</title>
+<style>
+:root {
+    color-scheme: light;
+    --page: #f5f5f7; --surface: #fff; --ink: #1d1d1f; --edge: #7a8896;
+    --selected: #e1f0ff; --selected-ink: #005497; --stroke: 1px;
+    --neutral: #777982; --accent: #006acb; --warn: #8a5a00; --ok: #158652; --danger: #d3474e;
+}
+:root[data-palette="night"] {
+    color-scheme: dark;
+    --page: #111820; --surface: #202c39; --ink: #f0f5fa; --edge: #8493a2;
+    --selected: #263d50; --selected-ink: #a8daff;
+    --neutral: #c1cedb; --accent: #a8daff; --warn: #ffda8c; --ok: #91eab8; --danger: #ffa4aa;
+}
+:root[data-palette="contrast"] {
+    color-scheme: dark;
+    --page: #000; --surface: #000; --ink: #fff; --edge: #fff;
+    --selected: #ff0; --selected-ink: #000; --stroke: 2px;
+    --neutral: #e2e2e2; --accent: #0ff; --warn: #ff0; --ok: #74ff90; --danger: #ff98a9;
+}
+* { box-sizing: border-box }
+body { margin: 0; background: var(--page); color: var(--ink); font: 18px "Segoe UI", sans-serif }
+main { width: 1024px; height: 600px; overflow: hidden }
+:root[data-orientation="portrait"] main { width: 600px; height: 1024px }
+header { height: 32px; display: flex; align-items: center; gap: 12px; padding: 0 12px; background: var(--surface); border-bottom: var(--stroke) solid var(--edge); font-size: 14px }
+header b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+#connections { white-space: nowrap }
+.preview-tools { display: flex; align-items: center; gap: 12px; padding: 6px 12px; font-size: 14px }
+button, select { color: var(--ink); font: inherit; cursor: pointer; background: var(--surface); border: var(--stroke) solid var(--edge) }
+header button, .preview-tools button, .preview-tools select { height: 28px; border-radius: 4px }
+.preview-tools label { white-space: nowrap }
+.surface { position: relative; width: 100%; height: calc(100% - 32px); overflow: hidden }
+.widget { position: absolute; display: grid; place-content: center; text-align: center; gap: 12px; background: var(--surface); color: var(--ink); border: var(--stroke) solid var(--edge); border-radius: 7px; padding: 8px }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: -4px }
+.widget[data-kind="Text"] { border: 0; padding: 0; background: transparent }
+.widget[data-kind="StreamViewport"] { background: #000; color: #fff; border: 1px solid #777982; border-radius: 2px }
+.widget[data-kind="MonitorViewport"] { background: #000; color: #fff; border-radius: 2px; gap: 6px; padding: 0; grid-template-columns: minmax(0, 256px) }
+.widget[data-kind="MonitorViewport"] button { min-height: 44px; padding: 0 4px }
+.usb-modes { display: flex; grid-row: 1 }
+.usb-modes button { flex: 1; min-width: 0; font-size: 14px }
+.usb-modes button[aria-pressed="true"] { background: var(--selected); color: var(--selected-ink) }
+.widget[data-kind="KeyboardSurface"] { align-content: stretch; justify-content: stretch; grid-template-rows: repeat(4,1fr); gap: 2px; padding: 0; border: 0 }
+.keyboard-preview-row { display: flex; gap: 2px; justify-content: center }
+.keyboard-preview-row > * { flex: 1; min-width: 0; padding: 0; display: grid; place-items: center; text-align: center; white-space: pre-line; border: var(--stroke) solid var(--edge); border-radius: 4px }
+.widget[data-kind="TouchpadSurface"] { border: 2px solid var(--edge); place-content: end start }
+.pad-gestures { position:absolute; top:6px; right:6px; width:96px; height:44px; border-radius:7px }
+.pad-scrim { position:absolute; inset:0; z-index:10; background:#0008; display:flex; justify-content:end }
+.pad-drawer { width:min(360px,100%); padding:16px; overflow:auto; color:var(--ink); background:var(--surface); border-left:var(--stroke) solid var(--edge) }
+.pad-drawer h2 { margin:8px 0 20px; font-size:22px }
+.pad-drawer button { min-height:48px; border-radius:7px }
+.pad-drawer button:first-child { float:right; min-width:72px }
+.pad-drawer button:disabled { width:100%; margin-bottom:12px; cursor:default }
+.widget[data-kind="AxisPad"] { touch-action: none; background: linear-gradient(90deg, transparent 49.8%, var(--edge) 50%, transparent 50.2%), linear-gradient(transparent 49.8%, var(--edge) 50%, transparent 50.2%), var(--surface) }
+.widget button, button.widget { font-weight: 600 }
+button:active, button.widget:active, button[aria-selected="true"] { background: var(--selected); color: var(--selected-ink); border-color: var(--selected-ink) }
+button.with-icon { display: flex; align-items: center; justify-content: flex-start; gap: 6px;
+    padding: 0 calc(6px - var(--stroke)); overflow: hidden; text-align: left }
+button.with-icon img { flex: none; pointer-events: none; image-rendering: pixelated }
+button.with-icon span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.pack-group { position: absolute; overflow: hidden }
+.pack-group[hidden] { display: none }
+.widget[data-kind="StatusChip"] { display: flex; align-items: center; gap: 4px; justify-content: start; padding: 4px 6px;
+    border: 2px solid var(--chip); border-radius: 999px; overflow: hidden }
+.widget[data-kind="StatusChip"] > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.chip-marker { order: -1; flex: 0 0 18px; color: var(--chip); font: bold 16px "Segoe UI Symbol", sans-serif }
+.chip-marker::before { content: attr(data-symbol) }
+.widget[data-kind="TouchArea"] { touch-action: none; user-select: none; border: 2px solid var(--accent) }
+.widget[data-kind="Dial"] { place-content: stretch; justify-items: center; align-items: center; gap: 0; padding: 2px; overflow: hidden }
+.rotary { touch-action: none; border-radius: 50%; background: conic-gradient(from 225deg,var(--accent) 0 var(--turn),var(--edge) var(--turn) 270deg,transparent 270deg); mask: radial-gradient(circle, transparent 49%,black 51%); cursor: pointer }
+.widget[data-kind="TabStrip"] { display: flex; padding: 0; gap: 2px; background: none; border: 0 }
+.widget[data-kind="TabStrip"] button { flex: 1; min-width: 0; overflow: hidden; border-radius: 5px }
+.widget[data-kind="TabStrip"] button[aria-selected="true"] { box-shadow: inset 0 -3px currentColor }
+.reading { color: var(--ink); font: 24px Consolas, monospace }
+input[type="range"] { width: 190px; accent-color: var(--accent) }
+.recovery { display: grid; height: 100%; place-content: center; gap: 20px; text-align: center }
+.recovery button { padding: 10px 24px; border-radius: 5px }
+.screen-handle { position: absolute; left: 0; bottom: 0; width: 100%; height: 48px; touch-action: none }
+.screen-picker { position: absolute; inset: 0; padding: 16px 20px 20px; background: var(--page); display: flex; flex-direction: column; gap: 12px; overflow: auto }
+.screen-picker h2 { margin: 0; font-size: 24px }
+.screen-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px }
+.screen-picker button { min-height: 52px; border-radius: 10px }
+.screen-picker > button { margin-top: auto }
+.widget[data-kind="ChartViewer"] { display:flex; flex-direction:column; align-items:stretch; justify-content:start; gap:8px; padding:8px }
+.chart-tools { display:flex; gap:8px; align-items:center }
+.chart-tools button, .chart-tools select { height:48px; min-width:56px; padding:0 12px; border-radius:8px }
+.chart-tools select { min-width:0; flex:1 }
+.chart-map { position:relative; flex:1; overflow:hidden; touch-action:none; background:var(--page); border:var(--stroke) solid var(--edge) }
+.chart-map img { position:absolute; max-width:none; max-height:none; pointer-events:none; user-select:none }
+.chart-tools output { min-width:64px }
+.widget[data-kind="AutopilotPanel"] { display:flex; flex-direction:column; align-items:stretch; justify-content:flex-start; padding:18px; overflow:auto; text-align:left }
+.widget[data-kind="RadioPanel"] { display:flex; flex-direction:column; align-items:stretch; justify-content:flex-start; gap:8px; padding:8px; border:0; text-align:left; background:var(--page) }
+.radio-row,.radio-header { display:flex; gap:8px }
+.radio-header { align-items:center; justify-content:space-between; min-height:48px }
+.radio-header strong,.radio-reading { display:block; font-size:26px }
+.radio-caption { display:block; font-size:16px }
+.widget[data-kind="RadioPanel"] button { min-height:44px; border-radius:8px; font:600 20px "Segoe UI",sans-serif }
+.widget[data-kind="RadioPanel"] button:disabled { opacity:.58; cursor:default }
+.radio-row button { flex:1 }
+.radio-fields { display:grid; grid-template-columns:minmax(0,1fr) 96px; grid-template-rows:1fr 1fr; gap:6px }
+.radio-field { padding:5px 12px; border:var(--stroke) solid var(--edge); border-radius:8px; text-align:left; background:var(--surface) }
+.radio-reading { font:600 34px "Segoe UI",sans-serif; font-variant-numeric:tabular-nums }
+.radio-swap { grid-column:2; grid-row:1 / 3 }
+.radio-notice { display:flex; min-height:44px; gap:8px; align-items:center; justify-content:space-between; font-size:16px }
+.radio-keypad { flex:1; display:grid; grid-template-columns:repeat(3,1fr); grid-template-rows:repeat(4,1fr); gap:6px }
+.widget[data-kind="RadioPanel"] .radio-keypad button,.widget[data-kind="RadioPanel"] .radio-code { font-size:30px }
+.radio-row .radio-code { flex:1.7 }
+.ap-row { display:flex; gap:8px; align-items:center; justify-content:space-between }
+.ap-telemetry { display:grid; grid-template-columns:1fr 1fr; gap:8px }
+.ap-telemetry > div { padding:12px; border:var(--stroke) solid var(--edge); border-radius:8px }
+.ap-telemetry strong,.ap-telemetry span { display:block; margin-top:8px }
+.widget[data-kind="AutopilotPanel"] button,.widget[data-kind="AutopilotPanel"] input { min-height:48px; padding:4px 12px; border-radius:8px }
+.ap-target { position:relative; text-align:left; padding-right:176px!important; min-height:80px!important }
+.ap-target canvas { position:absolute; right:8px; top:50%; transform:translateY(-50%) }
+.ap-target strong,.ap-target span { display:block; margin:4px }
+@media (forced-colors: active) {
+    button[aria-selected="true"] { border-bottom: 4px solid Highlight }
+    .rotary { forced-color-adjust: none; --accent: Highlight; --edge: ButtonText }
+}
+</style>
+<main>
+  <header><button id="home" type="button">Home</button><b id="title"></b><span id="connections"></span></header>
+  <div class="surface" id="surface"></div>
+</main>
+<footer class="preview-tools" aria-label="Preview controls">
+  <label>Appearance <select id="palette"><option value="system">System</option><option value="day">Day</option><option value="night">Night</option><option value="contrast">High contrast</option></select></label>
+  <button id="demo" type="button" hidden>Demo telemetry</button><output id="status" aria-live="polite">Offline preview</output>
+</footer>
+<script id="pack" type="application/json">__KVM_PREVIEW_DATA__</script>
+<script>
+"use strict";
+const pack = JSON.parse(document.querySelector("#pack").textContent);
+document.documentElement.dataset.orientation = pack.ui.orientation || "landscape";
+const surface = document.querySelector("#surface");
+const statusLine = document.querySelector("#status");
+const palette = document.querySelector("#palette");
+const dark = matchMedia("(prefers-color-scheme: dark)");
+const contrast = matchMedia("(prefers-contrast: more), (forced-colors: active)");
+function applyPalette() {
+    document.documentElement.dataset.palette = palette.value === "system" ?
+        (contrast.matches ? "contrast" : dark.matches ? "night" : "day") : palette.value;
+}
+for (const setting of [palette, dark, contrast]) setting.addEventListener("change", applyPalette);
+applyPalette();
+const types = new Map(pack.bindings.state.map(s => [s.id, s.type]));
+const typed = (id, value) => types.get(id) === "int" ? BigInt(value) : value;
+const initial = Object.fromEntries(pack.bindings.state.map(s => [s.id, typed(s.id, s.initial)]));
+const initialText = new Map(pack.bindings.state.map(s => [s.id, s.initial_text]));
+const actions = new Map(pack.bindings.actions.map(a => [a.id, a]));
+const demo = document.querySelector("#demo");
+const widgets = new Map();
+let usbMode = 0;
+const filters = new Map(), readings = new Map();
+const sources = new Map(pack.bindings.sources.map(s => [s.id, s]));
+const clock = () => globalThis.performance?.now() ?? Date.now();
+let state, timer, filterTimer, sample = 0, hatOwner = null;
+
+function transform(c, value, now) {
+    if (c.transform === "identity") return value;
+    const x = Number(value), p = c.params || {}, previous = filters.get(c);
+    if (!Number.isFinite(x)) return null;
+    switch (c.transform) {
+    case "clamp": return Math.min(p.max ?? 1, Math.max(p.min ?? 0, x));
+    case "scale": return x * (p.factor ?? 1);
+    case "offset": return x + (p.amount ?? 0);
+    case "round": return Math.sign(x) * Math.round(Math.abs(x));
+    case "boolean_threshold": return x >= (p.threshold ?? 0.5);
+    case "hysteresis": {
+        const active = x >= (p.high ?? 0.75) || (x > (p.low ?? 0.25) && previous === true);
+        filters.set(c, active);
+        return active;
+    }
+    case "lowpass": {
+        const w = previous ? -Math.expm1(-Math.max(0, now - previous.time) / (p.tau_ms ?? 250)) : 1;
+        const filtered = !previous || previous.value === x ? x : (1 - w) * previous.value + w * x;
+        filters.set(c, {value: filtered, time: now});
+        return filtered;
+    }
+    case "enum_map":
+        if (!p.entries) return x === 0 ? "Off" : x === 1 ? "On" : null;
+        return p.entries.find(entry => entry.code === x)?.label ?? null;
+    case "format_number": {
+        const digits = p.digits ?? 2, factor = 10 ** digits;
+        const scaled = Math.round(Math.abs(x) * factor);
+        if (!Number.isSafeInteger(scaled)) return null;
+        let result = String(scaled).padStart(digits + 1, "0");
+        if (digits) result = result.slice(0, -digits) + "." + result.slice(-digits);
+        return (x < 0 && scaled ? "-" : "") + result;
+    }
+    default: return null;
+    }
+}
+
+// Round the binary64 value to 15 significant digits, including ties-to-even as in C %.15g.
+function compactNumber(x) {
+    if (x === 0) return "0";
+    const magnitude = Math.abs(x), view = new DataView(new ArrayBuffer(8));
+    view.setFloat64(0, magnitude);
+    const bits = view.getBigUint64(0), biased = Number(bits >> 52n);
+    let numerator = bits & ((1n << 52n) - 1n), denominator = 1n;
+    if (biased) numerator += 1n << 52n;
+    const binaryExponent = (biased || 1) - 1023 - 52;
+    if (binaryExponent >= 0) numerator <<= BigInt(binaryExponent);
+    else denominator <<= BigInt(-binaryExponent);
+    let exponent = Number(magnitude.toExponential().split("e")[1]);
+    if (exponent <= 14) numerator *= 10n ** BigInt(14 - exponent);
+    else denominator *= 10n ** BigInt(exponent - 14);
+    let rounded = numerator / denominator;
+    const twiceRemainder = 2n * (numerator % denominator);
+    if (twiceRemainder > denominator || (twiceRemainder === denominator && rounded % 2n)) rounded++;
+    if (rounded === 1000000000000000n) { rounded /= 10n; exponent++; }
+    const digits = String(rounded).replace(/0+$/, "");
+    let shown;
+    if (exponent < -4 || exponent >= 15) {
+        shown = digits[0] + (digits.length > 1 ? "." + digits.slice(1) : "") +
+            "e" + (exponent < 0 ? "-" : "+") + String(Math.abs(exponent)).padStart(2, "0");
+    } else if (exponent < 0) shown = "0." + "0".repeat(-exponent - 1) + digits;
+    else if (digits.length <= exponent + 1) shown = digits.padEnd(exponent + 1, "0");
+    else shown = digits.slice(0, exponent + 1) + "." + digits.slice(exponent + 1);
+    return (x < 0 ? "-" : "") + shown;
+}
+
+function updateConnection(c, value, text, now, quality) {
+    const [id, property] = c.to.split(".");
+    const view = widgets.get(id);
+    if (!view) return;
+    const out = quality ? null : transform(c, value, now);
+    if (out === null || (typeof out === "number" && !Number.isFinite(out))) {
+        filters.delete(c);
+        quality ||= "Unavailable";
+    }
+    const shown = quality || (c.transform === "identity" && text !== undefined ? text :
+        typeof out === "number" ? compactNumber(out) : String(out));
+    if (property === "text") view.label.textContent = shown;
+    if (property === "selected" && !quality) view.show(Number(out));
+    if (!view.reading) return;
+    if (property === "value") view.reading.textContent = quality || (shown + " " + view.unit);
+    if (property === "pitch" || property === "roll") {
+        view.attitude[property] = {shown, quality};
+        const {pitch, roll} = view.attitude;
+        view.reading.textContent = pitch && roll && !pitch.quality && !roll.quality ?
+            "Pitch " + pitch.shown + "°  Roll " + roll.shown + "°" :
+            (pitch?.quality === "Stale" || roll?.quality === "Stale" ? "Stale" : "Unavailable");
+    }
+}
+
+function bind(source, value, text, now = clock()) {
+    for (const c of pack.bindings.connections)
+        if (c.from === source) updateConnection(c, value, text, now);
+}
+
+function updateConnections(now) {
+    const permissions = pack.manifest.permissions;
+    const telemetry = permissions.includes("host.telemetry.read") && sources.size > 0;
+    const capture = permissions.includes("host.screen.region");
+    let live = 0, stale = false;
+    for (const [id, source] of sources) {
+        const sample = readings.get(id);
+        if (!sample) continue;
+        const age = now - sample.time;
+        if (age >= 3000) continue;
+        if (age >= 1000 || age > source.max_age_ms) stale = true;
+        else live++;
+    }
+    const data = stale ? "Demo data stale" : live && live === sources.size ? "Demo data" :
+        live ? "Demo data partial" : "Data unavailable";
+    const text = [
+        (permissions.includes("hid.joystick") || pack.manifest.usb.mode === "monitor_controls") && "USB detached", (telemetry || capture) && "Agent idle",
+        telemetry && data, capture && "Capture off"
+    ].filter(Boolean).join("  ·  ");
+    const connections = document.querySelector("#connections");
+    if (connections.textContent !== text) connections.textContent = text;
+}
+
+function refresh(now = clock()) {
+    updateConnections(now);
+    for (const c of pack.bindings.connections) {
+        const source = sources.get(c.from);
+        if (!source) {
+            if (c.transform === "lowpass") updateConnection(c, state[c.from], undefined, now);
+            continue;
+        }
+        const reading = readings.get(c.from), age = reading ? now - reading.time : Infinity;
+        const quality = age >= 3000 ? "Unavailable" : age >= 1000 || age > source.max_age_ms ? "Stale" : "";
+        updateConnection(c, reading?.value, undefined, now, quality);
+    }
+}
+
+function sampleTelemetry() {
+    const t = sample++ / 8;
+    const values = {
+        "sim.airspeed_kt": 117 + 7 * Math.sin(t), "sim.altitude_ft": 3200 + 65 * Math.sin(t),
+        "sim.heading_deg": (275 + t * 3) % 360, "sim.vertical_speed_fpm": 450 * Math.cos(t),
+        "sim.attitude.pitch_deg": 3 * Math.cos(t), "sim.attitude.roll_deg": 12 * Math.sin(t)
+    };
+    for (const source of pack.bindings.sources) {
+        if (Object.hasOwn(values, source.topic)) readings.set(source.id, {value: Math.round(values[source.topic]), time: clock()});
+    }
+    refresh();
+}
+
+function stopDemo() {
+    clearInterval(timer);
+    timer = null;
+    demo.textContent = "Demo telemetry";
+}
+
+demo.onclick = () => {
+    if (timer) {
+        stopDemo();
+        statusLine.textContent = "Demo paused";
+    } else {
+        statusLine.textContent = "Simulated telemetry";
+        sampleTelemetry();
+        timer = setInterval(sampleTelemetry, 250);
+        demo.textContent = "Pause demo";
+    }
+};
+
+function dispatch(id, event = {}) {
+    const action = actions.get(id);
+    if (!action) return;
+    if (action.type === "state.set") {
+        const name = action.args.name;
+        const arg = action.args.value;
+        const value = arg && typeof arg === "object" ? event[arg.event] : arg;
+        if (value === undefined) return;
+        state[name] = typed(name, value);
+        statusLine.textContent = action.state_text ?? String(state[name]);
+        bind(name, state[name], statusLine.textContent);
+    } else if (action.type === "hid.joystick.set_axes") {
+        const report = [];
+        for (const [axis, value] of Object.entries(action.args.axes || {})) {
+            const n = typeof value === "number" ? value : event[value.slice(7)];
+            report.push(axis + " " + (Number.isFinite(n) ? n.toFixed(2) : "—"));
+        }
+        for (const [button, down] of Object.entries(action.args.buttons || {}))
+            report.push("B" + button + (down ? " down" : " up"));
+        if (action.args.hat !== undefined) {
+            const owner = action.trigger.slice(0, action.trigger.lastIndexOf("."));
+            if (action.args.hat === 8) {
+                if (hatOwner !== owner) return;
+                hatOwner = null;
+            } else {
+                if (hatOwner !== null) return;
+                hatOwner = owner;
+            }
+            report.push("Hat " + action.args.hat);
+        }
+        statusLine.textContent = "Simulated · " + report.join("  ");
+    } else if (action.type === "ui.navigate") {
+        const target = widgets.get(action.args.target);
+        if (target) target.element.focus();
+        statusLine.textContent = "Navigate · " + action.args.target;
+    } else if (action.type === "stream.start") {
+        statusLine.textContent = "Offline · capture unavailable";
+    } else if (action.type === "stream.stop") {
+        statusLine.textContent = "Stopped";
+    } else {
+        statusLine.textContent = "Preview · " + action.id;
+    }
+}
+
+function touchArea(node, el) {
+    let pointer = null, origin, previous, held, dragged, timer;
+    const point = e => {
+        const rect = el.getBoundingClientRect();
+        return {x:Math.floor((e.clientX-rect.left)*node.bounds.w/rect.width),
+                y:Math.floor((e.clientY-rect.top)*node.bounds.h/rect.height)};
+    };
+    function cancel() { clearTimeout(timer); pointer = null; }
+    el.addEventListener("pointerdown", e => {
+        if (pointer !== null) return;
+        pointer=e.pointerId; el.setPointerCapture(pointer);
+        origin=previous=point(e); held=dragged=false;
+        timer=setTimeout(() => {
+            if (widgets.get(node.id)?.element === el && !dragged && pointer !== null) {
+                held=true; dispatch(node.events?.long_press);
+            }
+        },400);
+    });
+    el.addEventListener("pointermove", e => {
+        if (pointer !== e.pointerId) return;
+        const p=point(e);
+        if (p.x<0 || p.y<0 || p.x>=node.bounds.w || p.y>=node.bounds.h) { cancel(); return; }
+        if (!held && (p.x!==previous.x || p.y!==previous.y) &&
+            (dragged || Math.max(Math.abs(p.x-origin.x), Math.abs(p.y-origin.y))>=8)) {
+            dragged=true; previous=p; clearTimeout(timer); dispatch(node.events?.drag,p);
+        }
+    });
+    el.addEventListener("pointerup", e => {
+        if (pointer!==e.pointerId) return;
+        if (!held && !dragged) dispatch(node.events?.tap);
+        cancel();
+    });
+    for (const name of ["pointercancel","lostpointercapture"])
+        el.addEventListener(name,e => { if (pointer===e.pointerId) cancel(); });
+    return cancel;
+}
+
+function dial(node,el,label) {
+    const p=node.props || {}, lo=p.min ?? 0, hi=p.max ?? 100;
+    const ring=document.createElement("div");
+    const size=Math.min(node.bounds.w-8,node.bounds.h-32);
+    ring.className="rotary"; ring.tabIndex=0; ring.style.width=ring.style.height=size+"px";
+    ring.setAttribute("role","slider"); ring.setAttribute("aria-label",p.label || "Dial");
+    ring.setAttribute("aria-valuemin",lo); ring.setAttribute("aria-valuemax",hi);
+    let value, pointer=null;
+    function set(v, notify=true) {
+        v=Math.round(Math.max(lo,Math.min(hi,v)));
+        if (value===v) return;
+        value=v; ring.style.setProperty("--turn",270*(v-lo)/(hi-lo)+"deg");
+        ring.setAttribute("aria-valuenow",v);
+        label.textContent=(p.label || "Dial")+" "+v;
+        if (notify) dispatch(node.events?.rotate,{value:v});
+    }
+    function move(e) {
+        const r=ring.getBoundingClientRect();
+        const dx=e.clientX-r.left-r.width/2, dy=e.clientY-r.top-r.height/2;
+        if (Math.hypot(dx,dy)<r.width/5) return;
+        let angle=(Math.atan2(dy,dx)*180/Math.PI+225)%360;
+        if (angle>270) angle=angle>315 ? 0 : 270;
+        // LVGL maps whole degrees to integers with a half-step bias for small ranges.
+        const bias=Math.floor((Math.floor(270*8/(hi-lo))+4)/16);
+        set(lo+Math.floor((Math.round(angle)+bias)*(hi-lo)/270));
+    }
+    ring.addEventListener("pointerdown",e => {
+        if (pointer!==null) return;
+        pointer=e.pointerId; ring.setPointerCapture(pointer); move(e);
+    });
+    ring.addEventListener("pointermove",e => { if (e.pointerId===pointer) move(e); });
+    for (const name of ["pointerup","pointercancel","lostpointercapture"])
+        ring.addEventListener(name,e => { if (e.pointerId===pointer) pointer=null; });
+    ring.addEventListener("keydown", e => {
+        const v={ArrowRight:value+1,ArrowUp:value+1,ArrowLeft:value-1,ArrowDown:value-1,Home:lo,End:hi}[e.key];
+        if (v!==undefined) { e.preventDefault(); set(v); }
+    });
+    el.replaceChildren(ring,label);
+    set(p.value ?? lo,false);
+}
+
+function tabs(node,el) {
+    const p=node.props || {}, titles=p.tabs || ["Tab 1","Tab 2"];
+    let selected=p.selected ?? 0;
+    el.replaceChildren();
+    el.setAttribute("role","tablist");
+    const buttons=titles.map((title,i) => {
+        const button=document.createElement("button");
+        button.textContent=title; button.setAttribute("role","tab");
+        button.addEventListener("click",() => {
+            if (selected===i) return;
+            selected=i; show(); dispatch(node.events?.change,{value:i});
+        });
+        el.append(button); return button;
+    });
+    function show(index) {
+        if (Number.isInteger(index) && index>=0 && index<titles.length) selected=index;
+        buttons.forEach((button,i) => {
+            button.setAttribute("aria-selected",String(selected===i));
+            const page=widgets.get(p.pages?.[i]);
+            if (page) page.element.hidden=selected!==i;
+        });
+    }
+    return show;
+}
+
+function chartViewer(el, charts) {
+    const pins = [0, 1], points = new Map();
+    const positions = charts.map(() => ({zoom: 1, x: 0, y: 0}));
+    let slot = 0;
+    const bar = document.createElement("div"), tools = document.createElement("div");
+    bar.className = tools.className = "chart-tools";
+    const map = document.createElement("div"), image = document.createElement("img");
+    map.className = "chart-map";
+    image.draggable = false;
+    map.append(image);
+    el.replaceChildren(bar, map, tools);
+    function button(parent, title, action) {
+        const control = document.createElement("button");
+        control.textContent = title;
+        control.onclick = action;
+        parent.append(control);
+        return control;
+    }
+    const slots = pins.map((_, i) => button(bar, i ? "B" : "A", () => { slot = i; show(); }));
+    const choice = document.createElement("select");
+    choice.setAttribute("aria-label", "Chart pinned to the selected slot");
+    charts.forEach((chart, i) => {
+        const option = document.createElement("option");
+        option.value = i; option.textContent = chart.title; choice.append(option);
+    });
+    bar.append(choice);
+    choice.onchange = () => {
+        const id = Number(choice.value);
+        if (pins[1-slot] === id) pins[1-slot] = pins[slot];
+        pins[slot] = id;
+        show();
+    };
+    const active = () => positions[pins[slot]];
+    const readout = document.createElement("output");
+    function zoom(factor, from = {x:0,y:0}, to = from) {
+        const p = active(), before = p.zoom;
+        p.zoom = Math.min(6, Math.max(1, before * factor));
+        p.x = to.x - (from.x - p.x) * p.zoom / before;
+        p.y = to.y - (from.y - p.y) * p.zoom / before;
+        paint();
+    }
+    const minus = button(tools, "−", () => zoom(1/1.5));
+    tools.append(readout);
+    const plus = button(tools, "+", () => zoom(1.5));
+    button(tools, "Fit", () => { Object.assign(active(), {zoom:1,x:0,y:0}); paint(); });
+    function paint() {
+        const p = active(), box = map.getBoundingClientRect();
+        readout.textContent = Math.round(100*p.zoom) + "%";
+        minus.disabled = p.zoom <= 1; plus.disabled = p.zoom >= 6;
+        if (!box.width || !box.height || !image.naturalWidth) return;
+        const fit = Math.min(box.width / image.naturalWidth, box.height / image.naturalHeight);
+        const width = fit * p.zoom * image.naturalWidth, height = fit * p.zoom * image.naturalHeight;
+        const dx = Math.max(0,(width-box.width)/2), dy = Math.max(0,(height-box.height)/2);
+        p.x = Math.max(-dx,Math.min(dx,p.x)); p.y = Math.max(-dy,Math.min(dy,p.y));
+        Object.assign(image.style, {width:width+"px",height:height+"px",
+            left:(box.width/2+p.x-width/2)+"px", top:(box.height/2+p.y-height/2)+"px"});
+    }
+    function show() {
+        points.clear();
+        const index = pins[slot], chart = charts[index];
+        slots.forEach((b,i) => { b.setAttribute("aria-selected",String(i===slot)); b.title = charts[pins[i]].title; });
+        choice.value = String(index);
+        image.alt = chart.title;
+        image.src = pack.charts[chart.asset];
+        paint();
+    }
+    function point(e) {
+        const box = map.getBoundingClientRect();
+        return {x:e.clientX-box.left-box.width/2, y:e.clientY-box.top-box.height/2};
+    }
+    map.addEventListener("pointerdown", e => {
+        if (points.size >= 2 || points.has(e.pointerId)) return;
+        map.setPointerCapture(e.pointerId);
+        points.set(e.pointerId, point(e));
+    });
+    map.addEventListener("pointermove", e => {
+        const old = points.get(e.pointerId);
+        if (!old) return;
+        const next = point(e);
+        points.set(e.pointerId,next);
+        if (points.size === 1) {
+            const p = active();
+            p.x += next.x-old.x; p.y += next.y-old.y; paint();
+        } else {
+            const other = [...points].find(([id]) => id !== e.pointerId)[1];
+            const previous = Math.hypot(other.x-old.x, other.y-old.y);
+            if (previous < 1) return;
+            const middle = a => ({x:(other.x+a.x)/2, y:(other.y+a.y)/2});
+            zoom(Math.hypot(other.x-next.x, other.y-next.y)/previous, middle(old), middle(next));
+        }
+    });
+    for (const event of ["pointerup","pointercancel","lostpointercapture"])
+        map.addEventListener(event, e => { points.delete(e.pointerId); });
+    image.onload = paint;
+    show();
+    return {paint, cancel:() => points.clear()};
+}
+
+__KVM_AUTOPILOT_PREVIEW__
+
+function radioPreview(el) {
+    let model=null, com=0, edit=null, draft="", message="No simulator connection.", timer=null;
+    el.replaceChildren();
+    function add(parent,tag,text="",css="") {
+        const child=document.createElement(tag);
+        child.textContent=text;child.className=css;parent.append(child);return child;
+    }
+    function button(parent,text,action,css="") {
+        const b=add(parent,"button",text,css);
+        b.onclick=()=>{if (!b.disabled) {action();paint();}};
+        return b;
+    }
+    function endEdit(){edit=null;draft="";}
+    function cancel() {
+        if(timer!==null){clearTimeout(timer);timer=null;message="Edit closed.";}
+        if(edit){endEdit();message="Edit closed.";}
+        paint();
+    }
+    function apply(update) {
+        endEdit();message="Applying local demo change.";
+        timer=setTimeout(()=>{timer=null;update();message="Applied in local demo.";paint();},200);
+    }
+    const header=add(el,"div","","radio-header"), titles=add(header,"div");
+    add(titles,"strong","Radio and transponder");const status=add(titles,"span","","radio-caption");
+    const link=button(header,"",()=>{
+        if(model){cancel();model=null;message="No simulator connection.";return;}
+        model={active:[118100,123450],standby:[121900,124850],code:"7000",mode:"ALT"};
+        message="Local demo. Tap Standby or the transponder code.";
+    });
+    const tabs=add(el,"div","","radio-row");
+    const banks=[0,1].map(i=>button(tabs,"COM "+(i+1),()=>{if(i!==com){com=i;endEdit();message="";}}));
+    const fields=add(el,"div","","radio-fields"), active=add(fields,"div","","radio-field");
+    add(active,"span","ACTIVE","radio-caption");const primary=add(active,"strong","","radio-reading");
+    function begin(field){if(edit!==field){draft="";edit=field;}}
+    const standby=button(fields,"",()=>begin("frequency"),"radio-field");
+    add(standby,"span","STANDBY","radio-caption");const secondary=add(standby,"strong","","radio-reading");
+    const swap=button(fields,"Swap",()=>apply(()=>{
+        [model.active[com],model.standby[com]]=[model.standby[com],model.active[com]];
+    }),"radio-swap");
+    const info=add(el,"div","","radio-notice"), notice=add(info,"span");
+    const undo=button(info,"Cancel",()=>{endEdit();message="Edit cancelled.";});
+    const keys=add(el,"div","","radio-keypad");
+    const numbers={};
+    function digit(i) {
+        numbers[i]=button(keys,String(i),()=>{if(draft.length<(edit==="code"?4:6)) draft+=i;});
+    }
+    for(let i=1;i<=9;i++)digit(i);
+    const back=button(keys,"⌫",()=>{draft=draft.slice(0,-1);});
+    back.setAttribute("aria-label","Backspace");digit(0);
+    const ok=button(keys,"OK",()=>{
+        const value=draft,field=edit;
+        apply(()=>{if(field==="code")model.code=value;else model.standby[com]=Number(value);});
+    });
+    add(el,"span","TRANSPONDER","radio-caption");
+    const transponder=add(el,"div","","radio-row");
+    const code=button(transponder,"",()=>begin("code"),"radio-code");
+    const modes=["STBY","ON","ALT"].map(m=>button(transponder,m,()=>apply(()=>{model.mode=m;})));
+    function paint() {
+        const ready=model && timer===null;
+        const channel=n=>Math.floor(n/1000)+"."+String(n%1000).padStart(3,"0")+" MHz";
+        const number=Number(draft);
+        const valid=edit==="code" ? /^[0-7]{4}$/.test(draft) :
+            edit==="frequency" && draft.length===6 && number>=118000 && number<=136990 && number%5===0 && number%25!==20;
+        status.textContent=model?"Demo":"Offline";link.textContent=model?"Go offline":"Start demo";
+        banks.forEach((b,i)=>{b.disabled=timer!==null;b.setAttribute("aria-selected",String(com===i));});
+        const previous=model?channel(model.standby[com]):"---.--- MHz";
+        primary.textContent=model?channel(model.active[com]):"---.--- MHz";
+        const padded=draft.padEnd(6,"_");
+        secondary.textContent=edit==="frequency"?padded.slice(0,3)+"."+padded.slice(3)+" MHz":previous;
+        code.textContent=edit==="code"?draft.padEnd(4,"_"):model?model.code:"----";
+        standby.disabled=code.disabled=!ready;swap.disabled=!ready || !!edit;
+        standby.setAttribute("aria-selected",String(edit==="frequency"));code.setAttribute("aria-selected",String(edit==="code"));
+        notice.textContent=edit==="frequency" ? (draft.length===6 && !valid?"Invalid COM channel. Use a valid 118-136 MHz channel.":"Edit standby. Current "+previous) :
+            edit==="code"?"Edit code (0-7). Current "+model.code:message;
+        undo.hidden=!edit;back.disabled=!edit || !draft;ok.disabled=!valid;
+        Object.entries(numbers).forEach(([i,b])=>{b.disabled=!edit || (edit==="code" && Number(i)>7);});
+        modes.forEach(b=>{b.disabled=!ready || !!edit;b.setAttribute("aria-selected",String(!!model && model.mode===b.textContent));});
+    }
+    paint();return cancel;
+}
+
+function draw(node, parent) {
+    const p = node.props || {}, b = node.bounds;
+    const container = ["Column", "Row", "Grid"].includes(node.type);
+    if (container) {
+        const group=document.createElement("div"); group.className="pack-group"; group.dataset.node=node.id;
+        Object.assign(group.style,{left:b.x+"px",top:b.y+"px",width:b.w+"px",height:b.h+"px"});
+        parent.append(group); widgets.set(node.id,{element:group});
+        for (const child of node.children || []) draw(child,group);
+    } else if (b) {
+        const el = document.createElement(node.type === "Button" ? "button" : "div");
+        el.className = "widget";
+        el.dataset.kind = node.type;
+        el.dataset.node = node.id;
+        Object.assign(el.style, {left: b.x + "px", top: b.y + "px", width: b.w + "px", height: b.h + "px"});
+        const label = document.createElement("span");
+        label.textContent = p.text || p.label || p.title || (node.type === "StreamViewport" ? "Capture stopped" : node.id);
+        if (node.type === "Button" && p.icon && b.w >= 64 && b.h >= 40) {
+            const icon = document.createElement("img");
+            icon.src = pack.icons[p.icon];
+            icon.alt = "";
+            el.className += " with-icon";
+            el.append(icon);
+        }
+        el.append(label);
+        const view = {element: el, label, unit: p.unit || "", attitude: {}};
+        widgets.set(node.id, view);
+        el.tabIndex = node.type === "Button" ? 0 : -1;
+        if (["GaugeNeedle", "GaugeArc", "ValueTile", "Horizon"].includes(node.type)) {
+            const reading = document.createElement("span");
+            reading.className = "reading";
+            reading.textContent = "— " + (p.unit || "");
+            el.append(reading);
+            view.reading = reading;
+        }
+        if (node.type === "Slider") {
+            const slider = document.createElement("input");
+            slider.type = "range";
+            slider.min = p.min ?? 0;
+            slider.max = p.max ?? 1;
+            slider.step = "0.01";
+            slider.value = "0";
+            slider.setAttribute("aria-label", label.textContent);
+            const change = () => dispatch(node.events?.change, {value: Number(slider.value)});
+            slider.addEventListener("input", change);
+            if (p.spring_center) {
+                for (const name of ["pointerup", "pointercancel", "keyup", "blur"])
+                    slider.addEventListener(name, () => { slider.value = 0; change(); });
+            }
+            el.append(slider);
+        }
+        if (node.type === "MonitorViewport") {
+            label.textContent = "USB desktop offline";
+            label.hidden = true;
+            const start = document.createElement("button");
+            start.textContent = "Start USB monitor";
+            start.onclick = () => { statusLine.textContent = "Start the USB desktop on KVMpad with the computer connected."; };
+            el.append(start);
+            const modes = document.createElement("div");
+            modes.className = "usb-modes";
+            modes.setAttribute("role", "group");
+            modes.setAttribute("aria-label", "USB signal resolution");
+            for (const [index, size] of ["640×480", "1024×600"].entries()) {
+                const option = document.createElement("button");
+                option.textContent = size;
+                option.onclick = () => {
+                    usbMode = index;
+                    for (const widget of widgets.values()) widget.showUsbMode?.();
+                };
+                modes.append(option);
+            }
+            view.showUsbMode = () => Array.from(modes.children).forEach((option, i) =>
+                option.setAttribute("aria-pressed", String(i === usbMode)));
+            view.showUsbMode();
+            el.append(modes);
+        } else if (node.type === "KeyboardSurface") {
+            label.remove();
+            el.setAttribute("aria-label", "Keyboard (US preview)");
+            const columnGap = b.w >= 458 ? 2 : 0;
+            const usableWidth = b.w - 9 * columnGap;
+            const wideCaps = usableWidth >= 44 * 11;
+            const fixedUnits = wideCaps ? 9 : 8;
+            const units = Math.floor(usableWidth / (usableWidth >= 50 * (fixedUnits + 2) ? 50 : 44));
+            el.style.gap = b.h >= 182 ? "2px" : "0";
+            const caps = wideCaps ? "Caps\nUnknown" : "Caps\n?";
+            const layers = {
+                letters: ["qwertyuiop", [..."asdfghjkl", "⌫"], ["Shift", ..."zxcvbnm", "Fn", "Enter"],
+                    ["123", "Ctrl", "Alt", "R Alt", "Tab", caps, "Space", "◀", "▶"]],
+                numbers: ["1234567890", ["`", "-", "=", "[", "]", "\\", ";", "'", ",", "⌫"],
+                    ["Shift", ".", "/", "Esc", "Del", "▲", "▼", "Enter"],
+                    ["ABC", "Ctrl", "Alt", "R Alt", "Fn", caps, "Space", "Home", "End"]],
+                functions: [["F1", "F2", "F3", "F4", "F5", "F6"], ["F7", "F8", "F9", "F10", "F11", "F12"],
+                    ["Esc", "Ins", "Del", "Home", "End", "PgUp", "PgDn"], ["Back", "Shift", "Ctrl", "Alt", "Win+", "Win", caps]]
+            };
+            let origin = "letters";
+            function keyboardPage(page, focusKey) {
+                el.replaceChildren();
+                let focus;
+                for (const keys of layers[page]) {
+                    const row = document.createElement("div");
+                    row.className = "keyboard-preview-row";
+                    row.style.gap = columnGap + "px";
+                    for (const key of keys) {
+                        const navigation = ["Fn", "Back", "123", "ABC"].includes(key);
+                        const cap = document.createElement(navigation ? "button" : "span");
+                        cap.textContent = key;
+                        if (navigation) cap.onclick = () => {
+                            if (key === "Fn") origin = page;
+                            const next = {Fn: "functions", Back: origin, "123": "numbers", ABC: "letters"};
+                            keyboardPage(next[key], {Fn: "Back", Back: "Fn", "123": "ABC", ABC: "123"}[key]);
+                        };
+                        if (key === focusKey) focus = cap;
+                        if (wideCaps && key === caps) cap.style.flex = "2";
+                        if (key === "Space") cap.style.flex = String(Math.min(3, units - fixedUnits));
+                        row.append(cap);
+                    }
+                    el.append(row);
+                }
+                focus?.focus();
+            }
+            keyboardPage("letters");
+        } else if (node.type === "TouchpadSurface") {
+            label.textContent = "Touchpad";
+            view.cancel = installPadDrawer(el);
+        } else if (node.type === "TouchArea") {
+            label.textContent=p.label || "Touch area";
+            view.cancel=touchArea(node,el);
+        } else if (node.type === "Dial") dial(node,el,label);
+        else if (node.type === "TabStrip") view.show=tabs(node,el);
+        else if (node.type === "ChartViewer") {
+            const chart = chartViewer(el, p.charts);
+            view.show = chart.paint;
+            view.cancel = chart.cancel;
+        } else if (node.type === "AutopilotPanel") {
+            view.cancel = autopilotPreview(el);
+        } else if (node.type === "RadioPanel") {
+            view.cancel = radioPreview(el);
+        } else if (node.type === "StatusChip") {
+            const role=p.status || "neutral";
+            const tones={neutral:"neutral",capability:"accent",permission:"warn",info:"accent",
+                         success:"ok",warning:"warn",error:"danger"};
+            const marker=document.createElement("span");
+            marker.className="chip-marker"; marker.dataset.symbol=pack.chip_symbols[role];
+            marker.setAttribute("aria-hidden","true");
+            el.append(marker);
+            label.textContent=p.text || p.label || "Status";
+            el.style.setProperty("--chip","var(--"+tones[role]+")");
+        } else el.addEventListener("click", () => dispatch(node.events?.tap));
+        let held = null;
+        function coordinates(e) {
+            const rect = el.getBoundingClientRect();
+            function axis(point, pixels) {
+                const high = pixels - 1;
+                const pos = Math.min(high, Math.max(0, Math.floor(point * pixels)));
+                if (!high || (high > 1 && Math.abs(2 * pos - high) <= 1)) return 0;
+                const raw = Math.round(pos * 65534 / high) - 32767;
+                const zone = p.dead_zone_percent ?? 0;
+                let mag = Math.max(0, Math.round((Math.abs(raw) * 100 - 32767 * zone) / (100 - zone)));
+                if (p.curve === "cubic") mag = Math.round(mag ** 3 / 32767 ** 2);
+                return Math.sign(raw) * mag / 32767;
+            }
+            return {x:axis((e.clientX-rect.left)/rect.width,b.w),
+                    y:axis((e.clientY-rect.top)/rect.height,b.h) * (p.invert_y ? -1 : 1)};
+        }
+        el.addEventListener("pointerdown", e => {
+            if (held === null && (node.events?.press || node.type === "AxisPad")) {
+                held = e.pointerId;
+                el.setPointerCapture(e.pointerId);
+                dispatch(node.events?.press || node.events?.change, coordinates(e));
+            }
+        });
+        el.addEventListener("pointermove", e => {
+            if (node.type === "AxisPad" && held === e.pointerId) dispatch(node.events?.change, coordinates(e));
+        });
+        function release() {
+            if (held === null) return;
+            held = null;
+            if (node.type === "AxisPad" && p.spring_center !== false) dispatch(node.events?.change, {x: 0, y: 0});
+            dispatch(node.events?.release);
+        }
+        for (const event of ["pointerup", "pointercancel", "lostpointercapture"])
+            el.addEventListener(event, e => { if (e.pointerId === held) release(); });
+        if (node.type === "AxisPad" || node.events?.press) view.cancel = release;
+        parent.append(el);
+    }
+
+}
+
+function installPadDrawer(pad) {
+    const entry = document.createElement("button");
+    entry.className = "pad-gestures";
+    entry.textContent = "Gestures";
+    entry.setAttribute("aria-haspopup", "dialog");
+    pad.append(entry);
+    let overlay, background;
+    function close() {
+        if (!overlay) return;
+        overlay.remove();
+        overlay = null;
+        for (const [element, previous] of background) element.inert = previous;
+        entry.focus();
+    }
+    entry.onclick = () => {
+        if (overlay) return;
+        background = Array.from(surface.children, element => [element, element.inert]);
+        for (const [element] of background) element.inert = true;
+        overlay = document.createElement("div");
+        overlay.className = "pad-scrim";
+        const panel = document.createElement("section");
+        panel.className = "pad-drawer";
+        panel.setAttribute("role", "dialog");
+        panel.setAttribute("aria-modal", "true");
+        panel.setAttribute("aria-label", "Touchpad gestures");
+        const dismiss = document.createElement("button");
+        dismiss.textContent = "Close";
+        dismiss.onclick = close;
+        panel.append(dismiss);
+        const title = document.createElement("h2");
+        title.textContent = "Touchpad gestures";
+        panel.append(title);
+        for (const line of ["Slide to move the pointer.", "Tap to click. Tap with two fingers to right-click.",
+                            "Slide two fingers to scroll.", "Tap twice and drag on the second touch. Lift to drop."]) {
+            const text = document.createElement("p");
+            text.textContent = line;
+            panel.append(text);
+        }
+        for (const name of ["Left click", "Right click", "Middle click"]) {
+            const button = document.createElement("button");
+            button.textContent = name;
+            button.disabled = true;
+            panel.append(button);
+        }
+        const status = document.createElement("p");
+        status.textContent = "Connect the USB monitor to use the mouse buttons.";
+        panel.append(status);
+        overlay.onclick = e => { if (e.target === overlay) close(); };
+        overlay.onkeydown = e => {
+            if (e.key === "Escape") close();
+            if (e.key === "Tab") { e.preventDefault(); dismiss.focus(); }
+        };
+        overlay.append(panel);
+        surface.append(overlay);
+        dismiss.focus();
+    };
+    return close;
+}
+
+function openPack() {
+    usbMode = 0;
+    stopDemo();
+    clearInterval(filterTimer);
+    filters.clear(); readings.clear();
+    for (const view of widgets.values()) view.cancel?.();
+    widgets.clear();
+    sample = 0;
+    demo.hidden = !pack.bindings.sources.length;
+    state = {...initial};
+    surface.replaceChildren();
+    document.querySelector("#title").textContent = pack.manifest.title;
+    updateConnections(0);
+    statusLine.textContent = "Offline preview";
+    draw(pack.ui.root,surface);
+    for (const view of widgets.values()) view.show?.();
+    document.querySelector("#home").hidden = !!pack.ui.screens;
+    if (pack.ui.screens) installSwitcher();
+    for (const [name, value] of Object.entries(state)) bind(name, value, initialText.get(name));
+    if (sources.size || pack.bindings.connections.some(c => c.transform === "lowpass")) {
+        refresh();
+        filterTimer = setInterval(refresh, 50);
+    }
+}
+
+function installSwitcher() {
+    const pages = pack.ui.screens.map(id => widgets.get(id).element);
+    const handle = document.createElement("button");
+    handle.className = "screen-handle";
+    handle.textContent = "⌃  Screens";
+    surface.append(handle);
+    let picker = null, pointer = null, startX, startY, moved = false;
+    function select(i) {
+        pages.forEach((page, j) => { page.hidden = i !== j; });
+        for (const view of widgets.values()) {
+            if (view.element.dataset.kind === "ChartViewer") view.show();
+        }
+        if (picker) { picker.remove(); picker = null; }
+        handle.hidden = false;
+    }
+    function open() {
+        if (picker) return;
+        for (const view of widgets.values()) view.cancel?.();
+        pages.forEach(page => { page.hidden = true; });
+        handle.hidden = true;
+        picker = document.createElement("section");
+        picker.className = "screen-picker";
+        picker.setAttribute("aria-label","Screens");
+        const heading = document.createElement("h2");
+        heading.textContent = "Screens";
+        const grid = document.createElement("div");
+        grid.className = "screen-grid";
+        picker.append(heading); picker.append(grid);
+        pack.ui.screens.forEach((id,i) => {
+            const button = document.createElement("button");
+            button.textContent = pack.ui.root.children.find(node => node.id === id).props.title;
+            button.onclick = () => { select(i); handle.focus(); };
+            grid.append(button);
+        });
+        const exit = document.createElement("button");
+        exit.textContent = "Return to KVMpad";
+        exit.onclick = exitPack;
+        picker.append(exit); surface.append(picker);
+        grid.children[0].focus();
+    }
+    handle.addEventListener("pointerdown", e => {
+        if (pointer !== null) return;
+        pointer = e.pointerId; startX = e.clientX; startY = e.clientY; moved = false;
+        handle.setPointerCapture(pointer);
+    });
+    function distance(e) {
+        const side = Math.abs(e.clientX-startX), up = startY-e.clientY;
+        if (side > 8 || Math.abs(up) > 8) moved = true;
+        return {up,side};
+    }
+    handle.addEventListener("pointermove", e => { if (pointer === e.pointerId) distance(e); });
+    for (const type of ["lostpointercapture","pointercancel"])
+        handle.addEventListener(type,e => { if (pointer === e.pointerId) pointer = null; });
+    handle.addEventListener("pointerup", e => {
+        if (pointer !== e.pointerId) return;
+        pointer = null;
+        const {up,side} = distance(e);
+        if (!moved || (up >= 48 && up > side)) open();
+    });
+    handle.onclick = e => { if (e.detail === 0) open(); };
+    select(0);
+}
+
+function exitPack() {
+    stopDemo();
+    clearInterval(filterTimer);
+    filters.clear(); readings.clear();
+    for (const view of widgets.values()) view.cancel?.();
+    widgets.clear();
+    demo.hidden = true;
+    state = {};
+    document.querySelector("#title").textContent = "KVMpad";
+    document.querySelector("#connections").textContent = "";
+    statusLine.textContent = "Offline preview";
+    const recovery = document.createElement("div");
+    recovery.className = "recovery";
+    const reopen = document.createElement("button");
+    reopen.textContent = pack.manifest.title;
+    reopen.onclick = openPack;
+    recovery.append(reopen);
+    surface.replaceChildren(recovery);
+}
+document.querySelector("#home").onclick = exitPack;
+openPack();
+</script>
+</html>

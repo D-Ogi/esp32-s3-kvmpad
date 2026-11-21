@@ -5,6 +5,15 @@ and the full text and rationale are in the ADRs. This file is the traceability i
 
 **ID ranges:** `FR-311`, `FR-7xx` (extension features), `TECH-07x`/`TECH-08x`, `SEC-10x`, tests `AT-EXT-xx`.
 
+The v1.3.1 package retains its own HPE, EXT, BOARD-7B, PACK, BRIDGE, FLIGHT and MAG identifiers.
+The ticket-to-test matrix covers all twenty source documents. [Extension platform](ADR/ADR-040-extension-platform.md)
+
+EXT-031 defines typed bindings, freshness and smoothing for extension authors. [Binding parameters and examples](EXTENSION-BINDINGS.md) · [Firmware renderer](../main/pack_view.c) · [Cross-runtime tests](../test/kvmpack/test_typed_state.py)
+
+MEDIA-01..06 cover H.264 playback from microSD, live H.264, the JPEG baseline and Cinepak 960×540. [Media requirements](ADR/ADR-041-live-media.md)
+
+FR-746 and TECH-078/081 now also track optional Korean, Simplified Chinese and Japanese resources and dictionary lifetime. [Language modules](ADR/ADR-042-optional-languages.md)
+
 | ID | Level | Requirement (summary) | ADR | Task | Component | Tests |
 |---|---|---|---|---|---|---|
 | TECH-070 | SHOULD | `WIFI_PS_NONE` after measurement | 017 | TASK-080 | Wi-Fi (ADR-015) | AT-EXT-01 |
@@ -49,7 +58,7 @@ and the full text and rationale are in the ADRs. This file is the traceability i
 | FR-743 | MUST | keys stay usages; no keymap derived from legends; the DEVICE emits no Unicode through the plain key path | 024 | TASK-070B | `hid_core`, `ui_views` | AT-KEY-01 |
 | FR-744 | SHOULD | "Switch HOST layout" shortcut per host OS (Win+Space / Ctrl+Space / Super+Space) | 024 | TASK-070C | `ui_views` | AT-UI-02 |
 | FR-745 | MUST | CLIENT type text uses the generated tables; active layout from the read-only snapshot field `host_layout` | 024 | TASK-071/105 | CLIENT, `remote_protocol` | AT-EXT-24/25 |
-| FR-746 | MUST | on-device composition: JP flick + romaji with kana→kanji, zh pinyin with candidates, KO 2-set algorithmic; the HOST IME is never required; in the main release | 024 | TASK-072 | `ime_engine`, `ui_views` | AT-EXT-26/27 |
+| FR-746 | MUST | On-device Japanese flick and romaji with kana-to-kanji conversion, Chinese pinyin candidates and Korean two-set composition. Each language may ship as an optional module. | 024, 042 | TASK-072 | `ime_engine`, `ui_views` | AT-EXT-26/27 |
 | FR-747 | MUST | Unicode delivery modes `linux` / `macos` / `windows-hex` / `wincompose` / `host-ime`, chosen in Settings, setup hint per mode | 024 | TASK-071/072 | `kbd_layouts`, `ui_views`, `config_store` | AT-EXT-27 |
 | FR-748 | MUST | one path: typed intents → arbiter; cancellable burst within the 03 §6.5 budget; `RELEASE_ALL` on cancel / mode switch / USB or owner loss | 024 | TASK-050/072 | `hid_core` | AT-EXT-27 |
 | FR-749 | SHOULD | CLIENT type text sends out-of-table characters through the active delivery mode instead of skipping | 024 | TASK-105 | CLIENT | AT-EXT-24 |
@@ -83,5 +92,5 @@ item 3 — the new `pair.*` remote events from ADR-022 require a whitelist, vali
 item 3 — the read-only snapshot field `host_layout` from ADR-024 requires whitelist validation (an enumerated id, never free
 text) and fuzzing (AT-EXT-25); ADR-024 adds no HID source (composition is `LOCAL` input) and no descriptor change.
 
-ADR-024 changes the v1 scope statement of 01 §1.2 by owner decision: an on-screen keyboard with on-device IME for Japanese,
-Simplified Chinese and Korean is **in** the main release; Unicode reaches the HOST through per-OS delivery modes (FR-747).
+ADR-024 includes on-device input for Japanese, Simplified Chinese and Korean in the product scope. The owner approved optional
+language modules on flash or microSD under ADR-042. Installed modules send Unicode through the per-OS delivery modes in FR-747.

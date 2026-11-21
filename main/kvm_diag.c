@@ -253,13 +253,14 @@ void diag_print_lcd_stats(const char *label)
     uint32_t mhz = mean ? (uint32_t)(1000000000ULL / mean) : 0;
     printf("LCD[%s] fbs=%u bounce=%u vsync=%" PRIu32 " mean=%" PRIu32 "us (%" PRIu32 ".%03" PRIu32
            " Hz) min=%" PRIu32 "us max=%" PRIu32 "us late=%" PRIu32 " frames_done=%" PRIu32 " missed=%" PRId32
-           " phase=%" PRIu32 "us [%" PRIu32 "..%" PRIu32 "]\n",
+           " phase=%" PRIu32 "us [%" PRIu32 "..%" PRIu32 "] irq_mask_vsync=0x%x irq_mask_frame=0x%x\n",
            label, st.cfg.num_fbs, st.cfg.bounce_lines, st.vsync_count, mean, mhz / 1000, mhz % 1000,
            st.vsync_count > 1 ? st.vsync_min_us : 0, st.vsync_max_us, st.vsync_late, st.bounce_frames,
            // A frame whose bounce refill fell behind ends in a DMA restart at VSYNC (the 10-line jump) and never
            // reports "frame complete": missed = VSYNC count - completed frames (+-1 at the window edges).
            (int32_t)st.vsync_count - (int32_t)st.bounce_frames,
-           st.phase_last_us, st.phase_min_us == UINT32_MAX ? 0 : st.phase_min_us, st.phase_max_us);
+           st.phase_last_us, st.phase_min_us == UINT32_MAX ? 0 : st.phase_min_us, st.phase_max_us,
+           (unsigned)st.vsync_core_mask, (unsigned)st.frame_core_mask);
 }
 
 // ---- PSRAM load generator ----------------------------------------------------------------------------

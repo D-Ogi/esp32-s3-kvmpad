@@ -90,7 +90,7 @@ void app_main(void)
     // 1. Expander safe state with EXIO5=LOW (USB) confirmed by read-back — before anything else.
     esp_err_t err = board_hal_init();
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "board_hal_init: %s - USB stack NOT started (EXIO5 unconfirmed)", esp_err_to_name(err));
+        ESP_LOGE(TAG, "board_hal_init: %s - USB stack NOT started (expander setup failed)", esp_err_to_name(err));
     }
 
     // 2. USB device immediately after the mux (TECH-030); the HID core is installed first so the
@@ -116,12 +116,13 @@ void app_main(void)
     if (cerr != ESP_OK) {
         ESP_LOGE(TAG, "app_config_start: %s", esp_err_to_name(cerr));
     }
-    {
-        // ADR-020 keep-awake from the saved record (default OFF); Settings re-applies it on every change.
-        static app_config_settings_t ka;
-        if (app_config_settings(&ka, 100)) {
-            (void)hid_dispatch_set_keepalive(ka.keepawake_enabled, ka.keepawake_interval_s);
-        }
+    static app_config_settings_t settings;
+    uint32_t brightness;
+    if (app_config_settings(&settings, 100)) {
+        brightness = settings.brightness;
+        (void)hid_dispatch_set_keepalive(settings.keepawake_enabled, settings.keepawake_interval_s);
+    } else {
+        (void)kvm_config_field_range(KVM_CFG_F_BRIGHTNESS, NULL, NULL, &brightness);
     }
     banner();
 
@@ -133,6 +134,11 @@ void app_main(void)
 #endif
     esp_err_t lerr = err == ESP_OK ? board_lcd_init(&lcd_cfg) : ESP_ERR_INVALID_STATE;
     if (lerr == ESP_OK) {
+        // The 7B expander survives a warm reset. Set its PWM before enabling the backlight.
+        esp_err_t pwm_err = board_hal_backlight_level((uint8_t)brightness);
+        if (pwm_err != ESP_OK) {
+            ESP_LOGE(TAG, "backlight brightness: %s", esp_err_to_name(pwm_err));
+        }
         diag_start(); // touch-sample consumer for `touch capture`; it draws only on an explicit `lcd touch`
 #if CONFIG_KVM_UI_PLATFORM
         esp_err_t uerr = ui_platform_start();
@@ -146,20 +152,19 @@ void app_main(void)
         }
         if (uerr == ESP_OK) {
             // TASK-070A: the product shell (router + MOUSE view); pad gestures and its buttons reach the HOST.
+            ime_glue_claim();
             esp_err_t serr = ui_shell_show();
             if (serr != ESP_OK) {
                 ESP_LOGE(TAG, "ui_shell_show: %s", esp_err_to_name(serr));
-            }
-            // TASK-072: the pinyin decoder and the hanzi font load in the background; the ZH layer enables itself.
-            esp_err_t ierr = ime_glue_start();
-            if (ierr != ESP_OK) {
-                ESP_LOGE(TAG, "ime_glue_start: %s", esp_err_to_name(ierr));
             }
         }
 #else
         diag_show(DIAG_SCREEN_CARD);
 #endif
-        board_hal_backlight(true);
+        esp_err_t bl_err = board_hal_backlight(true);
+        if (bl_err != ESP_OK) {
+            ESP_LOGE(TAG, "backlight enable: %s", esp_err_to_name(bl_err));
+        }
     } else {
         ESP_LOGE(TAG, "LCD init: %s", esp_err_to_name(lerr));
     }

@@ -28,7 +28,12 @@
 #include "hid_dispatch.h"
 #include "kvm_srt_server.h"
 #include "net_status.h"
+#include "pack_receive_wire.h"
+#include "kvmbridge.h"
 #include "nvs.h"
+#if CONFIG_KVM_USB_MONITOR_EVAL
+#include "usb_hid_device.h"
+#endif
 
 static const char *TAG = "remote";
 
@@ -69,6 +74,59 @@ static uint64_t now_ms(void)
 static void bump(void)
 {
     s_view_seq++;
+}
+
+#if CONFIG_KVM_USB_MONITOR_EVAL
+static struct {
+    uint64_t session, requested_ms;
+    uint32_t usb_epoch;
+    bool native;
+} s_display;
+
+static bool queue_display_profile(uint64_t session, const char *serial, bool native)
+{
+    if (strcmp(serial, usb_hid_device_serial()) || !usb_hid_device_monitor_mounted()) return false;
+    usb_hid_status_t usb;
+    usb_hid_device_get_status(&usb);
+    uint64_t now = now_ms();
+    portENTER_CRITICAL(&s_mux);
+    bool accept = !s_display.session && (!s_display.requested_ms || now - s_display.requested_ms >= 2000);
+    if (accept) {
+        s_display.session = session;
+        s_display.requested_ms = now;
+        s_display.usb_epoch = usb.usb_epoch;
+        s_display.native = native;
+    }
+    portEXIT_CRITICAL(&s_mux);
+    return accept;
+}
+
+bool remote_glue_take_display_profile(bool *native)
+{
+    portENTER_CRITICAL(&s_mux);
+    bool pending = s_display.session != 0;
+    uint32_t epoch = s_display.usb_epoch;
+    uint64_t requested = s_display.requested_ms;
+    *native = s_display.native;
+    s_display.session = 0;
+    portEXIT_CRITICAL(&s_mux);
+    if (!pending || now_ms() - requested > 1000 || !usb_hid_device_monitor_mounted()) return false;
+    usb_hid_status_t usb;
+    usb_hid_device_get_status(&usb);
+    kvm_hid_snapshot_t snap;
+    hid_dispatch_get_snapshot(&snap, NULL);
+    return usb.usb_epoch == epoch && !snap.maintenance && snap.owner_kind != OWNER_REMOTE;
+}
+#endif
+
+static void session_disconnected(void *ctx, uint64_t session)
+{
+#if CONFIG_KVM_USB_MONITOR_EVAL
+    portENTER_CRITICAL(&s_mux);
+    if (s_display.session == session) s_display.session = 0;
+    portEXIT_CRITICAL(&s_mux);
+#endif
+    pack_receive_disconnect(ctx, session);
 }
 
 // ---- identity blobs on NVS --------------------------------------------------------------------
@@ -202,6 +260,9 @@ static void h_status(void *ctx, kvm_rp_status_t *out)
     out->wifi_connected = ni.link.ip_present;
     out->owner = snap.owner_kind;
     out->lease_epoch = snap.owner_epoch;
+#if CONFIG_KVM_USB_MONITOR_EVAL
+    copy_name(out->usb_serial, sizeof(out->usb_serial), usb_hid_device_serial());
+#endif
     copy_name(out->device_id, sizeof(out->device_id), s_id != NULL ? s_id->device_name : "kvmpad");
     copy_name(out->fw, sizeof(out->fw), esp_app_get_description()->version);
     app_config_host_layout(out->host_layout, sizeof(out->host_layout));
@@ -469,6 +530,13 @@ esp_err_t remote_glue_start(void)
                                   .approval_cancel = h_approval_cancel,
                                   .client_trusted = h_trusted,
                                   .pair_event = h_pair_event,
+                                  .pack_request = pack_receive_request,
+                                  .pack_disconnect = session_disconnected,
+#if CONFIG_KVM_USB_MONITOR_EVAL
+                                  .display_profile = queue_display_profile,
+#endif
+                                  .host_attach = kvmbridge_host_attach,
+                                  .host_detach = kvmbridge_host_detach,
                                   .ctx = NULL};
     cfg.advertise_mdns = true;
     err = kvm_srt_server_start(&cfg);

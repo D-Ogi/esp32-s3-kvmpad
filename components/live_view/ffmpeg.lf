@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+[scheme:media_static_tables]
+entries:
+    bss -> extern_ram
+    common -> extern_ram
+
+[mapping:media_avcodec]
+archive: libavcodec.a
+entries:
+    if SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY = y:
+        * (media_static_tables)
+
+[mapping:media_avutil]
+archive: libavutil.a
+entries:
+    if SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY = y:
+        * (media_static_tables)

@@ -22,10 +22,12 @@ endif()
 
 enable_testing()
 add_executable(test_touch_router test_touch_router.c
+    ${REPO}/components/ui_touch_bridge/src/local_contacts.c
     ${REPO}/components/ui_touch_bridge/src/touch_router.c
     ${REPO}/components/gesture_engine/src/gesture_engine.c
     ${REPO}/components/touch_input/src/touch_sample.c)
 target_include_directories(test_touch_router PRIVATE
+    ${REPO}/components/ui_touch_bridge/src
     ${REPO}/components/ui_touch_bridge/include ${REPO}/components/gesture_engine/include
     ${REPO}/components/hid_core/include ${REPO}/components/touch_input/include ${REPO}/test/host_unit)
 add_test(NAME test_touch_router COMMAND test_touch_router)

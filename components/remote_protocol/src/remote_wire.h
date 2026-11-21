@@ -37,3 +37,6 @@ void kvm_rp_send_control_revoked(kvm_rp_t *rp, kvm_rp_session_t *s, kvm_rp_revok
 void kvm_rp_send_pong(kvm_rp_t *rp, kvm_rp_session_t *s, bool has_nonce, int64_t nonce,
                       uint64_t reply_to);
 void kvm_rp_send_input_ack(kvm_rp_t *rp, kvm_rp_session_t *s, uint64_t reply_to);
+void kvm_rp_send_ack(kvm_rp_t *rp, kvm_rp_session_t *s, const char *type, uint64_t reply_to);
+void kvm_rp_send_pack_status(kvm_rp_t *rp, kvm_rp_session_t *s, uint64_t reply_to,
+                             const char *state, uint32_t offset);

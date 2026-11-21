@@ -131,9 +131,9 @@ static void print_status(void)
            ime_glue_layer_ready(true) ? "ready" : "off");
     ime_glue_timing_t t;
     if (ime_glue_timing(&t)) {
-        printf("IME glue timing start=%u mount=%u hanzi_font=%u zh=%u kanji_font=%u ja=%u total=%u ms\n",
+        printf("IME glue timing start=%u mount=%u hanzi_font=%u zh=%u kanji_font=%u ja=%u total=%u ms ko=%u ms\n",
                (unsigned)t.start_ms, (unsigned)t.mount_ms, (unsigned)t.hanzi_font_ms, (unsigned)t.zh_ms,
-               (unsigned)t.kanji_font_ms, (unsigned)t.ja_ms, (unsigned)t.total_ms);
+               (unsigned)t.kanji_font_ms, (unsigned)t.ja_ms, (unsigned)t.total_ms, (unsigned)t.ko_ms);
     }
     for (uint32_t i = 0; i < st.count; i++) {
         printf("IME file %.*s offset=0x%x size=%u sha256=%02x%02x%02x%02x... verified=%d\n", (int)IME_DATA_NAME_CAP,

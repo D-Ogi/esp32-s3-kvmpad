@@ -21,6 +21,7 @@ static i2c_master_dev_handle_t s_exp;
 static SemaphoreHandle_t s_lock;
 static StaticSemaphore_t s_lock_buf;
 static uint8_t s_shadow;
+static bool s_initialized;
 static board_hal_stats_t s_stats;
 static portMUX_TYPE s_stats_mux = portMUX_INITIALIZER_UNLOCKED;
 
@@ -102,11 +103,12 @@ esp_err_t board_hal_exio_set(int exio, bool level)
 {
     ESP_RETURN_ON_FALSE(s_bus != NULL, ESP_ERR_INVALID_STATE, TAG, "not initialized");
     uint8_t next;
+    ESP_RETURN_ON_ERROR(board_hal_i2c_lock(100), TAG, "bus lock");
     if (!io_ext_apply(s_shadow, exio, level, &next)) {
+        board_hal_i2c_unlock();
         ESP_LOGE(TAG, "EXIO%d=%d refused (USB_SEL must stay LOW; valid EXIO 1..6)", exio, level);
         return ESP_ERR_NOT_SUPPORTED;
     }
-    ESP_RETURN_ON_ERROR(board_hal_i2c_lock(100), TAG, "bus lock");
     esp_err_t err = exp_output_locked(next);
     board_hal_i2c_unlock();
     return err;
@@ -140,13 +142,20 @@ esp_err_t board_hal_exio_verify(uint8_t *shadow, uint8_t *readback, bool *match)
     return ESP_OK;
 }
 
+static void log_setup_register(const char *name, uint8_t value, esp_err_t err)
+{
+    if (err == ESP_OK) {
+        ESP_LOGE(TAG, "expander safe outputs unconfirmed: %s=0x%02X", name, value);
+    } else {
+        ESP_LOGE(TAG, "expander safe outputs unconfirmed: %s unavailable (%s)", name, esp_err_to_name(err));
+    }
+}
+
 esp_err_t board_hal_init(void)
 {
-    if (s_bus != NULL) {
+    if (s_initialized) {
         return ESP_OK;
     }
-    s_lock = xSemaphoreCreateRecursiveMutexStatic(&s_lock_buf);
-
     const i2c_master_bus_config_t bus_cfg = {
         .i2c_port = BOARD_I2C_PORT,
         .sda_io_num = BOARD_I2C_SDA_GPIO,
@@ -155,8 +164,13 @@ esp_err_t board_hal_init(void)
         .glitch_ignore_cnt = 7,
         .flags.enable_internal_pullup = true,
     };
-    ESP_RETURN_ON_ERROR(i2c_new_master_bus(&bus_cfg, &s_bus), TAG, "i2c bus");
-    ESP_RETURN_ON_ERROR(add_dev(BOARD_EXP_ADDR, &s_exp), TAG, "expander dev");
+    if (!s_bus) {
+        s_lock = xSemaphoreCreateRecursiveMutexStatic(&s_lock_buf);
+        ESP_RETURN_ON_ERROR(i2c_new_master_bus(&bus_cfg, &s_bus), TAG, "i2c bus");
+    }
+    if (!s_exp) {
+        ESP_RETURN_ON_ERROR(add_dev(BOARD_EXP_ADDR, &s_exp), TAG, "expander dev");
+    }
 
     // The expander is a separate MCU that is NOT reset with the ESP32-S3: after a warm reset it
     // still drives the previous levels and was seen to report them for a short time after the
@@ -165,9 +179,12 @@ esp_err_t board_hal_init(void)
     // read-back confirms it; USB is never started without that confirmation.
     uint8_t sh = 0;
     uint8_t rd = 0;
+    uint8_t first_rd = 0;
+    unsigned reads = 0, valid_reads = 0;
+    esp_err_t last_read_error = ESP_OK;
     bool match = false;
     int attempt = 0;
-    for (; attempt < BOARD_EXP_VERIFY_ATTEMPTS && !match; attempt++) {
+    for (; attempt < BOARD_EXP_CONFIG_ATTEMPTS && !match; attempt++) {
         if (attempt > 0) {
             vTaskDelay(pdMS_TO_TICKS(BOARD_EXP_VERIFY_DELAY_MS));
         }
@@ -176,27 +193,58 @@ esp_err_t board_hal_init(void)
         if (err == ESP_OK) {
             err = exp_write_locked(BOARD_EXP_REG_MODE, 0xFF);
         }
-        if (err == ESP_OK) {
-            err = exp_output_locked(io_ext_safe_default());
-        }
         board_hal_i2c_unlock();
+        if (err == ESP_OK) {
+            // The 7B demo lets the expander apply the direction before writing the levels.
+            vTaskDelay(pdMS_TO_TICKS(BOARD_EXP_VERIFY_DELAY_MS));
+            ESP_RETURN_ON_ERROR(board_hal_i2c_lock(100), TAG, "bus lock");
+            err = exp_output_locked(io_ext_safe_default());
+            board_hal_i2c_unlock();
+        }
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "expander 0x%02X safe-state write (attempt %d): %s", BOARD_EXP_ADDR, attempt + 1,
                      esp_err_to_name(err));
             continue;
         }
-        vTaskDelay(pdMS_TO_TICKS(2));
-        if (board_hal_exio_verify(&sh, &rd, &match) != ESP_OK) {
-            match = false;
+        for (unsigned sample = 0; sample < BOARD_EXP_VERIFY_ATTEMPTS && !match; ++sample) {
+            vTaskDelay(pdMS_TO_TICKS(BOARD_EXP_VERIFY_DELAY_MS));
+            ++reads;
+            err = board_hal_exio_verify(&sh, &rd, &match);
+            if (err == ESP_OK) {
+                if (valid_reads == 0) first_rd = rd;
+                ++valid_reads;
+            } else {
+                last_read_error = err;
+                match = false;
+            }
         }
     }
-    ESP_LOGI(TAG, "expander safe state: shadow=0x%02X readback=0x%02X EXIO5(USB_SEL)=%d -> %s (attempt %d/%d)", sh,
-             rd, io_ext_level(rd, BOARD_EXIO_USB_SEL), match ? "verified" : "MISMATCH", attempt,
-             BOARD_EXP_VERIFY_ATTEMPTS);
+    if (valid_reads) {
+        ESP_LOGI(TAG, "expander safe state: shadow=0x%02X readback=0x%02X EXIO5(USB_SEL)=%d -> %s (attempt %d/%d)", sh,
+                 rd, io_ext_level(rd, BOARD_EXIO_USB_SEL), match ? "verified" : "MISMATCH", attempt,
+                 BOARD_EXP_CONFIG_ATTEMPTS);
+    } else {
+        ESP_LOGE(TAG, "expander safe state: readback unavailable (0/%u valid pin samples, attempt %d/%d)", reads,
+                 attempt, BOARD_EXP_CONFIG_ATTEMPTS);
+    }
     if (!match || io_ext_level(rd, BOARD_EXIO_USB_SEL)) {
-        ESP_LOGE(TAG, "EXIO5 is not confirmed LOW (USB); refusing to continue");
+        if (valid_reads) {
+            ESP_LOGE(TAG, "expander input: first=0x%02X last=0x%02X (%u/%u valid pin samples)", first_rd, rd,
+                     valid_reads, reads);
+        }
+        if (last_read_error != ESP_OK) {
+            ESP_LOGE(TAG, "expander input: last read error: %s", esp_err_to_name(last_read_error));
+        }
+        uint8_t mode = 0, output = 0;
+        ESP_RETURN_ON_ERROR(board_hal_i2c_lock(100), TAG, "bus lock");
+        esp_err_t mode_err = exp_read_locked(BOARD_EXP_REG_MODE, &mode);
+        esp_err_t output_err = exp_read_locked(BOARD_EXP_REG_OUTPUT, &output);
+        board_hal_i2c_unlock();
+        log_setup_register("mode", mode, mode_err);
+        log_setup_register("output", output, output_err);
         return ESP_ERR_INVALID_STATE;
     }
+    s_initialized = true;
     return ESP_OK;
 }
 

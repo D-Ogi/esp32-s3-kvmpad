@@ -97,4 +97,12 @@ menu "KVMpad UI platform (TASK-060A)"
         depends on KVM_UI_PLATFORM
         default y
 
+    config KVM_UI_BENCH_TAP
+        bool "Enable synthetic touch in benchmark scenes for board bring-up"
+        depends on KVM_UI_BENCH
+        default n
+        help
+            Select this for bench touch-routing tests. Production images use
+            the GT911 for local actions, including package permission review.
+
 endmenu

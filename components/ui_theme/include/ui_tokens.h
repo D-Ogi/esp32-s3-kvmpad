@@ -128,6 +128,8 @@ extern "C" {
 #define UI_COLOR_SUBTLE    0xA0A3ACu // --subtle: tertiary text
 #define UI_COLOR_INVERSE   0x202126u // primary button / toast surface
 #define UI_COLOR_ON_INVERSE 0xFFFFFFu
+#define UI_COLOR_INVERSE_SUBTLE 0xB9BEC8u // secondary text on the featured command tile
+#define UI_COLOR_INVERSE_PRESSED 0x33343Au
 #define UI_COLOR_CHIP_FEATURED 0x424249u // glyph chip on an inverse surface (reference featured tile)
 
 #define UI_COLOR_ACCENT      0x007AFFu // --accent

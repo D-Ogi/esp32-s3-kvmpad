@@ -4,6 +4,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using KVMpad.Client.Core.Protocol;
 
@@ -86,28 +87,44 @@ public static class DeviceCollator
         var instances = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var services = new Dictionary<string, SrvData>(StringComparer.OrdinalIgnoreCase);
         var texts = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
-        var addresses = new Dictionary<string, List<IPAddress>>(StringComparer.OrdinalIgnoreCase);
+        var addresses = new Dictionary<string, Dictionary<IPAddress, (long TimeMs, int Packet)>>(StringComparer.OrdinalIgnoreCase);
+        int packet = 0;
 
         foreach (MdnsResponse response in responses)
         {
+            packet++;
             if (response.Pointers.TryGetValue(serviceType, out List<string>? pointed))
             {
                 foreach (string instance in pointed)
                     instances.Add(instance);
             }
+            foreach (var (owner, goodbye) in response.WithdrawnServices)
+            {
+                if (services.TryGetValue(owner, out var current) && current.Port == goodbye.Port &&
+                    current.Priority == goodbye.Priority && current.Weight == goodbye.Weight &&
+                    string.Equals(current.Target, goodbye.Target, StringComparison.OrdinalIgnoreCase))
+                    services.Remove(owner);
+            }
             foreach (KeyValuePair<string, SrvData> service in response.Services)
                 services[service.Key] = service.Value;
             foreach (KeyValuePair<string, Dictionary<string, string>> text in response.TextRecords)
                 texts[text.Key] = text.Value;
-            foreach (KeyValuePair<string, List<IPAddress>> address in response.Addresses)
+            foreach (var (owner, withdrawn) in response.WithdrawnAddresses)
+                if (addresses.TryGetValue(owner, out var previous)) previous.Remove(withdrawn);
+            foreach (var (owner, announced) in response.Addresses)
             {
-                if (!addresses.TryGetValue(address.Key, out List<IPAddress>? list))
-                    addresses[address.Key] = list = new List<IPAddress>();
-                foreach (IPAddress item in address.Value)
+                if (!addresses.TryGetValue(owner, out var known))
+                    addresses[owner] = known = [];
+                // A unique RRset may span a burst of packets. Preserve siblings announced in the
+                // preceding second (RFC 6762 §10.2), and prefer the most recent answers for connection.
+                if (response.AddressFlushes.TryGetValue(owner, out var families))
                 {
-                    if (!list.Contains(item))
-                        list.Add(item);
+                    foreach (var (ip, lastSeen) in known)
+                        if (families.Contains(ip.AddressFamily) && response.ReceivedAtMs - lastSeen.TimeMs >= 1000)
+                            known.Remove(ip);
                 }
+                foreach (var ip in announced)
+                    known[ip] = (response.ReceivedAtMs, packet);
             }
         }
 
@@ -135,14 +152,16 @@ public static class DeviceCollator
 
             bool pairing = text is not null && text.TryGetValue("pair", out string? pair) && pair == "1";
 
-            addresses.TryGetValue(service.Target, out List<IPAddress>? deviceAddresses);
+            IReadOnlyList<IPAddress> deviceAddresses = addresses.TryGetValue(service.Target, out var known)
+                ? known.OrderByDescending(item => item.Value.Packet).Select(item => item.Key).ToArray()
+                : Array.Empty<IPAddress>();
 
             devices.Add(new DiscoveredDevice(
                 instance,
                 display,
                 service.Target,
                 service.Port,
-                deviceAddresses ?? (IReadOnlyList<IPAddress>)Array.Empty<IPAddress>(),
+                deviceAddresses,
                 version,
                 pairing));
         }

@@ -27,7 +27,10 @@
 
 #include "hid_core.h"
 #include "hid_keymap.h"
+#include "kvm_control_icons.h"
 #include "ui_overlay.h"
+#include "ui_view_mouse.h"
+#include "ui_view_shortcuts.h"
 #include "ui_theme.h"
 #include "ui_toast.h"
 #include "ui_tokens.h"
@@ -329,64 +332,6 @@ static const char *drawable(lv_obj_t *label, const char *text)
     return ui_theme_drawable(lv_obj_get_style_text_font(label, LV_PART_MAIN), text);
 }
 
-/** The single code point of `s`, or 0 when `s` is empty, malformed or longer than one code point. */
-static uint32_t one_cp(const char *s)
-{
-    const unsigned char *p = (const unsigned char *)s;
-    uint32_t cp;
-    size_t n;
-    if (p[0] < 0x80u) {
-        cp = p[0];
-        n = 1u;
-    } else if ((p[0] & 0xE0u) == 0xC0u) {
-        cp = (uint32_t)(p[0] & 0x1Fu) << 6;
-        n = 2u;
-    } else if ((p[0] & 0xF0u) == 0xE0u) {
-        cp = (uint32_t)(p[0] & 0x0Fu) << 12;
-        n = 3u;
-    } else if ((p[0] & 0xF8u) == 0xF0u) {
-        cp = (uint32_t)(p[0] & 0x07u) << 18;
-        n = 4u;
-    } else {
-        return 0u;
-    }
-    for (size_t i = 1; i < n; i++) {
-        if ((p[i] & 0xC0u) != 0x80u) {
-            return 0u;
-        }
-        cp |= (uint32_t)(p[i] & 0x3Fu) << (6u * (n - 1u - i));
-    }
-    return (cp != 0u && p[n] == '\0') ? cp : 0u;
-}
-
-/**
- * Whether `shift` is just the upper case of `base`, which is what a real keycap prints as one legend instead of
- * two. Only the cased scripts of the legend tables are mapped - Latin, Greek, Cyrillic; everywhere else a layout
- * either repeats the Base level or puts something unrelated on Shift, and the cap then shows both levels.
- */
-static bool case_pair(const char *base, const char *shift)
-{
-    if (base == NULL || shift == NULL || base[0] == '\0' || shift[0] == '\0') {
-        return false;
-    }
-    const uint32_t b = one_cp(base);
-    const uint32_t s = one_cp(shift);
-    if (b == 0u || s == 0u) {
-        return false; // more than one code point: not a letter cap
-    }
-    if (b >= 'a' && b <= 'z') {
-        return s == b - 0x20u;
-    }
-    if ((b >= 0xE0u && b <= 0xFEu && b != 0xF7u) || (b >= 0x3B1u && b <= 0x3C9u) ||
-        (b >= 0x430u && b <= 0x44Fu)) {
-        return s == b - 0x20u; // Latin-1, Greek and basic Cyrillic all keep the 0x20 distance
-    }
-    if (b >= 0x450u && b <= 0x45Fu) {
-        return s == b - 0x50u; // Cyrillic ё and the other extras
-    }
-    return false;
-}
-
 static void set_sub(lv_obj_t *label, const char *text)
 {
     if (label == NULL || text == NULL) {
@@ -461,7 +406,7 @@ static void apply_layout(ui_view_keyboard_t *k)
             // not a character this cap would type).
             set_legend(k, i, s_keys[i].desc.label);
             set_sub(k->sub[i], "");
-        } else if (case_pair(base, shift)) {
+        } else if (kbd_layouts_case_pair(base, shift)) {
             set_legend(k, i, shift); // one legend, as a letter cap is printed
             set_sub(k->sub[i], "");
         } else {
@@ -637,11 +582,16 @@ static const char *lang_block(const ui_view_keyboard_t *k, ui_kbd_lang_t lang)
     if (!k->text_mode_ok) {
         return "Needs a Unicode delivery mode"; // FR-747: host-ime composes on the HOST instead
     }
-    if (lang == UI_KBD_LANG_ZH && k->zh == NULL) {
-        return "No pinyin decoder installed";
-    }
-    if (lang == UI_KBD_LANG_JA && k->ja == NULL) {
-        return "No Japanese decoder installed";
+    const char *missing = NULL;
+    if (lang == UI_KBD_LANG_KO && !ui_theme_has_hangul_font()) missing = "Korean module unavailable";
+    if (lang == UI_KBD_LANG_ZH && k->zh == NULL) missing = "No pinyin decoder installed";
+    if (lang == UI_KBD_LANG_JA && k->ja == NULL) missing = "No Japanese decoder installed";
+    if (missing) {
+        switch (k->module_status[lang]) {
+        case UI_KBD_MODULE_LOADING: return "Loading module...";
+        case UI_KBD_MODULE_FAILED:  return "Load failed. Toggle off/on in Settings.";
+        default:                    return missing;
+        }
     }
     return NULL;
 }
@@ -659,6 +609,14 @@ bool ui_view_keyboard_lang_available(const ui_view_keyboard_t *k, ui_kbd_lang_t 
 const char *ui_view_keyboard_lang_reason(const ui_view_keyboard_t *k, ui_kbd_lang_t lang)
 {
     return k != NULL ? lang_block(k, lang) : "Not available";
+}
+
+void ui_view_keyboard_set_module_status(ui_view_keyboard_t *k, ui_kbd_lang_t lang, ui_kbd_module_status_t status)
+{
+    if (!k || lang == UI_KBD_LANG_EN || (unsigned)lang >= UI_KBD_LANG_COUNT ||
+        k->module_status[lang] == status) return;
+    k->module_status[lang] = status;
+    ui_view_keyboard_refresh_picker(k);
 }
 
 uint8_t ui_view_keyboard_languages(const ui_view_keyboard_t *k)
@@ -679,6 +637,26 @@ lv_obj_t *ui_view_keyboard_lang_pick_button(const ui_view_keyboard_t *k, ui_kbd_
 bool ui_view_keyboard_picker_open(const ui_view_keyboard_t *k)
 {
     return k != NULL && k->lang_card != NULL;
+}
+
+static void restore_language(ui_view_keyboard_t *k);
+
+void ui_view_keyboard_refresh_picker(ui_view_keyboard_t *k)
+{
+    // Installing an optional language module can complete after the keyboard has reopened.
+    if (k && k->root && k->resume.language != UI_KBD_LANG_EN) restore_language(k);
+    if (!ui_view_keyboard_picker_open(k)) return;
+    const ui_kbd_lang_t current = lang_of(k);
+    for (unsigned i = 0; i < UI_KBD_LANG_COUNT; ++i) {
+        lv_obj_t *row = k->pick_btn[i];
+        if (!row) continue;
+        const ui_kbd_lang_t lang = (ui_kbd_lang_t)i;
+        const char *reason = lang_block(k, lang);
+        lv_label_set_text_static(lv_obj_get_child(row, 2), lang == current ? "Current" : reason ? reason : "");
+        ui_action_key_set_checked(row, lang == current);
+        lv_obj_set_disabled(row, reason != NULL);
+        lv_obj_set_clickable(row, reason == NULL);
+    }
 }
 
 const char *ui_view_keyboard_toast_text(const ui_view_keyboard_t *k)
@@ -723,6 +701,31 @@ static void release_held(ui_view_keyboard_t *k, bool from_leave)
 }
 
 static void update_preedit(ui_view_keyboard_t *k);
+
+static const ui_action_key_desc_t mouse_keys[] = {
+    {.label = "Left click", .control_id = UI_CTRL_MOUSE_LEFT, .variant = UI_KEY_NORMAL, .font = UI_FONT_LABEL},
+    {.label = "Right click", .control_id = UI_CTRL_MOUSE_RIGHT, .variant = UI_KEY_NORMAL, .font = UI_FONT_LABEL}
+};
+
+static void hybrid_mouse_edge(uint16_t ctrl, bool pressed, void *ctx)
+{
+    ui_view_keyboard_t *k = ctx;
+    const uint8_t button = ctrl == UI_CTRL_MOUSE_LEFT ? KVM_MOUSE_BTN_LEFT : KVM_MOUSE_BTN_RIGHT;
+    const uint8_t bit = (uint8_t)(1u << (button - 1));
+    if (pressed) {
+        if (k->workspace != UI_KBD_FULL && !k->rail_moving && !k->rail_collapsed && host_mounted(k) && !(k->mouse_held & bit) &&
+            submit(k, UI_ACT_MOUSE_BUTTON_DOWN, ctrl, button)) k->mouse_held |= bit;
+    } else if (k->mouse_held & bit) {
+        k->mouse_held &= (uint8_t)~bit;
+        (void)submit(k, UI_ACT_MOUSE_BUTTON_UP, ctrl, button);
+    }
+}
+
+static void release_workspace(ui_view_keyboard_t *k)
+{
+    release_held(k, true);
+    for (size_t i = 0; i < 2; ++i) hybrid_mouse_edge(mouse_keys[i].control_id, false, k);
+}
 static void zh_clear(ui_view_keyboard_t *k);
 static void zh_render(ui_view_keyboard_t *k);
 static void zh_update(ui_view_keyboard_t *k);
@@ -756,12 +759,16 @@ static void refresh(ui_view_keyboard_t *k)
         if (!host) {
             // The HOST is gone: the owed UP goes out now, as a forced release. Disabling the cap afterwards
             // still emits its own release edge, but the view no longer holds anything, so there is one UP.
-            release_held(k, true);
+            release_workspace(k);
         }
         for (uint32_t i = 0; i < KEY_COUNT; i++) {
             ui_action_key_set_enabled(k->keys[i], host);
         }
         k->keys_enabled = host;
+        for (size_t i = 0; i < 2; ++i) ui_action_key_set_enabled(k->hybrid_buttons[i], host);
+        lv_obj_set_disabled(k->window_shortcut, !host);
+        if (k->router && k->router->hooks.input_area_changed)
+            k->router->hooks.input_area_changed(k->router->hooks.ctx);
     }
     if (k->offline != NULL) {
         lv_obj_set_hidden(k->offline, host);
@@ -905,6 +912,9 @@ static void set_hangul(ui_view_keyboard_t *k, bool on, uint16_t ctrl)
     }
     release_held(k, true);
     if (on) {
+        if (k->preedit != NULL) {
+            lv_obj_set_style_text_font(k->preedit, ui_theme_font(UI_FONT_HANGUL), 0);
+        }
         if (k->converting) {
             set_conv(k, 0u, ctrl); // its text is committed; no modifier could be armed inside it
         } else {
@@ -1638,6 +1648,7 @@ static void drop_conv(ui_view_keyboard_t *k)
 /** Put `lang` in effect. Every switch rule (release held, commit, TEXT_CANCEL) belongs to the two calls below. */
 static void set_lang(ui_view_keyboard_t *k, ui_kbd_lang_t lang, uint16_t ctrl)
 {
+    k->resume.language = UI_KBD_LANG_EN;
     if (lang == lang_of(k)) {
         return;
     }
@@ -1779,14 +1790,12 @@ static bool lang_build(void *ctx, lv_obj_t *card)
     ui_theme_apply(note, UI_STYLE_TEXT_MUTED, LV_STATE_DEFAULT);
     lv_label_set_text_static(note, "Turn languages on in Settings > Keyboard.");
 
-    const ui_kbd_lang_t cur = lang_of(k);
     memset(k->pick_btn, 0, sizeof(k->pick_btn));
     for (uint32_t i = 0; i < UI_KBD_LANG_COUNT; i++) {
         const ui_kbd_lang_t lang = (ui_kbd_lang_t)i;
         if (lang != UI_KBD_LANG_EN && (k->langs & UI_KBD_LANG_BIT(lang)) == 0u) {
             continue; // the picker lists what Settings turned on, nothing else
         }
-        const char *why = lang_block(k, lang);
         lv_obj_t *row = lv_button_create(card);
         if (row == NULL) {
             return false;
@@ -1814,11 +1823,6 @@ static bool lang_build(void *ctx, lv_obj_t *card)
         lv_obj_set_style_text_align(name, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
         lv_obj_t *tail = lv_label_create(row);
         ui_theme_apply(tail, UI_STYLE_TEXT_MUTED, LV_STATE_DEFAULT);
-        lv_label_set_text_static(tail, lang == cur ? "Current" : (why != NULL ? why : ""));
-
-        ui_action_key_set_checked(row, lang == cur);
-        lv_obj_set_disabled(row, why != NULL);
-        lv_obj_set_clickable(row, why == NULL);
         lv_obj_add_event_cb(row, lang_pick_clicked, LV_EVENT_CLICKED, k);
         k->pick_btn[i] = row;
     }
@@ -1849,6 +1853,7 @@ static bool lang_build(void *ctx, lv_obj_t *card)
     lv_obj_add_event_cb(close, lang_close_clicked, LV_EVENT_CLICKED, k);
 
     k->lang_card = card;
+    ui_view_keyboard_refresh_picker(k);
     k->c.picker_opens++;
     return true;
 }
@@ -2165,6 +2170,7 @@ void ui_view_keyboard_set_languages(ui_view_keyboard_t *k, bool ko, bool zh, boo
         return;
     }
     k->langs = mask;
+    if ((mask & UI_KBD_LANG_BIT(k->resume.language)) == 0u) k->resume.language = UI_KBD_LANG_EN;
     const ui_kbd_lang_t cur = lang_of(k);
     if (cur != UI_KBD_LANG_EN && (mask & UI_KBD_LANG_BIT(cur)) == 0u) {
         // Turned off under the user's hands: fall back to English by the ordinary rule - what is composed is
@@ -2209,6 +2215,7 @@ void ui_view_keyboard_set_conv_engine(ui_view_keyboard_t *k, uint8_t layer, cons
         engine->reset(engine->ctx);
     }
     zh_update(k);
+    ui_view_keyboard_refresh_picker(k);
 }
 
 void ui_view_keyboard_set_zh_engine(ui_view_keyboard_t *k, const ui_kbd_conv_engine_t *engine)
@@ -2222,6 +2229,7 @@ void ui_view_keyboard_set_text_mode(ui_view_keyboard_t *k, bool unicode_delivery
         return;
     }
     k->text_mode_ok = unicode_delivery;
+    if (!unicode_delivery) k->resume.language = UI_KBD_LANG_EN;
     if (!unicode_delivery && k->hangul) {
         kvm_hangul_reset(&k->ime); // host-ime cannot carry it: discard rather than send something else
         text_cancel(k, 0u);
@@ -2237,6 +2245,7 @@ void ui_view_keyboard_set_text_mode(ui_view_keyboard_t *k, bool unicode_delivery
         zh_update(k);
     }
     refresh(k);
+    ui_view_keyboard_refresh_picker(k);
 }
 
 // ---- input ---------------------------------------------------------------------------------
@@ -2247,7 +2256,6 @@ static void set_fn_layer(ui_view_keyboard_t *k, bool on)
     }
     release_held(k, true); // the layer must never be swapped under a key that is still down
     k->fn_layer = on;
-    k->c.fn_switches++;
     apply_rows(k);
     for (uint32_t i = 0; i < KEY_COUNT; i++) {
         if (s_keys[i].local == LOCAL_FN) {
@@ -2256,12 +2264,51 @@ static void set_fn_layer(ui_view_keyboard_t *k, bool on)
     }
 }
 
+// The old composition was discarded on leave. Restore only the visible layout, without replaying
+// a key, pressing the Fn cap or submitting an IME switch to the domain.
+static void restore_language(ui_view_keyboard_t *k)
+{
+    const ui_kbd_lang_t lang = k->resume.language;
+    if (lang == UI_KBD_LANG_EN || lang_block(k, lang) != NULL) return;
+    k->resume.language = UI_KBD_LANG_EN;
+    k->hangul = lang == UI_KBD_LANG_KO;
+    if (k->hangul) {
+        lv_obj_set_style_text_font(k->preedit, ui_theme_font(UI_FONT_HANGUL), 0);
+        lv_obj_set_hidden(k->row_compose, false);
+        update_preedit(k);
+    } else {
+        k->converting = true;
+        k->conv_layer = lang == UI_KBD_LANG_JA ? UI_KBD_LAYER_JA : UI_KBD_LAYER_ZH;
+        k->conv = lang == UI_KBD_LANG_JA ? k->ja : k->zh;
+        k->flick = lang == UI_KBD_LANG_JA && k->resume.flick;
+        apply_strip_font(k);
+        show_zh_strip(k, true);
+        apply_rows(k);
+        zh_render(k);
+    }
+    refresh(k);
+}
+
+void ui_view_keyboard_remember_layers(ui_view_keyboard_t *k)
+{
+    if (!k || !k->root) return;
+    k->resume.fn = k->fn_layer;
+    if (k->resume.language == UI_KBD_LANG_EN) {
+        k->resume.language = lang_of(k);
+        k->resume.flick = k->flick;
+    }
+    // on_leave already released the held key and discarded any composition.
+    k->hangul = false;
+    k->converting = false;
+}
+
 static void key_sink(uint16_t control_id, bool pressed, void *user_data)
 {
     ui_view_keyboard_t *k = user_data;
     if (k == NULL || control_id < UI_CTRL_KBD_BASE) {
         return;
     }
+    if (pressed) k->resume.language = UI_KBD_LANG_EN; // new input wins over a delayed module restore
     if (control_id >= UI_CTRL_KBD_FLICK && control_id <= UI_CTRL_KBD_FLICK + FLICK_FN_ABC) {
         if (pressed && k->converting && k->conv_layer == UI_KBD_LAYER_JA && host_mounted(k)) {
             flick_fn(k, control_id); // taps only, as on the strip
@@ -2286,6 +2333,7 @@ static void key_sink(uint16_t control_id, bool pressed, void *user_data)
     if (s_keys[idx].local == LOCAL_FN) { // "F1-F12": a local UI layer, never a HID key (FR-207)
         if (pressed) {
             set_fn_layer(k, !k->fn_layer);
+            k->c.fn_switches++;
         }
         return;
     }
@@ -2431,6 +2479,393 @@ static lv_obj_t *make_offline(lv_obj_t *root)
     return card;
 }
 
+static lv_obj_t *workspace_group(lv_obj_t *parent)
+{
+    lv_obj_t *group = lv_obj_create(parent);
+    if (group) {
+        lv_obj_remove_style_all(group);
+        lv_obj_set_scrollable(group, false);
+        lv_obj_set_clickable(group, false);
+        lv_obj_set_style_pad_gap(group, UI_SPACE_XS, 0);
+    }
+    return group;
+}
+
+static lv_obj_t *workspace_button(lv_obj_t *parent, const char *caption, ui_btn_variant_t style)
+{
+    lv_obj_t *button = lv_button_create(parent);
+    if (!button) return NULL;
+    lv_obj_remove_style_all(button);
+    ui_theme_apply_button(button, style);
+    lv_obj_t *label = lv_label_create(button);
+    if (!label) return NULL;
+    lv_label_set_text_static(label, caption);
+    lv_obj_center(label);
+    return button;
+}
+
+static bool pad_above(ui_kbd_workspace_t workspace)
+{
+    return workspace == UI_KBD_PAD_ABOVE || workspace == UI_KBD_PAD_ABOVE_BUTTONS_LEFT;
+}
+
+static bool pad_beside(ui_kbd_workspace_t workspace)
+{
+    return workspace == UI_KBD_PAD_LEFT || workspace == UI_KBD_PAD_RIGHT;
+}
+
+#define DRAWER_WIDTH (4 * UI_TOUCH_COMFORT)
+
+static void drawer_width(void *ctx, int32_t width)
+{
+    ui_view_keyboard_t *k = ctx;
+    lv_obj_set_width(k->hybrid_rail, width);
+}
+
+static void drawer_grip(ui_view_keyboard_t *k)
+{
+    const bool left = k->workspace == UI_KBD_PAD_ABOVE_BUTTONS_LEFT;
+    bool closed = k->rail_collapsed && !k->rail_moving;
+    lv_obj_set_size(k->rail_handle, UI_TOUCH_MIN, closed ? lv_pct(100) : UI_TOUCH_PREFERRED);
+    lv_obj_align(k->rail_handle, left ? LV_ALIGN_BOTTOM_RIGHT : LV_ALIGN_BOTTOM_LEFT,
+                 closed ? 0 : (left ? -UI_SPACE_XS : UI_SPACE_XS), closed ? 0 : -UI_SPACE_XS);
+    lv_label_set_text_static(lv_obj_get_child(k->rail_handle, 0),
+                             left == k->rail_collapsed ? LV_SYMBOL_RIGHT : LV_SYMBOL_LEFT);
+}
+
+static void notify_pad(ui_view_keyboard_t *k)
+{
+    if (k->router && k->router->hooks.input_area_changed)
+        k->router->hooks.input_area_changed(k->router->hooks.ctx);
+}
+
+static void drawer_finished(lv_anim_t *a)
+{
+    ui_view_keyboard_t *k = lv_anim_get_user_data(a);
+    k->rail_moving = false;
+    lv_obj_set_hidden(k->rail_body, k->rail_collapsed);
+    drawer_grip(k);
+    notify_pad(k);
+}
+
+static void toggle_drawer(ui_view_keyboard_t *k)
+{
+    if (!pad_above(k->workspace) || k->rail_moving || ui_router_active(k->router) != UI_VIEW_KEYBOARD ||
+        ui_overlay_top(k->router) != UI_OVERLAY_NONE) return;
+    k->rail_moving = true;
+    release_workspace(k);
+    if (k->router->hooks.cancel_input)
+        k->router->hooks.cancel_input(k->router->hooks.ctx, UI_CANCEL_VIEW_CHANGE);
+    notify_pad(k);
+    k->rail_collapsed = !k->rail_collapsed;
+    lv_obj_set_hidden(k->rail_body, false);
+    drawer_grip(k);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, k);
+    lv_anim_set_user_data(&a, k);
+    lv_anim_set_exec_cb(&a, drawer_width);
+    lv_anim_set_values(&a, lv_obj_get_width(k->hybrid_rail), k->rail_collapsed ? UI_TOUCH_MIN : DRAWER_WIDTH);
+    lv_anim_set_duration(&a, 160);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_completed_cb(&a, drawer_finished);
+    if (!lv_anim_start(&a)) {
+        drawer_width(k, k->rail_collapsed ? UI_TOUCH_MIN : DRAWER_WIDTH);
+        drawer_finished(&a);
+    }
+}
+
+static void drawer_input(lv_event_t *e)
+{
+    ui_view_keyboard_t *k = lv_event_get_user_data(e);
+    lv_event_code_t code = lv_event_get_code(e);
+    if (code == LV_EVENT_SHORT_CLICKED) {
+        if (!k->rail_swiped) toggle_drawer(k);
+        return;
+    }
+    lv_indev_t *pointer = lv_indev_active();
+    if (!pointer) return;
+    lv_point_t p;
+    lv_indev_get_point(pointer, &p);
+    if (code == LV_EVENT_PRESSED) {
+        k->rail_press = p;
+        k->rail_swiped = false;
+    } else if (code == LV_EVENT_PRESSING && !k->rail_swiped) {
+        int32_t dx = p.x - k->rail_press.x, dy = p.y - k->rail_press.y;
+        if (LV_ABS(dx) < UI_FLICK_MIN && LV_ABS(dy) < UI_FLICK_MIN) return;
+        k->rail_swiped = true;
+        const bool left = k->workspace == UI_KBD_PAD_ABOVE_BUTTONS_LEFT;
+        if (LV_ABS(dx) > LV_ABS(dy) && ((dx > 0) == (left == k->rail_collapsed)))
+            toggle_drawer(k);
+    }
+}
+
+static void arrange_workspace(ui_view_keyboard_t *k)
+{
+    const bool beside = pad_beside(k->workspace);
+    const bool above = pad_above(k->workspace);
+    // The JIS and Korean bottom rows add named keys. Give each name enough room
+    // before distributing the remaining width to Space and the other keys.
+    for (uint32_t i = 0; i < KEY_COUNT; ++i) {
+        const kbd_cap_t *cap = &s_keys[i];
+        if (cap->row != ROW_BOTTOM || !cap->desc.label || cap->usage == KVM_KEY_SPACE) continue;
+        lv_obj_t *key = k->keys[i];
+        int32_t min_width = UI_TOUCH_MIN;
+        if (beside) {
+            lv_point_t text_size;
+            lv_text_get_size(&text_size, cap->desc.label, ui_theme_font(cap->desc.font),
+                             lv_obj_get_style_text_letter_space(key, 0), 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+            min_width = LV_MAX(min_width, text_size.x + 2 * (UI_SPACE_XS + UI_BORDER_W));
+        }
+        lv_obj_set_style_min_width(key, min_width, 0);
+    }
+    lv_obj_set_style_pad_top(k->root, above ? 0 : UI_SPACE_S, 0);
+    lv_obj_set_flex_flow(k->root, beside ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_size(k->field, beside ? 0 : lv_pct(100), beside ? lv_pct(100) : 0);
+    lv_obj_move_to_index(k->hybrid_panel, k->workspace == UI_KBD_PAD_RIGHT ? 1 : 0);
+    lv_obj_set_hidden(k->hybrid_panel, k->workspace == UI_KBD_FULL);
+    lv_obj_set_flex_flow(k->hybrid_panel, beside ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
+    lv_obj_set_size(k->hybrid_panel, beside ? lv_pct(24) : lv_pct(100), beside ? lv_pct(100) : lv_pct(36));
+    lv_obj_set_size(k->hybrid_pad, beside ? lv_pct(100) : 0, beside ? 0 : lv_pct(100));
+    lv_obj_move_to_index(k->hybrid_rail, k->workspace == UI_KBD_PAD_ABOVE_BUTTONS_LEFT ? 0 : 1);
+    lv_anim_delete(k, drawer_width);
+    k->rail_moving = false;
+    k->rail_collapsed = false;
+    lv_obj_set_size(k->hybrid_rail, beside ? lv_pct(100) : DRAWER_WIDTH, beside ? UI_TOUCH_COMFORT : lv_pct(100));
+    lv_obj_set_size(k->rail_body, above ? DRAWER_WIDTH : lv_pct(100), lv_pct(100));
+    lv_obj_set_align(k->rail_body, k->workspace == UI_KBD_PAD_ABOVE_BUTTONS_LEFT ? LV_ALIGN_RIGHT_MID : LV_ALIGN_LEFT_MID);
+    lv_obj_set_hidden(k->rail_body, false);
+    lv_obj_set_hidden(k->rail_handle, !above);
+    lv_obj_set_state_user_2(k->rail_body, above);
+    lv_obj_set_style_pad_left(k->hybrid_tools, above && k->workspace == UI_KBD_PAD_ABOVE ? UI_TOUCH_MIN + UI_SPACE_XS : 0, 0);
+    lv_obj_set_style_pad_right(k->hybrid_tools, above && k->workspace == UI_KBD_PAD_ABOVE_BUTTONS_LEFT ? UI_TOUCH_MIN + UI_SPACE_XS : 0, 0);
+    drawer_grip(k);
+    for (size_t i = 0; i < 3; ++i)
+        lv_obj_set_hidden(lv_obj_get_parent(k->rail_nav[2*i]), !above);
+    lv_obj_set_hidden(k->rail_nav[5], !k->extensions_entry);
+    lv_obj_set_hidden(k->window_shortcut, !beside);
+}
+
+bool ui_view_keyboard_select_workspace(ui_view_keyboard_t *k, ui_kbd_workspace_t workspace)
+{
+    if (!k || !k->root || (unsigned)workspace >= UI_KBD_WORKSPACE_COUNT ||
+        ui_router_active(k->router) != UI_VIEW_KEYBOARD) return false;
+    if (ui_overlay_top(k->router) != UI_OVERLAY_KBD_WORKSPACE &&
+        (ui_overlay_top(k->router) != UI_OVERLAY_NONE || !ui_overlay_show(k->router, UI_OVERLAY_KBD_WORKSPACE)))
+        return false;
+    k->workspace = workspace;
+    arrange_workspace(k);
+    ui_router_set_full_height(k->router, pad_above(workspace));
+    ui_overlay_dismiss(k->router);
+    return true;
+}
+
+static void choose_workspace(lv_event_t *e)
+{
+    ui_view_keyboard_t *k = lv_event_get_user_data(e);
+    for (unsigned i = 0; i < UI_KBD_WORKSPACE_COUNT; ++i) {
+        if (k->workspace_choices[i] == lv_event_get_current_target_obj(e)) {
+            (void)ui_view_keyboard_select_workspace(k, (ui_kbd_workspace_t)i);
+            return;
+        }
+    }
+    ui_overlay_dismiss(k->router);
+}
+
+static bool workspace_picker(void *ctx, lv_obj_t *card)
+{
+    ui_view_keyboard_t *k = ctx;
+    static const char *const names[] = {"Full keyboard", "Buttons on right", "Touchpad on left", "Touchpad on right", "Buttons on left"};
+    if (!k->root) return false;
+    release_workspace(k);
+    lv_obj_remove_style_all(card);
+    ui_theme_apply(card, UI_STYLE_CARD, LV_STATE_DEFAULT);
+    lv_obj_set_size(card, UI_MODAL_W, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_all(card, UI_MODAL_PAD, 0);
+    lv_obj_set_style_pad_row(card, UI_SPACE_S, 0);
+    lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+    lv_obj_center(card);
+    lv_obj_t *title = lv_label_create(card);
+    if (!title) return false;
+    ui_theme_apply(title, UI_STYLE_TEXT_HEADING, 0);
+    lv_label_set_text_static(title, "Keyboard workspace");
+    lv_obj_t *choices[UI_KBD_WORKSPACE_COUNT];
+    static const ui_kbd_workspace_t order[] = {UI_KBD_FULL, UI_KBD_PAD_LEFT, UI_KBD_PAD_RIGHT,
+                                                UI_KBD_PAD_ABOVE_BUTTONS_LEFT, UI_KBD_PAD_ABOVE};
+    lv_obj_t *sides = NULL;
+    for (size_t n = 0; n < UI_KBD_WORKSPACE_COUNT; ++n) {
+        ui_kbd_workspace_t i = order[n];
+        if (pad_above(i) && !sides) {
+            lv_obj_t *label = lv_label_create(card);
+            if (!label) return false;
+            ui_theme_apply(label, UI_STYLE_TEXT_BODY, 0);
+            lv_label_set_text_static(label, "Touchpad at top edge");
+            sides = make_row(card, UI_TOUCH_COMFORT);
+            if (!sides) return false;
+        }
+        choices[i] = workspace_button(sides ? sides : card, names[i], i == k->workspace ? UI_BTN_PRIMARY : UI_BTN_SECONDARY);
+        if (!choices[i]) return false;
+        lv_obj_set_size(choices[i], sides ? 0 : lv_pct(100), UI_TOUCH_COMFORT);
+        if (sides) lv_obj_set_flex_grow(choices[i], 1);
+        if (i == (unsigned)k->workspace) {
+            lv_obj_t *check = lv_label_create(choices[i]);
+            if (!check) return false;
+            lv_label_set_text_static(check, LV_SYMBOL_OK);
+            lv_obj_align(check, LV_ALIGN_LEFT_MID, UI_SPACE_S, 0);
+        }
+        lv_obj_add_event_cb(choices[i], choose_workspace, LV_EVENT_SHORT_CLICKED, k);
+    }
+    lv_obj_t *close = workspace_button(card, "Cancel", UI_BTN_QUIET);
+    if (!close) return false;
+    lv_obj_set_size(close, lv_pct(100), UI_TOUCH_MIN);
+    lv_obj_add_event_cb(close, choose_workspace, LV_EVENT_SHORT_CLICKED, k);
+    memcpy(k->workspace_choices, choices, sizeof(choices));
+    return true;
+}
+
+static void workspace_closed(void *ctx)
+{
+    ui_view_keyboard_t *k = ctx;
+    memset(k->workspace_choices, 0, sizeof(k->workspace_choices));
+}
+
+static void open_workspace(lv_event_t *e)
+{
+    ui_view_keyboard_t *k = lv_event_get_user_data(e);
+    if (k->router) ui_overlay_show(k->router, UI_OVERLAY_KBD_WORKSPACE);
+}
+
+static void switch_window(lv_event_t *e)
+{
+    ui_view_keyboard_t *k = lv_event_get_user_data(e);
+    if (host_mounted(k) && pad_beside(k->workspace))
+        (void)submit(k, UI_ACT_SHORTCUT_REQUEST, UI_CTRL_SHORTCUT_BASE + KVM_CHORD_ALT_TAB, KVM_CHORD_ALT_TAB);
+}
+
+static void rail_clicked(lv_event_t *e)
+{
+    ui_view_keyboard_t *k = lv_event_get_user_data(e);
+    if (k->rail_moving || k->rail_collapsed) return;
+    lv_obj_t *button = lv_event_get_current_target_obj(e);
+    static const ui_action_type_t actions[] = {UI_ACT_NAVIGATE, UI_ACT_NAVIGATE, UI_ACT_OPEN_HOST_DETAILS,
+                                               UI_ACT_OPEN_CLIENT_DETAILS, UI_ACT_OPEN_SETTINGS};
+    for (unsigned i = 0; i < sizeof(actions) / sizeof(actions[0]); ++i) {
+        if (button == k->rail_nav[i]) {
+            (void)submit(k, actions[i], 0, i == 1 ? UI_VIEW_SHORTCUTS : UI_VIEW_MOUSE);
+            return;
+        }
+    }
+    if (button == k->rail_nav[5] && k->extensions_entry)
+        lv_obj_send_event(k->extensions_entry, LV_EVENT_CLICKED, NULL);
+}
+
+static void rail_status_changed(lv_observer_t *observer, lv_subject_t *subject)
+{
+    const ui_status_desc_t *desc = lv_observer_get_user_data(observer);
+    lv_obj_t *label = lv_observer_get_target_obj(observer);
+    int32_t value = lv_subject_get_int(subject);
+    lv_label_set_text_static(label, ui_status_item_text_of(desc, value));
+    lv_obj_set_style_text_color(label, ui_theme_severity_color(ui_status_item_severity_of(desc, value)), 0);
+}
+
+static bool make_hybrid_panel(ui_view_keyboard_t *k, lv_obj_t *root)
+{
+    k->hybrid_panel = workspace_group(root);
+    if (!k->hybrid_panel) return false;
+    k->hybrid_pad = workspace_group(k->hybrid_panel);
+    k->hybrid_rail = workspace_group(k->hybrid_panel);
+    if (!k->hybrid_pad || !k->hybrid_rail) return false;
+    k->rail_body = workspace_group(k->hybrid_rail);
+    if (!k->rail_body) return false;
+    ui_theme_apply(k->rail_body, UI_STYLE_DRAWER_SHELL, LV_STATE_USER_2);
+    lv_obj_set_flex_flow(k->rail_body, LV_FLEX_FLOW_COLUMN);
+    static const char *const labels[] = {"Home", "Shortcuts", "Host", "Client", "Settings", "Extensions"};
+    static const lv_image_dsc_t *const masks[] = {&kvm_icon_home, &kvm_icon_shortcuts, &kvm_icon_host,
+                                                  &kvm_icon_client, &kvm_icon_settings, &kvm_icon_extensions};
+    for (unsigned row = 0; row < 3; ++row) {
+        lv_obj_t *buttons = make_row(k->rail_body, 0);
+        if (!buttons) return false;
+        for (unsigned c = 0; c < 2; ++c) {
+            unsigned i = 2 * row + c;
+            lv_obj_t *b = workspace_button(buttons, labels[i], UI_BTN_SECONDARY);
+            if (!b) return false;
+            ui_theme_apply(b, UI_STYLE_DRAWER_TILE, 0);
+            ui_theme_apply(b, UI_STYLE_CONTROL_SELECTED, LV_STATE_PRESSED);
+            ui_theme_apply(b, UI_STYLE_FOCUS, LV_STATE_FOCUS_KEY);
+            lv_obj_t *name = lv_obj_get_child(b, 0);
+            lv_obj_set_style_text_font(name, ui_theme_font(UI_FONT_LABEL), 0);
+            lv_obj_t *mask = ui_theme_control_mask(b, masks[i]);
+            if (!mask) return false;
+            ui_theme_apply(mask, UI_STYLE_DRAWER_MASK, 0);
+            if (row == 1 && k->rail_status[c]) {
+                ui_theme_apply(b, UI_STYLE_DRAWER_STATUS, 0);
+                lv_obj_align(mask, LV_ALIGN_CENTER, -UI_SPACE_XXL, -UI_SPACE_S);
+                lv_obj_align(name, LV_ALIGN_CENTER, UI_SPACE_M, -UI_SPACE_S);
+                lv_obj_t *status = lv_label_create(b);
+                if (!status) return false;
+                lv_obj_set_style_text_font(status, ui_theme_font(UI_FONT_LABEL), 0);
+                lv_obj_align(status, LV_ALIGN_CENTER, 0, UI_SPACE_M);
+                lv_subject_add_observer_obj(ui_store_subject(k->store, c ? UI_SUBJ_CLIENT : UI_SUBJ_HOST_USB),
+                                            rail_status_changed, status, (void *)k->rail_status[c]);
+            } else {
+                lv_obj_align(mask, LV_ALIGN_CENTER, 0, -UI_SPACE_S);
+                lv_obj_align(name, LV_ALIGN_CENTER, 0, UI_SPACE_M);
+            }
+            lv_obj_set_size(b, 0, lv_pct(100));
+            lv_obj_set_flex_grow(b, 1);
+            lv_obj_add_event_cb(b, rail_clicked, LV_EVENT_SHORT_CLICKED, k);
+            k->rail_nav[i] = b;
+        }
+    }
+    k->hybrid_tools = make_row(k->rail_body, 0);
+    if (!k->hybrid_tools) return false;
+    k->rail_handle = workspace_button(k->hybrid_rail, LV_SYMBOL_RIGHT, UI_BTN_SECONDARY);
+    if (!k->rail_handle) return false;
+    ui_theme_apply(k->rail_handle, UI_STYLE_DRAWER_GRIP, 0);
+    ui_theme_apply(k->rail_handle, UI_STYLE_FOCUS, LV_STATE_FOCUS_KEY);
+    lv_obj_set_press_lock(k->rail_handle, true);
+    lv_obj_add_event_cb(k->rail_handle, drawer_input, LV_EVENT_PRESSED, k);
+    lv_obj_add_event_cb(k->rail_handle, drawer_input, LV_EVENT_PRESSING, k);
+    lv_obj_add_event_cb(k->rail_handle, drawer_input, LV_EVENT_SHORT_CLICKED, k);
+    ui_theme_apply(k->hybrid_pad, UI_STYLE_CARD, 0);
+    ui_theme_touch_surface(k->hybrid_pad);
+    lv_obj_set_flex_grow(k->hybrid_pad, 1);
+    lv_obj_t *icon = lv_image_create(k->hybrid_pad);
+    lv_obj_t *title = lv_label_create(k->hybrid_pad);
+    lv_obj_t *hint = lv_label_create(k->hybrid_pad);
+    if (!icon || !title || !hint) return false;
+    lv_image_set_src(icon, &kvm_icon_mouse);
+    lv_image_set_inner_align(icon, LV_IMAGE_ALIGN_CENTER);
+    lv_obj_set_size(icon, UI_TOUCH_MIN, UI_TOUCH_MIN);
+    lv_obj_set_clickable(icon, false);
+    ui_theme_apply(icon, UI_STYLE_TOUCH_CONTACT, 0);
+    lv_obj_align(icon, LV_ALIGN_CENTER, 0, -UI_SPACE_XXL);
+    ui_theme_apply(title, UI_STYLE_TEXT_HEADING, 0);
+    lv_label_set_text_static(title, "Touchpad");
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, UI_SPACE_L);
+    ui_theme_apply(hint, UI_STYLE_TEXT_MUTED, 0);
+    lv_label_set_text_static(hint, "Two fingers to scroll");
+    lv_obj_align(hint, LV_ALIGN_CENTER, 0, UI_SPACE_L + UI_SPACE_XXL);
+    for (size_t i = 0; i < 2; ++i) {
+        k->hybrid_buttons[i] = ui_action_key_create(k->hybrid_tools, &mouse_keys[i], &k->mouse_sink);
+        if (!k->hybrid_buttons[i]) return false;
+        lv_obj_set_style_pad_hor(k->hybrid_buttons[i], 0, 0);
+        lv_obj_set_size(k->hybrid_buttons[i], 0, lv_pct(100));
+        lv_obj_set_flex_grow(k->hybrid_buttons[i], 1);
+    }
+    k->window_shortcut = workspace_button(k->hybrid_panel, "Switch window", UI_BTN_SECONDARY);
+    if (!k->window_shortcut) return false;
+    lv_obj_set_size(k->window_shortcut, lv_pct(100), UI_TOUCH_COMFORT);
+    lv_obj_add_event_cb(k->window_shortcut, switch_window, LV_EVENT_SHORT_CLICKED, k);
+    return true;
+}
+
+static lv_obj_t *hybrid_pad_obj(void *ctx)
+{
+    ui_view_keyboard_t *k = ctx;
+    return k->root && !k->rail_moving && k->workspace != UI_KBD_FULL && host_mounted(k) ? k->hybrid_pad : NULL;
+}
+
 static lv_obj_t *create_cb(void *ctx, lv_obj_t *slot)
 {
     ui_view_keyboard_t *k = ctx;
@@ -2446,9 +2881,17 @@ static lv_obj_t *create_cb(void *ctx, lv_obj_t *slot)
     lv_obj_set_flex_flow(root, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scrollable(root, false);
     lv_obj_set_clickable(root, false);
+    lv_obj_set_style_pad_column(root, UI_SPACE_S, 0);
+    if (!make_hybrid_panel(k, root) || !(k->field = workspace_group(root))) {
+        lv_obj_delete(root);
+        return NULL;
+    }
+    lv_obj_t *field = k->field;
+    lv_obj_set_flex_grow(field, 1);
+    lv_obj_set_flex_flow(field, LV_FLEX_FLOW_COLUMN);
 
     // KO layer strip (FR-746): the preedit, shown only while the layer is on (Flex skips a hidden row).
-    lv_obj_t *compose = make_row(root, UI_TOUCH_MIN);
+    lv_obj_t *compose = make_row(field, UI_TOUCH_MIN);
     if (compose == NULL) {
         lv_obj_delete(root);
         return NULL;
@@ -2466,7 +2909,7 @@ static lv_obj_t *create_cb(void *ctx, lv_obj_t *slot)
     lv_obj_set_hidden(compose, true);
 
     // ZH layer strip (FR-746): the input, then the candidates and the paging keys, shown only while it is on.
-    lv_obj_t *zh = make_row(root, UI_TOUCH_PREFERRED);
+    lv_obj_t *zh = make_row(field, UI_TOUCH_PREFERRED);
     if (zh == NULL) {
         lv_obj_delete(root);
         return NULL;
@@ -2505,13 +2948,13 @@ static lv_obj_t *create_cb(void *ctx, lv_obj_t *slot)
     lv_obj_set_hidden(zh, true);
 
     lv_obj_t *rows[ROW_COUNT];
-    rows[ROW_UTIL] = make_row(root, UTIL_ROW_H);
-    rows[ROW_NUMBER] = make_row(root, 0);
-    rows[ROW_FN] = make_row(root, 0);
-    rows[ROW_TOP] = make_row(root, 0);
-    rows[ROW_MID] = make_row(root, 0);
-    rows[ROW_LOW] = make_row(root, 0);
-    rows[ROW_BOTTOM] = make_row(root, 0);
+    rows[ROW_UTIL] = make_row(field, UTIL_ROW_H);
+    rows[ROW_NUMBER] = make_row(field, 0);
+    rows[ROW_FN] = make_row(field, 0);
+    rows[ROW_TOP] = make_row(field, 0);
+    rows[ROW_MID] = make_row(field, 0);
+    rows[ROW_LOW] = make_row(field, 0);
+    rows[ROW_BOTTOM] = make_row(field, 0);
     for (int i = 0; i < (int)ROW_COUNT; i++) {
         if (rows[i] == NULL) {
             lv_obj_delete(root);
@@ -2572,7 +3015,7 @@ static lv_obj_t *create_cb(void *ctx, lv_obj_t *slot)
     lv_obj_set_hidden(hint, true);
 
     // JA flick pad: four rows in the place of the number and letter rows (Flex grow 4 for the 4 rows it hides).
-    lv_obj_t *pad = lv_obj_create(root);
+    lv_obj_t *pad = lv_obj_create(field);
     if (pad == NULL) {
         lv_obj_delete(root);
         return NULL;
@@ -2684,7 +3127,15 @@ static lv_obj_t *create_cb(void *ctx, lv_obj_t *slot)
         return NULL;
     }
 
+    k->workspace_button = workspace_button(rows[ROW_UTIL], "2-in-1", UI_BTN_SECONDARY);
+    if (!k->workspace_button) {
+        lv_obj_delete(root);
+        return NULL;
+    }
+    lv_obj_set_size(k->workspace_button, UI_TOUCH_COMFORT + UI_SPACE_XL, UI_TOUCH_MIN);
+    lv_obj_add_event_cb(k->workspace_button, open_workspace, LV_EVENT_SHORT_CLICKED, k);
     k->root = root;
+    arrange_workspace(k);
     k->row_compose = compose;
     k->preedit = pre;
     k->row_zh = zh;
@@ -2732,6 +3183,11 @@ static lv_obj_t *create_cb(void *ctx, lv_obj_t *slot)
     k->held = UI_VIEW_KBD_NO_KEY;
 
     // Observers die with their object (AT-UIFW-09): bound to the root, so deleting the view detaches them.
+    if (k->resume.fn) {
+        set_fn_layer(k, true);
+        k->resume.fn = false;
+    }
+    restore_language(k);
     lv_subject_add_observer_obj(ui_store_subject(k->store, UI_SUBJ_HOST_USB), subject_cb, root, k);
     lv_subject_add_observer_obj(ui_store_subject(k->store, UI_SUBJ_MODS_ARMED), subject_cb, root, k);
     lv_subject_add_observer_obj(ui_store_subject(k->store, UI_SUBJ_MODS_LOCKED), subject_cb, root, k);
@@ -2742,6 +3198,8 @@ static lv_obj_t *create_cb(void *ctx, lv_obj_t *slot)
 
 static void on_enter_cb(void *ctx)
 {
+    ui_view_keyboard_t *k = ctx;
+    ui_router_set_full_height(k->router, pad_above(k->workspace));
     refresh(ctx);
 }
 
@@ -2761,14 +3219,24 @@ static void drop_composition(ui_view_keyboard_t *k)
 
 static void on_leave_cb(void *ctx)
 {
-    release_held(ctx, true);
+    ui_view_keyboard_t *k = ctx;
+    if (k->rail_moving) {
+        lv_anim_delete(k, drawer_width);
+        k->rail_moving = false;
+        drawer_width(k, k->rail_collapsed ? UI_TOUCH_MIN : DRAWER_WIDTH);
+        lv_obj_set_hidden(k->rail_body, k->rail_collapsed);
+        drawer_grip(k);
+    }
+    ui_router_set_full_height(k->router, false);
+    release_workspace(ctx);
     drop_composition(ctx);
 }
 
 static void destroy_cb(void *ctx)
 {
     ui_view_keyboard_t *k = ctx;
-    release_held(k, true);
+    lv_anim_delete(k, drawer_width);
+    release_workspace(k);
     drop_composition(k);
     k->hangul = false;
     k->jamo_shift = false;
@@ -2795,6 +3263,11 @@ static void destroy_cb(void *ctx)
     k->lang_card = NULL; // the router's teardown calls lang_on_close(); nulling it here is safe either way
     memset(k->pick_btn, 0, sizeof(k->pick_btn));
     k->root = NULL;
+    k->field = k->hybrid_pad = k->hybrid_panel = k->hybrid_tools = NULL;
+    k->workspace_button = k->window_shortcut = NULL;
+    k->hybrid_rail = k->rail_body = k->rail_handle = NULL;
+    memset(k->rail_nav, 0, sizeof(k->rail_nav));
+    memset(k->hybrid_buttons, 0, sizeof(k->hybrid_buttons));
     k->row_util = k->row_number = k->row_fn = k->row_top = k->row_mid = k->row_low = k->row_bottom = NULL;
     k->caps_sub = NULL;
     k->offline = NULL;
@@ -2826,6 +3299,7 @@ void ui_view_keyboard_init(ui_view_keyboard_t *k, ui_store_t *store, ui_actions_
     k->langs = UI_KBD_LANG_BIT(UI_KBD_LANG_EN); // ADR-037: a fresh device types English alone
     kvm_hangul_reset(&k->ime);
     k->sink = (ui_action_key_sink_t){.fn = key_sink, .user_data = k};
+    k->mouse_sink = (ui_action_key_sink_t){.fn = hybrid_mouse_edge, .user_data = k};
     for (uint32_t i = 0; i < KEY_COUNT; i++) {
         s_keys[i].desc.control_id = (uint16_t)(UI_CTRL_KBD_BASE + i);
     }
@@ -2843,13 +3317,17 @@ void ui_view_keyboard_init(ui_view_keyboard_t *k, ui_store_t *store, ui_actions_
         .blocking = true, // ADR-039 section 8: a tap meant for a tile must never reach a cap underneath it
         .ctx = k,
     };
+    k->ov[2] = (ui_overlay_descriptor_t){
+        .id = UI_OVERLAY_KBD_WORKSPACE, .create = workspace_picker, .on_close = workspace_closed,
+        .blocking = true, .ctx = k
+    };
     k->desc = (ui_view_descriptor_t){
         .id = UI_VIEW_KEYBOARD,
         .create = create_cb,
         .on_enter = on_enter_cb,
         .on_leave = on_leave_cb,
         .destroy = destroy_cb,
-        .pad_obj = NULL, // no touch surface on this screen (07 §6)
+        .pad_obj = hybrid_pad_obj,
         .ctx = k,
     };
 }

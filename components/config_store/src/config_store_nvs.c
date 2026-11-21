@@ -125,6 +125,48 @@ const kvm_config_backend_t *config_store_nvs_backend(void)
     return &s_backend;
 }
 
+esp_err_t config_store_nvs_access_read(uint64_t *out)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(CONFIG_STORE_NVS_NAMESPACE, NVS_READONLY, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_get_u64(h, "access_v1", out);
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t config_store_nvs_access_write(uint64_t word)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(CONFIG_STORE_NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u64(h, "access_v1", word);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t config_store_nvs_palette_read(uint8_t *value)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(CONFIG_STORE_NVS_NAMESPACE, NVS_READONLY, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_get_u8(h, "appearance", value);
+    nvs_close(h);
+    return err;
+}
+
+esp_err_t config_store_nvs_palette_write(uint8_t value)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(CONFIG_STORE_NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_u8(h, "appearance", value);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
 uint64_t config_store_nvs_now_ms(void)
 {
     return (uint64_t)(esp_timer_get_time() / 1000);

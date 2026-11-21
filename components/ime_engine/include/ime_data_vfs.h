@@ -3,8 +3,8 @@
 // Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
 //
 // ime_data_vfs (firmware only): mounts the `ime_data` partition read-only at IME_DATA_MOUNT so the vendored
-// engines can fopen() their dictionaries unchanged (TECH-081). Every file's SHA-256 is checked once, at mount; a
-// file that fails the check cannot be opened. Writes are refused (EROFS); there is no runtime download path.
+// engines can fopen() their dictionaries unchanged (TECH-081). Files become readable after a matching SHA-256
+// digest at mount. Writes are refused (EROFS); there is no runtime download path.
 // Mounting is explicit and off the boot path: the low-priority ime_glue worker after the UI is up, or the `ime`
 // console command.
 #pragma once
@@ -30,11 +30,12 @@ typedef struct {
     uint32_t count;
     ime_data_entry_t entry[IME_DATA_MAX_ENTRIES];
     bool verified[IME_DATA_MAX_ENTRIES];
-    uint32_t verify_ms; // time spent hashing at mount
+    uint32_t verify_ms; // total time spent hashing across mount attempts
     uint32_t opens, open_refused, reads;
 } ime_data_vfs_status_t;
 
-/** Find, parse, verify and register. Idempotent: a second call returns the first result. */
+/** Register the read-only image. Later calls retry temporary failures and reuse completed digest comparisons.
+ * ESP_OK means the VFS is registered. Individual files can still be unavailable (see verified[]). */
 esp_err_t ime_data_mount(void);
 void ime_data_get_status(ime_data_vfs_status_t *out);
 

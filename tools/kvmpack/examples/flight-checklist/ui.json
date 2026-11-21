@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "root": {
+    "id": "checklist",
+    "type": "Column",
+    "bounds": {
+      "x": 0,
+      "y": 0,
+      "w": 1024,
+      "h": 568
+    },
+    "props": {
+      "layout": "absolute"
+    },
+    "children": [
+      {
+        "id": "title",
+        "type": "Text",
+        "bounds": {
+          "x": 32,
+          "y": 28,
+          "w": 920,
+          "h": 48
+        },
+        "props": {
+          "text": "Before takeoff"
+        }
+      },
+      {
+        "id": "item",
+        "type": "Text",
+        "bounds": {
+          "x": 32,
+          "y": 100,
+          "w": 900,
+          "h": 52
+        },
+        "props": {
+          "text": "Flight controls checked"
+        }
+      },
+      {
+        "id": "status",
+        "type": "StatusChip",
+        "bounds": {
+          "x": 32,
+          "y": 176,
+          "w": 240,
+          "h": 56
+        },
+        "props": {
+          "text": "Pending",
+          "status": "info"
+        }
+      },
+      {
+        "id": "complete",
+        "type": "Button",
+        "bounds": {
+          "x": 32,
+          "y": 264,
+          "w": 280,
+          "h": 70
+        },
+        "props": {
+          "label": "Mark complete"
+        },
+        "events": {
+          "tap": "mark_complete"
+        }
+      },
+      {
+        "id": "reset",
+        "type": "Button",
+        "bounds": {
+          "x": 344,
+          "y": 264,
+          "w": 200,
+          "h": 70
+        },
+        "props": {
+          "label": "Reset"
+        },
+        "events": {
+          "tap": "mark_pending"
+        }
+      }
+    ]
+  }
+}

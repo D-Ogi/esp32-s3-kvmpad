@@ -58,6 +58,8 @@ each shown only while its layer is on. Rows are LVGL Flex lines and
 each cap's `flex_grow` is the reference key weight × 20; every length is a `ui_tokens.h` token and the 44 px
 touch floor comes from `UI_STYLE_BTN_BASE`.
 
+Choose **Keyboard → 2-in-1** for a full keyboard, a touchpad on either side, or a touchpad at the top edge. With the top-edge pad, choose **Buttons on left** or **Buttons on right**. The rail provides Home, Shortcuts, Host, Client, Settings, Extensions when available, and both mouse buttons. Tap the arrow or swipe its handle toward the edge to hide the drawer. Tap again or swipe toward the middle to reopen it. The touchpad uses the freed width. Leaving this workspace restores the top bar. All touchpads support the Mouse view gestures, including two-finger scrolling. Both side workspaces include **Switch window** (Alt+Tab). The selection lasts for the current session. HOST layout and input language are independent of this choice.
+
 | Behavior | Rule |
 |---|---|
 | ordinary key | down edge → `UI_ACT_KEY_DOWN(usage)`, up edge or lost press → `UI_ACT_KEY_UP(usage)`; no firmware auto-repeat, at most one held cap (FR-203, FR-208, FR-211) |

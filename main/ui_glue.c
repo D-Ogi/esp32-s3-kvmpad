@@ -14,6 +14,8 @@
 // net_status (TASK-080) and drag lock from the touch bridge's gesture FSM (TASK-060E).
 #include "text_glue.h"
 #include "ui_glue.h"
+#include "pack_panel.h"
+#include "pack_keyboard_surface.h"
 
 #include <string.h>
 
@@ -77,7 +79,7 @@ static void publish_cb(void *arg)
         .modifiers_down = hs.modifiers_down,
         .mods_armed = hs.mods_armed,
         .mods_locked = hs.mods_locked,
-        .caps_led_known = us.led_reports > 0,
+        .caps_led_known = us.led_known,
         .caps_led_active = (us.led_state & 0x02u) != 0, // HID LED usage 2 = Caps Lock (bit 1)
         .maintenance = hs.maintenance,
         .error_code = 0, // no persistent domain error source yet; USB_ERROR is visible as host_usb_state
@@ -136,12 +138,28 @@ static bool pad_hid_sink(void *ctx, const kvm_hid_intent_t *intent)
     return hid_dispatch_local(intent) == ESP_OK;
 }
 
+static bool local_contacts(unsigned count, const kvm_touch_point_t points[2], uint64_t timestamp_us)
+{
+    lv_point_t physical[2];
+    if (count <= 2) {
+        for (unsigned i = 0; i < count; ++i)
+            physical[i] = (lv_point_t){points[i].x_px, points[i].y_px};
+    }
+    uint8_t ids[2]={0};
+    for (unsigned i=0;i<count && i<2;i++) ids[i]=points[i].track_id;
+    return pack_panel_local_contacts(count, physical, ids, timestamp_us);
+}
+
 static void touch_bridge_start(void)
 {
     ui_touch_bridge_cfg_t tc = {
         .h_res = BOARD_TOUCH_H_RES,
         .v_res = BOARD_TOUCH_V_RES,
         .sink = pad_hid_sink,
+        .local_contacts = local_contacts,
+#if CONFIG_KVM_USB_MONITOR_EVAL
+        .buffered_target = pack_keyboard_surface_buffered_target,
+#endif
         .sink_ctx = NULL,
         .hid_enabled = false, // turned on by ui_shell_show(): bench scenes never move the HOST pointer
     };

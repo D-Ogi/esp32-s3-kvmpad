@@ -49,8 +49,8 @@ bool update_manager_cancel(void);
 /** Confirm the running image by hand (`ota mark-valid`) while the health check is pending. */
 esp_err_t update_manager_mark_valid(void);
 
-/** Snapshot for the console, the status service and the "Updating" screen. */
-void update_manager_get_status(kvm_ota_status_t *out);
+/** False if the manager has not started. Running image metadata can still be available. */
+bool update_manager_get_status(kvm_ota_status_t *out);
 
 /** Partition labels and the OTA state of the running slot, for the status line. */
 typedef struct {

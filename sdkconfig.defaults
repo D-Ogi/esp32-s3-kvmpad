@@ -17,6 +17,9 @@ CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 
+# The card browser passes Windows-created long filenames between readdir, stat and fopen as UTF-8.
+CONFIG_FATFS_API_ENCODING_UTF_8=y
+
 # ---- PSRAM: octal 80 MHz, as in the IDF rgb_panel example for ESP32-S3 (TECH-024: 120 MHz stays off;
 # it is experimental in ESP-IDF and not qualified on this revision) ---------------------------------
 CONFIG_SPIRAM=y
@@ -104,6 +107,7 @@ CONFIG_LV_DRAW_THREAD_STACK_SIZE=4096
 CONFIG_LV_DEF_REFR_PERIOD=16
 CONFIG_LV_OBJ_STYLE_CACHE=y
 CONFIG_LV_USE_OBSERVER=y
+CONFIG_LV_USE_COLOR_FILTER=y
 CONFIG_LV_USE_SNAPSHOT=y
 CONFIG_LV_FONT_MONTSERRAT_14=y
 CONFIG_LV_FONT_MONTSERRAT_16=y

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 # Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
 # Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
-"""Decode a `ui snap [div]` console capture (SNAP_ROW lines, RGB565 hex) into a PNG.
+"""Decode a `ui snap [div] [compact]` console capture into a PNG.
 
     python -I test/hil/ui_snapshot.py <capture.log> <out.png>
 
@@ -21,6 +21,33 @@ def rgb565_to_rgb888(px: int) -> tuple[int, int, int]:
     g = (px >> 5) & 0x3F
     b = px & 0x1F
     return (r * 255 + 15) // 31, (g * 255 + 31) // 63, (b * 255 + 15) // 31
+
+
+def decode_row(line: bytes, width: int) -> tuple[int, bytes]:
+    """Return the row index and its exact big-endian RGB565 words."""
+    fields = line.split(b" ", 2)
+    if not (1 <= width <= 1024 and len(fields) == 3 and fields[0] in (b"SNAP_ROW", b"SNAP_RLE")
+            and re.fullmatch(rb"[0-9]{1,4}", fields[1]) and 0 < len(fields[2]) <= width * 4):
+        raise ValueError("Invalid snapshot row")
+    parts = fields[2].split(b"*")
+    if (fields[0] == b"SNAP_ROW") != (len(parts) == 1):
+        raise ValueError("Unexpected snapshot row encoding")
+    row = bytearray()
+    for i, part in enumerate(parts):
+        if len(part) % 4 or not re.fullmatch(b"[0-9A-F]*", part):
+            raise ValueError("Invalid RGB565 word")
+        if i:
+            count = int(part[:4], 16) if len(part) >= 8 else 0
+            if not 3 <= count <= width - len(row) // 2:
+                raise ValueError("Invalid RGB565 repeat length")
+            row.extend(bytes.fromhex(part[4:8].decode("ascii")) * count)
+            part = part[8:]
+        if len(row) + len(part) // 2 > width * 2:
+            raise ValueError("Snapshot row exceeds the expected width")
+        row.extend(bytes.fromhex(part.decode("ascii")))
+    if len(row) != width * 2:
+        raise ValueError("Incomplete snapshot row")
+    return int(fields[1]), bytes(row)
 
 
 def write_png(path: Path, w: int, h: int, rows: list[bytes]) -> None:
@@ -47,26 +74,33 @@ def main() -> int:
     if err != "ESP_OK":
         print(f"device reported {err}")
         return 1
-    rows: dict[int, bytes] = {}
+    if not (1 <= w <= 1024 and 1 <= h <= 600):
+        print("Invalid snapshot dimensions")
+        return 1
+    rows = []
     crc = 2166136261
-    for m in re.finditer(r"SNAP_ROW (\d+) ([0-9A-F]+)", text):
-        y = int(m.group(1))
-        hexs = m.group(2)
-        if len(hexs) != w * 4:
-            print(f"row {y}: {len(hexs) // 4} pixels, expected {w}")
-            return 1
-        px = [int(hexs[i:i + 4], 16) for i in range(0, len(hexs), 4)]
-        for p in px:
-            crc = ((crc * 16777619) & 0xFFFFFFFF) ^ p
-        rows[y] = b"".join(bytes(rgb565_to_rgb888(p)) for p in px)
-    missing = [y for y in range(h) if y not in rows]
-    if missing:
-        print(f"missing rows: {missing[:10]}{'...' if len(missing) > 10 else ''}")
+    try:
+        for line in text[:end.start()].splitlines():
+            if not line.startswith(("SNAP_ROW ", "SNAP_RLE ")):
+                continue
+            y, pixels = decode_row(line.encode("ascii"), w)
+            if y != len(rows) or y >= h:
+                raise ValueError(f"Unexpected snapshot row {y}")
+            rgb = bytearray()
+            for (p,) in struct.iter_unpack(">H", pixels):
+                crc = ((crc * 16777619) & 0xFFFFFFFF) ^ p
+                rgb.extend(rgb565_to_rgb888(p))
+            rows.append(bytes(rgb))
+    except ValueError as exc:
+        print(exc)
+        return 1
+    if len(rows) != h:
+        print(f"Incomplete snapshot: received {len(rows)} of {h} rows")
         return 1
     if crc != crc_dev:
         print(f"hash mismatch: device {crc_dev:08X} host {crc:08X}")
         return 1
-    write_png(Path(sys.argv[2]), w, h, [rows[y] for y in range(h)])
+    write_png(Path(sys.argv[2]), w, h, rows)
     print(f"wrote {sys.argv[2]} {w}x{h} hash {crc:08X} OK")
     return 0
 

@@ -5,7 +5,7 @@
 # ui_touch_bridge (TASK-060E): touch_router.c is pure C (host tests in test/ui_touch); ui_touch_bridge.c is
 # the firmware task with the LVGL pointer indev and the gesture FSM. No GT911 access and no USB stack.
 idf_component_register(
-    SRCS "src/touch_router.c" "src/ui_touch_bridge.c"
+    SRCS "src/touch_router.c" "src/ui_touch_bridge.c" "src/ptp_contacts.c" "src/local_contacts.c"
     INCLUDE_DIRS "include"
     REQUIRES touch_input gesture_engine
-    PRIV_REQUIRES ui_platform lvgl__lvgl esp_timer freertos log)
+    PRIV_REQUIRES hid_core usb_hid_device ui_platform lvgl__lvgl esp_timer freertos log)

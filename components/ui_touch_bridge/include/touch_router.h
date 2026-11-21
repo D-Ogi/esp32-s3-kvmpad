@@ -11,8 +11,9 @@
 // - a contact that starts on the pad while a CHROME press is held is BLOCKED (no HID);
 // - a contact that starts outside the pad while a PAD gesture is held is BLOCKED (no phantom click);
 // - LVGL has one pointer: a second CHROME contact is BLOCKED until it lifts;
-// - an invalid sample or touch_router_cancel() (view change, modal, owner loss) cancels the LVGL press
-//   without a click and blocks every current contact until it lifts.
+// - touch_router_cancel() blocks every current contact until it lifts (view change, modal, owner loss);
+// - an invalid sample cancels the press. The hardware bridge sets require_lift_after_error to keep
+//   held IDs blocked through controller errors. Other consumers can resynchronize on the next valid scan.
 // Pure C, no allocation, single context (the bridge task).
 #pragma once
 
@@ -60,6 +61,7 @@ typedef struct {
     uint8_t ptr_id;
     int16_t ptr_x, ptr_y;
     bool cancel_pending;
+    bool require_lift_after_error; // block old IDs until a valid sample confirms their lift
     touch_router_stats_t st;
 } touch_router_t;
 

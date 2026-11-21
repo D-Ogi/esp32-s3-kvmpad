@@ -10,6 +10,7 @@
 #include "esp_attr.h"
 #include "esp_cache.h"
 #include "esp_check.h"
+#include "esp_cpu.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_rgb.h"
 #include "esp_log.h"
@@ -18,6 +19,10 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#ifdef KVM_LCD_IRQ_CORE1
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+#endif
 #include "hal/lcd_ll.h"
 #include "soc/lcd_cam_struct.h"
 
@@ -76,6 +81,7 @@ static IRAM_ATTR bool on_vsync(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_p
     }
     s_last_vsync_us = now;
     s_stats.vsync_count++;
+    s_stats.vsync_core_mask |= 1u << esp_cpu_get_core_id();
     portEXIT_CRITICAL_ISR(&s_mux);
     return next != NULL ? next(panel, edata, next_ctx) : false;
 }
@@ -89,6 +95,7 @@ static IRAM_ATTR bool on_frame_done(esp_lcd_panel_handle_t panel, const esp_lcd_
     esp_lcd_rgb_panel_frame_buf_complete_cb_t next = s_chain.on_frame_buf_complete;
     void *next_ctx = s_chain_ctx;
     s_stats.bounce_frames++;
+    s_stats.frame_core_mask |= 1u << esp_cpu_get_core_id();
     if (s_last_vsync_us != 0) {
         uint32_t ph = (uint32_t)(now - s_last_vsync_us);
         s_stats.phase_last_us = ph;
@@ -199,6 +206,48 @@ static void board_lcd_shutdown(void)
     }
 }
 
+#ifdef KVM_LCD_IRQ_CORE1
+typedef struct {
+    const esp_lcd_rgb_panel_config_t *config;
+    esp_lcd_panel_handle_t *panel;
+    SemaphoreHandle_t done;
+    esp_err_t result;
+} lcd_create_call_t;
+
+static void lcd_create_on_core1(void *arg)
+{
+    lcd_create_call_t *call = arg;
+    call->result = esp_lcd_new_rgb_panel(call->config, call->panel);
+    xSemaphoreGive(call->done);
+    vTaskDelete(NULL);
+}
+
+// IDF v6.1 installs both LCD VSYNC and GDMA TX EOF within this constructor.
+// A normal task has room for driver initialization and its error unwind.
+// esp_intr_free handles a later cross-core delete via the owning CPU.
+static esp_err_t create_rgb_panel(const esp_lcd_rgb_panel_config_t *config, esp_lcd_panel_handle_t *out)
+{
+    // Keep raw display benchmarks and other panel timings on their original CPU.
+    if (config->timings.h_res != 1024 || config->timings.v_res != 600 || config->timings.pclk_hz != 30000000 ||
+        config->num_fbs != 2 || config->bounce_buffer_size_px != 10u * 1024u)
+        return esp_lcd_new_rgb_panel(config, out);
+    StaticSemaphore_t storage;
+    SemaphoreHandle_t done = xSemaphoreCreateBinaryStatic(&storage);
+    lcd_create_call_t call = {.config = config, .panel = out, .done = done, .result = ESP_FAIL};
+    if (xTaskCreatePinnedToCore(lcd_create_on_core1, "lcd_init", 6144, &call, uxTaskPriorityGet(NULL),
+                                NULL, 1) == pdPASS) {
+        // An aborted caller delay must not outlive the request on its stack.
+        while (xSemaphoreTake(done, portMAX_DELAY) != pdTRUE) {}
+    } else {
+        call.result = ESP_ERR_NO_MEM;
+    }
+    vSemaphoreDelete(done);
+    return call.result;
+}
+#else
+#define create_rgb_panel esp_lcd_new_rgb_panel
+#endif
+
 esp_err_t board_lcd_init(const board_lcd_cfg_t *cfg)
 {
     ESP_RETURN_ON_FALSE(cfg != NULL && cfg->num_fbs >= 1 && cfg->num_fbs <= 3, ESP_ERR_INVALID_ARG, TAG,
@@ -234,7 +283,7 @@ esp_err_t board_lcd_init(const board_lcd_cfg_t *cfg)
         .data_gpio_nums = BOARD_LCD_DATA_GPIOS,
         .flags.fb_in_psram = 1,
     };
-    ESP_RETURN_ON_ERROR(esp_lcd_new_rgb_panel(&pc, &s_panel), TAG, "new rgb panel");
+    ESP_RETURN_ON_ERROR(create_rgb_panel(&pc, &s_panel), TAG, "new rgb panel");
 
     portENTER_CRITICAL(&s_mux);
     memset(&s_chain, 0, sizeof(s_chain)); // nothing chained until another registrant (the LVGL adapter) appears
@@ -262,9 +311,11 @@ esp_err_t board_lcd_init(const board_lcd_cfg_t *cfg)
             err = esp_lcd_rgb_panel_get_frame_buffer(s_panel, 1, &fb0);
             break;
         }
-        s_fb[0] = fb0;
-        s_fb[1] = fb1;
-        s_fb[2] = fb2;
+        if (err == ESP_OK) {
+            s_fb[0] = fb0;
+            s_fb[1] = fb1;
+            s_fb[2] = fb2;
+        }
     }
     if (err != ESP_OK) {
         esp_lcd_panel_del(s_panel);
@@ -309,7 +360,7 @@ esp_lcd_panel_handle_t board_lcd_panel(void)
 
 uint16_t *board_lcd_fb(int index)
 {
-    if (index < 0 || index >= s_cfg.num_fbs) {
+    if (!s_panel || index < 0 || index >= s_cfg.num_fbs) {
         return NULL;
     }
     return s_fb[index];

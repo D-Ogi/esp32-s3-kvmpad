@@ -100,7 +100,6 @@ static bool s_started;
 
 static esp_ota_handle_t s_handle;
 static const esp_partition_t *s_target;
-static const esp_partition_t *s_running;
 
 static void (*s_revoke)(void *ctx);
 static void *s_revoke_ctx;
@@ -316,11 +315,12 @@ static void pl_running_image(void *ctx, kvm_ota_image_info_t *out)
 {
     (void)ctx;
     memset(out, 0, sizeof *out);
-    if (s_running == NULL) {
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    if (running == NULL) {
         return;
     }
     uint8_t prefix[KVM_OTA_IMAGE_PROBE_BYTES];
-    if (esp_partition_read(s_running, 0u, prefix, sizeof prefix) != ESP_OK) {
+    if (esp_partition_read(running, 0u, prefix, sizeof prefix) != ESP_OK) {
         ESP_LOGE(TAG, "cannot read the running image header");
         return;
     }
@@ -471,8 +471,8 @@ esp_err_t update_manager_start(void)
         return ESP_ERR_NO_MEM;
     }
 
-    s_running = esp_ota_get_running_partition();
-    if (s_running == NULL) {
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    if (running == NULL) {
         ESP_LOGE(TAG, "cannot identify the running partition");
         return ESP_ERR_NOT_FOUND;
     }
@@ -489,14 +489,14 @@ esp_err_t update_manager_start(void)
     (void)kvm_ota_add_probe(&s_mgr, "touch", probe_touch, NULL, true);
 
     esp_ota_img_states_t state = ESP_OTA_IMG_UNDEFINED;
-    esp_err_t err = esp_ota_get_state_partition(s_running, &state);
+    esp_err_t err = esp_ota_get_state_partition(running, &state);
     if (err != ESP_OK) {
         // No otadata entry for this slot (first flash over the wire, or rollback support off).
         ESP_LOGI(TAG, "esp_ota_get_state_partition: %s - treating the image as confirmed",
                  esp_err_to_name(err));
         state = ESP_OTA_IMG_UNDEFINED;
     }
-    ESP_LOGI(TAG, "running %s, ota state 0x%" PRIx32 ", next %s", s_running->label, (uint32_t)state,
+    ESP_LOGI(TAG, "running %s, ota state 0x%" PRIx32 ", next %s", running->label, (uint32_t)state,
              s_target != NULL ? s_target->label : "(none)");
 #if KVM_OTA_UNSIGNED_BUILD
     ESP_LOGE(TAG, "image signatures are NOT verified in this build - bring-up only, never a release "
@@ -615,18 +615,20 @@ esp_err_t update_manager_mark_valid(void)
     return already ? ESP_ERR_INVALID_STATE : ESP_FAIL;
 }
 
-void update_manager_get_status(kvm_ota_status_t *out)
+bool update_manager_get_status(kvm_ota_status_t *out)
 {
     if (out == NULL) {
-        return;
+        return false;
     }
     if (!s_started) {
         memset(out, 0, sizeof *out);
-        return;
+        pl_running_image(NULL, &out->running);
+        return false;
     }
     lock();
     kvm_ota_status(&s_mgr, out);
     unlock();
+    return true;
 }
 
 void update_manager_get_slots(update_manager_slots_t *out)
@@ -635,14 +637,15 @@ void update_manager_get_slots(update_manager_slots_t *out)
         return;
     }
     memset(out, 0, sizeof *out);
-    out->running_label = s_running != NULL ? s_running->label : "(unknown)";
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    out->running_label = running != NULL ? running->label : "(unknown)";
     const esp_partition_t *next = esp_ota_get_next_update_partition(NULL);
     out->next_label = next != NULL ? next->label : "(none)";
     out->next_size = next != NULL ? next->size : 0u;
     out->running_state = KVM_OTA_IMG_STATE_UNDEFINED;
-    if (s_running != NULL) {
+    if (running != NULL) {
         esp_ota_img_states_t st = ESP_OTA_IMG_UNDEFINED;
-        if (esp_ota_get_state_partition(s_running, &st) == ESP_OK) {
+        if (esp_ota_get_state_partition(running, &st) == ESP_OK) {
             out->running_state = (kvm_ota_img_state_t)st;
         }
     }

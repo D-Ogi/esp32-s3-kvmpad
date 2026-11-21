@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "sources": [],
+  "state": [
+    {
+      "id": "check",
+      "type": "string",
+      "initial": "Pending"
+    }
+  ],
+  "connections": [
+    {
+      "from": "check",
+      "to": "status.text",
+      "transform": "identity"
+    }
+  ],
+  "actions": [
+    {
+      "id": "mark_complete",
+      "trigger": "complete.tap",
+      "type": "state.set",
+      "capability": "ui.basic",
+      "args": {
+        "name": "check",
+        "value": "Complete"
+      }
+    },
+    {
+      "id": "mark_pending",
+      "trigger": "reset.tap",
+      "type": "state.set",
+      "capability": "ui.basic",
+      "args": {
+        "name": "check",
+        "value": "Pending"
+      }
+    }
+  ]
+}

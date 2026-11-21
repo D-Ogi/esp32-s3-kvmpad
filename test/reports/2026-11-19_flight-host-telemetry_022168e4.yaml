@@ -1,0 +1,348 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+test_id: FLIGHT-05/FLIGHT-06/BRIDGE-04
+result: PASS_SW
+spec: "Extension platform v1.3.1 sections 15.3 and 17.2, Flight Instruments public package"
+evidence_root: ../evidence
+production: Windows HOST main, mutual TLS/WSS, broker, subscriber, X-Plane HTTP adapter and native MSFS helper
+fixtures: >-
+  Private loopback HTTP and WSS endpoints, temporary certificates, explicit fixture consent and a software
+  board peer. X-Plane served named REST DataRefs. Production msfs.cpp was compiled with a test API for
+  SimConnect that checked SimVar names, units and request definitions. Only the test implementation supplied
+  the raw sample values. A production SDK build and real simulators are separate qualifications.
+checks:
+  - Six canonical topic names, sequence progression, heading wrap, pitch and bank signs, source and units.
+  - 10 Hz requested per instrument and 20 Hz per attitude channel; cadence counted distinct source timestamps.
+  - Two-second live window with X-Plane IAS artificially delayed by 180 ms, kept independent of attitude.
+  - Per-topic transitions to STALE with the previous reading and UNAVAILABLE with null; all recovered on restart.
+  - Full six-variable scope before and after source loss, then an independent altitude-and-roll-only grant.
+  - No provider reads before the scoped decision, only those two SimVars/DataRefs after it, including a second restart.
+  - Numeric IDs re-resolved on X-Plane source restart; source reads stopped after foreground Stop.
+  - Non-finite, unrepresentable and boolean values could not refresh the retained sample.
+results:
+  msfs_fresh_pitch_roll_hz: [18.16, 18.16]
+  xplane_fresh_pitch_roll_hz: [18.79, 18.79]
+  xplane_delayed_ias_hz: 5.53
+  earliest_latest_first_stale_age_ms: [1004, 1098]
+  earliest_latest_first_unavailable_age_ms: [3005, 3049]
+  provider_and_broker_regressions_passed: 22
+limits: >-
+  Ages measure elapsed HOST monotonic time since a completed provider read. These tests use a local
+  software peer and do not measure real simulator physics time, network jitter or physical display cadence.
+  The legacy telemetry wire continues to report source loss via STALE and UNAVAILABLE.
+evidence:
+  - build/flight-source-recovery/fixture-build.log
+  - build/flight-source-recovery/loopback.log
+  - build/flight-source-recovery/rates.json
+  - build/flight-source-recovery/regression.log
+  - build/flight-source-recovery/sha256.json
+
+four_quality_followup:
+  result: PASS_SW
+  spec_basis: >-
+    Section 15.3 defines VALID, STALE, UNAVAILABLE and ERROR. Section 17.2 maps an unknown
+    X-Plane path to UNAVAILABLE. Section 17.6 illustrates a three-state MCU API, prompting
+    explicit capability negotiation with older peers.
+  contract: >-
+    A telemetry SESSION advertises quality_v=1. SUBSCRIBE opts in and SUBSCRIBED echoes
+    that version. A provider fault has quality ERROR and a null value. A legacy receiver
+    receives UNAVAILABLE/null. No fault is delivered as an instrument value of zero.
+  semantics:
+    - Invalid scalar, malformed successful response or explicit provider error invalidates only the affected topics.
+    - A SimConnect exception invalidates all readings requested in that response; the helper can reopen.
+    - X-Plane timeout, simulator shutdown and connection loss age the previous observation. A missing DataRef is immediately UNAVAILABLE.
+    - A last good value becomes STALE at one second. ERROR remains a fault until recovery or expiry at three seconds.
+    - The next valid measurement restores its instrument and resets smoothing. Link loss or Stop clears the cache.
+  software_proofs:
+    - >-
+      Production host.main used loopback mTLS and the real X-Plane HTTP adapter and MSFS native read
+      helper. A corrupt roll sample left five valid instruments running. Explicit HTTP 500 and
+      SimConnect exception packets marked all six ERROR. HTTP 404 became UNAVAILABLE. Each source
+      recovered, then ordinary source loss yielded STALE at 1017–1084 ms and UNAVAILABLE at 3014–3064 ms.
+    - >-
+      The separately compiled production bridge.c worker ran its HELLO, SUBSCRIBE, BIND, sample
+      parser, cache and Stop through a host OS mTLS WebSocket shim. Both session variants passed.
+      ERROR survived age 1000 ms while the previously valid peer instrument became STALE. Both
+      expired at 3000 ms. Negotiated ERROR with a numeric value and unnegotiated ERROR/null
+      each terminated the session and cleared both samples.
+    - >-
+      The real LVGL Flight Instruments scene displayed Data error on IAS, altitude and the horizon,
+      then Unavailable and recovered. The typed text fixture verified fault text, cleared readings
+      and low-pass/hysteresis recovery. The system status row prioritized an erroneous roll
+      alongside stale pitch and recovered to Data live on both local and paired installation paths.
+      These native LVGL runs used ASan and UBSan.
+    - >-
+      All 33 Windows HOST regressions passed. Invalid quality versions were rejected without
+      invoking approval. Reaping a helper that exits with a pending write tolerated the Windows
+      pipe-close error and allowed re-opening the simulator.
+  hil: NOT_RUN
+  limits: >-
+    Public simulator data, provider errors, physical grants and task/transport platform APIs
+    were represented by deterministic fixtures. The provider checks used a SimConnect SDK
+    substitute. Real simulator behavior, radio and physical panel timing remain unmeasured.
+  evidence:
+    - build/flight-quality/telemetry.json
+    - build/flight-quality/telemetry.log
+    - build/flight-quality/c-worker.log
+    - build/flight-quality/instruments.log
+    - build/flight-quality/instruments-error.png
+    - build/flight-quality/typed-quality.log
+    - build/flight-quality/aggregate.log
+    - build/flight-quality/host-regressions.log
+    - build/flight-quality/SHA256SUMS
+pilot_panel_20261120:
+  package: "org.kvmpad.pilot.panel 1.2.0"
+  package_sha256: ec5488f02c08c5c7c60c310fddd472c0ed9bd2e31fff88ddeb689f644a772e66
+  firmware_sha256: 3127c8988730952c3ce4b4b15f034063f92585663ea2ae9705c891f4299bae17
+  board: "Unit 1, normal signed OTA1, boot 440, four HID interfaces, one retained CLIENT pairing."
+  card: "Verified the 38426-byte installer on the 2601 exFAT microSD."
+  physical_navigation: >-
+    The running panel displayed the Brzeziny taxi chart at 150% and then the six-screen picker
+    with Autopilot, Airport charts, the four checklist pages and Return to KVMpad.
+    The two half-resolution scanout checksums were D7B74741 and B2447288.
+  checklist: "Cessna 172S and Diamond DA40 NG, four phases with sixteen independently selectable rows."
+  charts: >-
+    Three Brzeziny diagrams share a single viewer. Sample comparisons against the packaged PNGs
+    matched all 3553056 pixels across nine LVGL views including pin swaps, Fit, zoom and pan.
+    The partial RGB565 presenter also matched all 614400 frame pixels at both strip heights.
+  autopilot: >-
+    The portrait instrument opens offline. Its explicit local demo separates actual readings,
+    selected targets and pending edits. Touch tests exercised HDG, ALT and VS keypad entry,
+    cancel, invalid inputs, delayed confirmation, rejection, lateral and vertical active and armed
+    modes, optional armed reporting and page exit. Instrument markers were checked in RGB565.
+  limits: "Native instrument tests used LVGL. The autopilot demo has no live simulator command adapter."
+  evidence:
+    - build/pilot-autopilot/staged.json
+    - build/pilot-autopilot/installed.json
+    - build/pilot-autopilot/integration/trial.log
+    - build/pilot-autopilot/activation-portrait.png
+    - build/pilot-autopilot/local-screen-portrait.png
+    - build/pilot-autopilot/test.log
+    - build/pilot-autopilot/markers.json
+    - build/pilot-kneeboard/chart-view/pixels.json
+    - build/pilot-autopilot/demo-physical-portrait.png
+
+pilot_touch_performance:
+  fixture: "Pilot Panel 1.2.0, Brzeziny airport charts on Unit 1 microSD"
+  baseline:
+    boot: 440
+    operator_actions: "Local screen navigation, zoom buttons and map drags"
+    renders: 47
+    mean_render_us: 424490
+    max_render_us: 2590362
+  first_revision:
+    boot: 441
+    physical: "Operator confirmed two-finger zoom. The 17:59 LCD capture showed 174%. The 18:00 capture showed 600%, matching the zoom the operator reported."
+    lcd_zoom_captures: [build/pilot-responsiveness/after-portrait.png, build/pilot-responsiveness/after-zoom-portrait.png]
+    operator_feedback: "Map still slow."
+    complete_interactive_window: {renders: 33, mean_render_us: 587275, max_render_us: 1682276}
+  second_revision:
+    boot: 442
+    sha256: 0f74fef5860432934bda5e183a9593780e4b2999d473451cb28250b6f837d07f
+    implementation: "Opaque chart strips use RGB565. The partial LCD copy writes adjacent rotated pixels in pairs."
+    extensions_menu_full_repaint: {seconds: 3, renders: 14, mean_render_us: 217158}
+    chart_full_repaint: "No controlled chart measurement on boot 442. The following UART benchmark uses the same card and chart on later builds."
+  controlled_chart_measurements:
+    scope: >-
+      The normal release opened the packaged taxi chart in the portrait ChartViewer from microSD.
+      Timing covers the local camera update through LCD flush and LVGL refresh completion.
+      Each run includes five full repaints, twelve translations at 200%, and twelve zoom updates
+      from 200% to 296%. Boot 444 also measures twelve translations at 600%. Contact coordinates
+      are supplied to the chart. Touch controller latency and switching between installed pages are unmeasured here.
+    before:
+      boot: 443
+      sha256: 132428fedcaad8737e8d5b86e5b3c7ea3ef826d6207b1746e8ac0ba4dd7ec7bc
+      mean_us_run_1: {full: 244219, pan_200: 152529, pinch: 157693}
+      mean_us_run_2: {full: 244209, pan_200: 152521, pinch: 152602}
+    after:
+      boot: 444
+      sha256: b0ac22b834cf9860c3ebbd7cf4b3dd1f55584b161cdc4de9014cecee4fd9c278
+      change: "Restrict camera damage to the chart footprint and flush narrower portrait bands to physical scanlines."
+      mean_us_run_1: {full: 244212, pan_200: 121998, pinch: 122069, pan_600: 121969}
+      mean_us_run_2: {full: 244221, pan_200: 121999, pinch: 122063, pan_600: 121967}
+      panel_counters: {frames_done: 716, missed: 0, late: 0}
+    logs:
+      - build/pilot-chart-bench/chart-motion.log
+      - build/pilot-chart-bench/chart-motion-repeat.log
+      - build/pilot-chart-bands/chart-motion.log
+      - build/pilot-chart-bands/chart-motion-repeat.log
+      - build/pilot-chart-bands/integration/pixels.json
+      - build/pilot-chart-bands/installed.json
+  navigation_benchmark:
+    fixture: "UI-only Pilot Panel 1.2.0 from microSD, board 1, actual page controls and local picker."
+    scope: >-
+      Timed local navigation action through the refresh containing the destination. Two runs
+      of four cycles per firmware. The physical runs invoke the navigation action directly.
+      The host test uses tap events on the actual controls and compares the RGB565 flush output.
+    baseline_boot: 445
+    baseline_sha256: 10ef3f9da84ad56fa6022665e37d3aceda01fcec1a505d9860e614c845617360
+    optimized_boot: 448
+    optimized_sha256: 984e51b5d402a3ffeda6c28b123c4d067216ae0d4b200449cb8724d4558013c5
+    order: [chart_to_picker, picker_to_autopilot, autopilot_to_picker, picker_to_chart]
+    baseline_mean_us: [[213708,366318,213735,274737],[213693,366338,213742,274722]]
+    optimized_mean_us: [[152625,305251,152649,213677],[152584,305243,152702,213659]]
+    chart_regression_mean_us: {full: 183138, pan_200: 121995, pinch: 122074, pan_600: 121961}
+    host: >-
+      Ten cycles per orientation matched all 80 final RGB565 comparisons. Ordinary portrait
+      taps previously displayed an empty autopilot before the instruments in all ten cycles.
+      No such frame occurred in the optimized host run. The direct-action board test reported
+      zero incomplete presentations on both versions. Landscape used a chart and notes fixture.
+    damage_lists: "3000 cases, 888 split. Pixel coverage matched and the LVGL invalidation buffer stayed within capacity."
+    deployment: >-
+      The first promotion rolled back after the first USB status check. On retry the signed
+      image passed the OTA, mounted USB, four-interface and pairing checks. Restored Extensions.
+    evidence:
+      - build/pilot-navigation-before/pages.log
+      - build/pilot-navigation-before/pages-repeat.log
+      - build/pilot-navigation-after/pages.log
+      - build/pilot-navigation-after/pages-repeat.log
+      - build/pilot-navigation-after/chart-repeat.log
+      - build/pilot-navigation-after/installed.json
+      - build/pilot-navigation-after/coverage.log
+      - build/pilot-navigation/summary.json
+      - build/pilot-navigation/regression.log
+  autopilot_return:
+    board: "Unit 1, boot 449, one saved CLIENT pairing and four USB interfaces."
+    sha256: 27d7c0e13b6115ef6c1f1d5feb210fd214562eab407a66360e6e162583b31b89
+    fixture: "The same Pilot Panel 1.2.0 on microSD. Each run opened a fresh profile and made four visits to its offline autopilot."
+    reference: "Boot 448 averaged 305251 and 305243 us over four visits per run."
+    total_us: [[305249,244253,244266,244214],[305286,244229,244249,244202]]
+    navigation_action_us: [[31049,364,358,358],[30440,370,384,365]]
+    scope: >-
+      The action includes selecting the page and preparing the controls. Total time includes the
+      refresh through LCD presentation. These intervals exclude touch recognition. Timings for
+      Demo, numeric editing and pending commands were not measured on the board.
+    implementation: >-
+      Retain the settled main view within the existing widget allowance until package closure.
+      Discard any open editor and cancel pending changes on page exit. Skip drawing a gauge or
+      a line outside the current software-renderer tile.
+    host: >-
+      Offline and Demo, changed targets, a keypad, cancel, late or rejected requests, 25 returns,
+      closure, fresh opening and appearance changes passed. Retained Demo added 13027 bytes
+      on the host against the 49152-byte widget allowance. All twelve RGB565 frames matched
+      the originals with both normal partial refresh and 306 independently invalidated rectangles.
+    chart_regression_mean_us: {full: 183149, pan_200: 121996, pinch: 122072, pan_600: 121967}
+    lcd: {frames_done: 860, missed: 0, late: 0}
+    evidence:
+      - build/pilot-autopilot-warm/installed.json
+      - build/pilot-autopilot-warm/pages.log
+      - build/pilot-autopilot-warm/pages-repeat.log
+      - build/pilot-autopilot-warm/chart-repeat.log
+      - build/pilot-autopilot-return/comparison.json
+      - build/pilot-autopilot-return/final-test.log
+  host_checks:
+    chart_pixels_matched: 3553056
+    transpose_cases: 7397
+    touch_router_checks: 132
+    notes: "Pinch midpoint, three-contact cancellation, pointer rearm, unchanged HID behavior and translucent chart edges."
+  evidence:
+    - build/pilot-responsiveness/20261120-175017-before-map.log
+    - build/pilot-responsiveness/after-zoom-portrait.png
+    - build/pilot-responsiveness/integration/pixels.json
+    - build/pilot-responsiveness/transpose/qemu.json
+    - build/pilot-responsiveness/ptp.log
+    - build/pilot-responsive-rgb565/installed.json
+    - build/pilot-responsive-rgb565/entry-render.log
+
+profile_status_header:
+  scope: "Headless LVGL, offline SDK preview and an isolated ESP32-S3 compilation of pack_panel.c."
+  result: >
+    Tested portrait and landscape, all eight combinations of joystick, telemetry and capture
+    capabilities, and both Home and the extension screen switcher. All 32 layouts fit.
+    Pilot Panel showed its title alone while idle. An active capture on the system appeared
+    even in a local-only profile, then disappeared when sharing stopped. USB suspend,
+    stale telemetry and data errors remained visible in profiles using those capabilities.
+    Local-only profiles made no USB snapshot or telemetry sample reads.
+  preview: >
+    Exercised all four SDK templates and Pilot Panel. The extracted Windows SDK generated the
+    same Pilot Panel HTML as the source tools after line-ending normalization. The preview marks
+    simulated telemetry separately and places author controls outside the device header.
+  sdk:
+    path: build/pilot-responsiveness/profile-header/KVMpad-Extension-SDK.zip
+    bytes: 11170390
+    sha256: de1638bd7f61a699a16bec9c73759c54fe9f40078cbc2ac09eb055d0793e365c
+    distribution: "Local verification archive."
+  evidence:
+    - build/pilot-responsiveness/profile-header/verification.log
+    - build/pilot-responsiveness/profile-header/portrait-pilot-bar.png
+    - build/pilot-responsiveness/profile-header/portrait-connected-bar.png
+    - build/pilot-responsiveness/profile-header/landscape-connected-bar.png
+
+pilot_panel_radio_and_shared_setup:
+  package: org.kvmpad.pilot.panel
+  version: 1.3.0
+  sha256: 4abf9bb87052d8bf3c4e9141b6fba5ac4c9d58f69fc8fb337c5818ad4a906a4a
+  board:
+    firmware_sha256: b348b2cd3eba69d63f2bde222610ea692fc2122b39ed3f3a8d4d148f64f3a244
+    boot: 451
+    pairings: 1
+    installer_on_exfat: WRITTEN_VERIFIED
+    scope: "Loaded the full card archive through the UI-only page benchmark. Each sequence ran four transitions from the screen picker."
+    picker_to_radio_us: [488500, 366324, 396781, 366308]
+    picker_to_setup_us: [152626, 152550, 152592, 152594]
+    picker_to_before_taxi_us: [213703, 213699, 213647, 213690]
+    pan_600_mean_us: 121964
+    pan_600_frames: 12
+    scanout: {frames_done: 1766, late: 0, missed: 0}
+  host:
+    archive_bytes: 38848
+    widgets: 72
+    verified: "Complete six-page portrait package loaded under ASan and UBSan. Switched from charts to radio, enabled Demo, selected Diamond in Setup and opened both Diamond checklists."
+    sdk: "Tested independent COM banks, octal entry with leading zeroes, standby edits, swaps, modes and shared aircraft choice. An item checked for one aircraft stayed independent of the other aircraft."
+    native_radio: "Checked readback correlation, late or rejected replies, Offline, Demo, exit and touch at 540 x 680 and 584 x 928. Peak allocation with twelve-line partial rendering was 55798 bytes against a 65536-byte allowance."
+  limits: "Simulator radio commands still need a HOST provider. Aircraft and checklist selections last for the open extension session. Hardware timings run from the page action through presentation, excluding physical touch detection."
+  evidence:
+    - build/pilot-radio-package/installed.json
+    - build/pilot-radio-package/staged.json
+    - build/pilot-radio-package/pages-radio.log
+    - build/pilot-radio-package/pages-setup.log
+    - build/pilot-radio-package/pages-taxi.log
+    - build/pilot-radio-package/chart.log
+    - build/pilot-radio-package/integration/13-radio-demo-native.png
+    - build/pilot-radio-package/integration/15-da40-checklist-native.png
+    - build/pilot-radio-package/sdk-tests.log
+    - build/pilot-radio-package/published.json
+    - build/pilot-radio/ctest-make.log
+
+pilot_radio_native_font:
+  board: "7B, signed boot 453, OTA1 valid, one paired client, same module 1.3.0 from exFAT"
+  firmware_sha256: 4e7fd69504248f45bba321e5a69920f286d313f8c2d674269a3e3e1d970843be
+  first_open_us_before: 488500
+  first_open_us_after: [396798, 396899]
+  warm_open_us_before: [366324, 396781, 366308]
+  warm_open_us_after: [305313, 305323, 305327, 305303, 305281, 305311]
+  method: "Four trips per run from the screen picker into Offline. The interval ends when the completed destination is presented. Physical touch recognition is excluded."
+  change: "Use LVGL's original 36-pixel Montserrat bitmap at its native size for large numbers and keypad labels. The extra target object contains 57414 bytes of read-only data. The signed program extent grew by 65536 bytes."
+  host: "Four native tests passed. Six RGB565 screens matched the original full-size bitmap reference. Widget high water with a 12-line partial draw buffer was 32070 bytes, down from 55798 bytes."
+  chart_regression: "The visible camera reported 600% and twelve translations averaged 121965 microseconds. Chart status suppresses hidden and catalog views."
+  lcd: {frames_done: 1566, late: 0, missed: 0}
+  evidence:
+    - build/pilot-radio-bitmap/installed.json
+    - build/pilot-radio-bitmap/comparison.json
+    - build/pilot-radio-bitmap/chart.log
+    - build/pilot-radio-font/production-link.json
+    - build/pilot-radio-font/ctest.log
+
+portrait_chart_band_sweep:
+  board: "7B, signed boot 454, prior release confirmed before test, one paired client"
+  firmware_sha256: 28aa9050ce9e882b0829ab67dbcc07d7dd84171711f285ebfbf92d8da4773b2b
+  method: "Reopen the same taxi chart from microSD for each run. Twelve camera translations at verified 600% per run. Repeat the 192-pixel product setting at the start and end."
+  band_widths: [192, 64, 256, 96, 384, 32, 160, 600, 128, 192]
+  pan_600_mean_us_in_run_order: [121961, 121962, 121966, 121973, 121949, 121967, 121969, 152528, 121966, 121964]
+  result: "At 600%, splitting into narrower bands changed flush time but did not improve complete presentation. At width 600 the chart took one extra panel scan. Retained the 192-pixel product setting."
+  scanout: {frames_done: 3017, late: 0, missed: 0}
+  host: "ASan/UBSan: 30210 damage queues with boundary cases and randomized entries, ten candidate widths, four orientations and three render modes. Output matched the pixel mask and queue metadata."
+  evidence: [build/pilot-chart-width/results.json, build/pilot-chart-width/coverage.log, build/pilot-chart-width/installed.json]
+
+portrait_paired_columns_trial:
+  scope: "Compare a two-column RGB565 transpose against the normal release on the same 7B, using Pilot Panel 1.3.0 and the same camera translations."
+  restored_boot: 456
+  candidate_boot: 455
+  candidate_sha256: 15122fac95fe2c5a832769f667ca058795b3a0a763e7867155152c2070f6b584
+  reference_sha256: 28aa9050ce9e882b0829ab67dbcc07d7dd84171711f285ebfbf92d8da4773b2b
+  host: "7397 pixel, bounds and alignment cases passed on the exact implementation. The isolated Xtensa emulator used 28 to 30 percent fewer counts for three aligned tile shapes."
+  width_order: [192, 128, 64, 192]
+  pan_600_mean_us: [121969, 121965, 121971, 121964]
+  decision: "The physical presentation rate stayed unchanged at 600%. The product retains the previous transpose."
+  evidence: [build/pilot-chart-paired/pixels.log, build/pilot-chart-paired/installed.json, build/pilot-chart-width/transpose/qemu.json, build/pilot-chart-paired/restore.log]

@@ -10,12 +10,13 @@ never downloaded at run time. Format: components/ime_engine/include/ime_data.h.
 Files in this version:
   dict_pinyin.dat     PinyinIME system dictionary, built by the vendored AOSP dictionary builder
                       (components/ime_engine/pinyinime/command) from the vendored raw dictionary
-                      (pinyinime/data/rawdict_utf16_65105_freq.txt, valid_utf16.txt).
+                      (pinyinime/data/rawdict_utf16_65105_freq.txt, valid_utf16.txt); omitted with --no-pinyin.
   font_hanzi_24.bin   with --hanzi-font: the hanzi of the pinyin candidate bar, a KVMFONT1 blob written by
                       tools/fonts/gen_hanzi_font_blob.py (derived from Noto Sans SC, OFL-1.1)
   font_kanji_24.bin   with --kanji-font: the kanji and kana of the Japanese candidate bar, the same kind of blob
                       from the same tool with --set ja (derived from Noto Sans JP, OFL-1.1)
-  ofl_noto_cjk.txt    with either font: the OFL text that travels with them
+  font_hangul_24.bin  with --hangul-font: the two-set Korean composition font from --set ko
+  ofl_noto_cjk.txt    with any font: the OFL text that travels with them
                       (components/ui_theme/fonts/OFL-NotoSansKR.txt, the license of the whole Noto CJK family)
   wnn_ja.bin          the Japanese dictionaries of the vendored OpenWnn engine, extracted from
                       components/ime_engine/openwnn/data/WnnJpnDic.c and packed by
@@ -28,7 +29,7 @@ are plain byte arrays and need no compiler.
 Usage:
     python -I tools/ime/build_ime_data.py --cxx <32-bit C++ compiler> --work <scratch dir outside the repo> \\
         --out <ime_data.bin> [--hanzi-font <font_hanzi_24.bin>] [--kanji-font <font_kanji_24.bin>] \\
-        [--no-openwnn] [--partition-size 0x7B0000]
+        [--no-openwnn] [--no-pinyin] [--partition-size 0x7B0000]
     e.g. --cxx ../.tools/llvm-mingw-*/bin/i686-w64-mingw32-clang++ (add --cxx-flag=-static on Windows)
 
 Flash it (a human decision; it resets the board once):
@@ -122,25 +123,34 @@ def pack(files: list[tuple[str, bytes]], part_size: int) -> bytes:
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--cxx", required=True, help="a C++ compiler that targets a 32-bit host")
+    ap.add_argument("--cxx", help="a C++ compiler that targets a 32-bit host (pinyin only)")
     ap.add_argument("--cxx-flag", action="append", default=[], help="extra compiler flag (repeatable)")
     ap.add_argument("--work", required=True, help="scratch directory, outside the repository")
     ap.add_argument("--out", required=True, help="output image")
     ap.add_argument("--partition-size", default="0x7B0000", help="size of the ime_data partition (ADR-033)")
     ap.add_argument("--hanzi-font", help="KVMFONT1 blob of tools/fonts/gen_hanzi_font_blob.py (--set zh)")
     ap.add_argument("--kanji-font", help="KVMFONT1 blob of tools/fonts/gen_hanzi_font_blob.py --set ja")
+    ap.add_argument("--hangul-font", help="KVMFONT1 blob of tools/fonts/gen_hanzi_font_blob.py --set ko")
     ap.add_argument("--openwnn-dict", default=build_wnn_blob.DEFAULT_SRC,
                     help="vendored WnnJpnDic.c the Japanese dictionaries come from")
     ap.add_argument("--no-openwnn", action="store_true", help="leave wnn_ja.bin out of the image")
+    ap.add_argument("--no-pinyin", action="store_true", help="omit the Chinese dictionary (Japanese-only image)")
     args = ap.parse_args(argv)
+    if not args.no_pinyin and not args.cxx:
+        ap.error("--cxx is required to build the pinyin module")
+    if args.no_pinyin and args.hanzi_font:
+        ap.error("--hanzi-font requires the pinyin module")
+    if args.no_pinyin and args.no_openwnn and not args.hangul_font:
+        ap.error("select at least one language module")
 
     work = os.path.abspath(args.work)
     if os.path.commonpath([work, REPO]) == REPO:
         print("--work must be outside the repository", file=sys.stderr)
         return 1
     os.makedirs(work, exist_ok=True)
-    dict_pinyin = build_pinyin_dict(args.cxx, args.cxx_flag, work)
-    files = [("dict_pinyin.dat", dict_pinyin)]
+    files = []
+    if not args.no_pinyin:
+        files.append(("dict_pinyin.dat", build_pinyin_dict(args.cxx, args.cxx_flag, work)))
     if args.hanzi_font:
         with open(args.hanzi_font, "rb") as f:
             font = f.read()
@@ -162,6 +172,15 @@ def main(argv: list[str]) -> int:
                 files.append(("ofl_noto_cjk.txt", f.read()))
     if not args.no_openwnn:
         files.append(("wnn_ja.bin", build_wnn_blob.build(args.openwnn_dict)))
+    if args.hangul_font:
+        with open(args.hangul_font, "rb") as f:
+            hangul = f.read()
+        if hangul[:8] != b"KVMFONT1":
+            ap.error("--hangul-font requires a KVMFONT1 blob")
+        files.append(("font_hangul_24.bin", hangul))
+        if not (args.hanzi_font or args.kanji_font):
+            with open(os.path.join(REPO, "components", "ui_theme", "fonts", "OFL-NotoSansKR.txt"), "rb") as f:
+                files.append(("ofl_noto_cjk.txt", f.read()))
     image = pack(files, int(args.partition_size, 0))
     with open(args.out, "wb") as f:
         f.write(image)

@@ -55,14 +55,19 @@ touch_target_t touch_router_target(const touch_router_t *r, uint8_t track_id)
     return TOUCH_TARGET_NONE;
 }
 
-void touch_router_cancel(touch_router_t *r)
+static void block_contacts(touch_router_t *r)
 {
-    r->st.cancels++;
     for (int i = 0; i < KVM_TOUCH_MAX_POINTS; i++) {
         if (r->c[i].used) {
             r->c[i].target = TOUCH_TARGET_BLOCKED;
         }
     }
+}
+
+void touch_router_cancel(touch_router_t *r)
+{
+    r->st.cancels++;
+    block_contacts(r);
     if (r->ptr_active) {
         r->ptr_active = false;
         r->cancel_pending = true;
@@ -84,7 +89,11 @@ void touch_router_route(touch_router_t *r, const kvm_touch_sample_t *s, touch_ro
             r->ptr_active = false;
             r->cancel_pending = true;
         }
-        memset(r->c, 0, sizeof(r->c));
+        if (r->require_lift_after_error) {
+            block_contacts(r);
+        } else {
+            memset(r->c, 0, sizeof(r->c));
+        }
         out->pad.valid = false;
         out->pad.point_count = 0;
     } else {

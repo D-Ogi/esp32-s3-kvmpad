@@ -94,7 +94,13 @@ static void add_tab(lv_obj_t *seg, const ui_segment_t *row, int32_t width, ui_se
     }
     lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(tab, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    if (row->icon) {
+    if (row->icon && lv_image_src_get_type(row->icon) == LV_IMAGE_SRC_VARIABLE) {
+        ui_theme_control_button(tab);
+        ui_theme_apply(tab, UI_STYLE_NAV_TAB, LV_STATE_DEFAULT);
+        lv_obj_set_style_pad_hor(tab, 2, 0);
+        lv_obj_set_style_pad_column(tab, 2, 0);
+        ui_theme_control_mask(tab, row->icon);
+    } else if (row->icon) {
         lv_label_set_text(lv_label_create(tab), row->icon);
     }
     if (row->label) {

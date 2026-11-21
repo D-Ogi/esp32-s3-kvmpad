@@ -18,8 +18,22 @@
 #include "freertos/task.h"
 #include "sdkconfig.h"
 #include "ui_backend.h"
+#if CONFIG_KVM_UI_ADAPTER_TEAR_DOUBLE_PARTIAL
+#include "ui_portrait_damage.h"
+#endif
+#ifdef KVM_CAPTURE_SCANOUT
+#include "ui_scanout.h"
+#endif
 
 static const char *TAG = "ui_platform";
+
+#if CONFIG_KVM_UI_ADAPTER_TEAR_DOUBLE_PARTIAL && CONFIG_KVM_UI_BENCH
+static unsigned benchmark_band;
+void ui_platform_set_benchmark_band(unsigned width)
+{
+    benchmark_band=width;
+}
+#endif
 
 static lv_display_t *s_disp;
 static bool s_running;
@@ -45,6 +59,15 @@ static void on_display_event(lv_event_t *e)
     if (s_lvgl_task == NULL) {
         s_lvgl_task = xTaskGetCurrentTaskHandle();
     }
+#if CONFIG_KVM_UI_ADAPTER_TEAR_DOUBLE_PARTIAL
+    if (code==LV_EVENT_RENDER_START) {
+        unsigned width=UI_PORTRAIT_BAND_WIDTH;
+#if CONFIG_KVM_UI_BENCH
+        if (benchmark_band) width=benchmark_band;
+#endif
+        ui_portrait_split_damage(lv_event_get_target(e),(int)width);
+    }
+#endif
     portENTER_CRITICAL(&s_mux);
     switch (code) {
     case LV_EVENT_REFR_START:
@@ -103,7 +126,8 @@ uint8_t ui_platform_required_fbs(void)
 
 uint16_t ui_platform_bounce_lines(void)
 {
-    return 10; // TECH-020 variant A, measured in M1 (board_lcd default)
+    _Static_assert(BOARD_LCD_V_RES % UI_LCD_BOUNCE_LINES == 0, "IDF requires whole bounce buffers per frame");
+    return UI_LCD_BOUNCE_LINES;
 }
 
 esp_err_t ui_platform_start(void)
@@ -210,8 +234,13 @@ uint32_t ui_platform_fps_x100(void)
 // The snapshot renders the whole screen. It runs in the LVGL task, whose stack is sized for rendering
 // (CONFIG_KVM_UI_TASK_STACK), never in the caller's task: a full shell render overflowed the 6 KiB console stack.
 typedef struct {
-    uint16_t *small;
+    uint16_t *pixels;
+#ifdef KVM_CAPTURE_SCANOUT
+    ui_scanout_t *scanout;
+#endif
+    bool (*view_ready)(void);
     uint16_t w, h, div;
+    uint32_t stride;
     esp_err_t ret;
     SemaphoreHandle_t done;
     bool finished;  // set by the LVGL task, under s_mux
@@ -221,29 +250,65 @@ typedef struct {
 static void snap_free(snap_req_t *r)
 {
     vSemaphoreDelete(r->done);
-    heap_caps_free(r->small);
+#ifdef KVM_CAPTURE_SCANOUT
+    ui_scanout_free(r->scanout);
+#endif
+    heap_caps_free(r->pixels);
     heap_caps_free(r);
+}
+
+static esp_err_t render_snapshot(snap_req_t *r)
+{
+    if (r->view_ready && !r->view_ready())
+        return ESP_ERR_INVALID_STATE;
+#ifdef KVM_CAPTURE_SCANOUT
+    // The view guard and the copy of the last submitted framebuffer run in
+    // this single LVGL callback, before any later scene or refresh can take over.
+    esp_err_t result = ui_scanout_take(r->div, &r->scanout);
+    if (result != ESP_ERR_NOT_FOUND || r->view_ready) return result;
+#endif
+    lv_obj_t *screen = lv_screen_active();
+    if (r->div == 1) {
+        // Render into the buffer that the console will read. A second 7B-sized copy costs 1,228,800 bytes.
+        uint32_t stride = lv_draw_buf_width_to_stride(r->w, LV_COLOR_FORMAT_RGB565);
+        size_t bytes = (size_t)stride * r->h;
+        r->pixels = heap_caps_aligned_alloc(LV_DRAW_BUF_ALIGN, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!r->pixels)
+            return ESP_ERR_NO_MEM;
+        lv_draw_buf_t buf;
+        if (lv_draw_buf_init(&buf, r->w, r->h, LV_COLOR_FORMAT_RGB565, stride, r->pixels, bytes) != LV_RESULT_OK ||
+            lv_snapshot_take_to_draw_buf(screen, LV_COLOR_FORMAT_RGB565, &buf) != LV_RESULT_OK ||
+            buf.header.w != r->w || buf.header.h != r->h)
+            return ESP_FAIL;
+        r->stride = buf.header.stride;
+        return ESP_OK;
+    }
+    r->stride = (uint32_t)r->w * sizeof(uint16_t);
+    r->pixels = heap_caps_malloc((size_t)r->stride * r->h, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!r->pixels)
+        return ESP_ERR_NO_MEM;
+    lv_draw_buf_t *shot = lv_snapshot_take(screen, LV_COLOR_FORMAT_RGB565);
+    if (!shot)
+        return ESP_ERR_NO_MEM;
+    if (shot->header.w < (uint32_t)r->w * r->div || shot->header.h < (uint32_t)r->h * r->div) {
+        lv_draw_buf_destroy(shot);
+        return ESP_FAIL;
+    }
+    for (uint16_t y = 0; y < r->h; y++) {
+        const uint16_t *src = (const uint16_t *)(shot->data + (size_t)y * r->div * shot->header.stride);
+        uint16_t *dst = r->pixels + (size_t)y * r->w;
+        for (uint16_t x = 0; x < r->w; x++) {
+            dst[x] = src[(size_t)x * r->div];
+        }
+    }
+    lv_draw_buf_destroy(shot);
+    return ESP_OK;
 }
 
 static void snap_in_lvgl_task(void *arg)
 {
     snap_req_t *r = arg;
-    lv_draw_buf_t *shot = lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_RGB565);
-    if (shot == NULL) {
-        r->ret = ESP_ERR_NO_MEM;
-    } else {
-        const uint32_t stride = shot->header.stride;
-        const uint8_t *base = shot->data;
-        for (uint16_t y = 0; y < r->h; y++) {
-            const uint16_t *src = (const uint16_t *)(base + (size_t)y * r->div * stride);
-            uint16_t *dst = r->small + (size_t)y * r->w;
-            for (uint16_t x = 0; x < r->w; x++) {
-                dst[x] = src[(size_t)x * r->div];
-            }
-        }
-        lv_draw_buf_destroy(shot);
-        r->ret = ESP_OK;
-    }
+    r->ret = render_snapshot(r);
     portENTER_CRITICAL(&s_mux);
     r->finished = true;
     const bool abandoned = r->abandoned;
@@ -258,21 +323,23 @@ static void snap_in_lvgl_task(void *arg)
 
 esp_err_t ui_platform_snapshot(uint16_t div, ui_platform_row_cb_t cb, void *ctx, uint16_t *out_w, uint16_t *out_h)
 {
+    return ui_platform_snapshot_if(NULL, div, cb, ctx, out_w, out_h);
+}
+
+esp_err_t ui_platform_snapshot_if(bool (*view_ready)(void), uint16_t div, ui_platform_row_cb_t cb,
+                                  void *ctx, uint16_t *out_w, uint16_t *out_h)
+{
     ESP_RETURN_ON_FALSE(s_running && cb != NULL && div >= 1 && div <= 16, ESP_ERR_INVALID_ARG, TAG, "args");
 #if LV_USE_SNAPSHOT
     snap_req_t *r = heap_caps_calloc(1, sizeof(*r), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     ESP_RETURN_ON_FALSE(r != NULL, ESP_ERR_NO_MEM, TAG, "snapshot request");
     r->div = div;
+    r->view_ready = view_ready;
     r->w = (uint16_t)(BOARD_LCD_H_RES / div);
     r->h = (uint16_t)(BOARD_LCD_V_RES / div);
     r->ret = ESP_FAIL;
-    r->small = heap_caps_malloc((size_t)r->w * r->h * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     r->done = xSemaphoreCreateBinary();
-    if (r->small == NULL || r->done == NULL) {
-        if (r->done != NULL) {
-            vSemaphoreDelete(r->done);
-        }
-        heap_caps_free(r->small);
+    if (r->done == NULL) {
         heap_caps_free(r);
         return ESP_ERR_NO_MEM;
     }
@@ -298,13 +365,19 @@ esp_err_t ui_platform_snapshot(uint16_t div, ui_platform_row_cb_t cb, void *ctx,
         if (!finished) {
             return ESP_ERR_TIMEOUT;
         }
-        xSemaphoreTake(r->done, 0); // finished between the timeout and the check
+        xSemaphoreTake(r->done, portMAX_DELAY); // the renderer marked it finished just before signaling
     }
     const esp_err_t ret = r->ret;
     if (ret == ESP_OK) {
-        for (uint16_t y = 0; y < r->h; y++) {
-            cb(r->small + (size_t)y * r->w, r->w, y, ctx);
-        }
+        ESP_LOGI(TAG, "SNAP_SOURCE %s", r->pixels ? "lvgl" : "scanout");
+#ifdef KVM_CAPTURE_SCANOUT
+        if (r->scanout)
+            ui_scanout_send(r->scanout, cb, ctx);
+        else
+#endif
+            for (uint16_t y = 0; y < r->h; y++) {
+                cb((const uint16_t *)((const uint8_t *)r->pixels + (size_t)y * r->stride), r->w, y, ctx);
+            }
         if (out_w) {
             *out_w = r->w;
         }
@@ -315,6 +388,7 @@ esp_err_t ui_platform_snapshot(uint16_t div, ui_platform_row_cb_t cb, void *ctx,
     snap_free(r);
     return ret;
 #else
+    (void)view_ready;
     (void)ctx;
     (void)out_w;
     (void)out_h;

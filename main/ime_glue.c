@@ -2,16 +2,14 @@
 // Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
 // Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
 //
-// ime_glue: see ime_glue.h. The worker does everything that is slow (hashing, dictionary load, font validation read
-// from flash - ui_font_blob_open() builds plain structs and calls no LVGL function but lv_mutex_init()), then
-// publishes READY with
-// release ordering. The LVGL owner only swaps pointers. Each decoder is touched by the worker until READY and by the
-// LVGL task after it, never by both: the hand-over is the atomic state. ZH and JA are independent: either one may
-// fail (its layer stays off) without taking the other down.
+// A worker opens one configured language at a time. The LVGL owner attaches the result and
+// closes dictionaries after detaching the layer. Published fonts outlive their styled widgets.
+
 #include "ime_glue.h"
 
 #include <stdatomic.h>
 #include <stddef.h>
+#include <string.h>
 
 #include "esp_attr.h"
 #include "esp_heap_caps.h"
@@ -36,18 +34,24 @@ static const char *TAG = "ime_glue";
 #define WORKER_STACK 10240
 #define WORKER_PRIO 1 // below every input and UI task
 
-static _Atomic int s_state = IME_GLUE_IDLE;
+typedef struct {
+    _Atomic int state;
+    const char *label;
+    bool (*load)(void);
+    uint32_t *duration_ms;
+} language_module_t;
+
 static _Atomic bool s_claimed;
-static bool s_zh_ok; // written by the worker before READY, read by the LVGL task after it
-static bool s_ja_ok;
-static esp_err_t s_start_err = ESP_OK;
+static void *s_ja_dictionary; // OpenWnn borrows the backing bytes until ime_wnn_close()
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
-static bool s_started;
+
 EXT_RAM_BSS_ATTR static ui_font_blob_t s_hanzi; // about 6 KB of descriptors; the tables in a PSRAM block (ADR-034)
 EXT_RAM_BSS_ATTR static ui_font_blob_t s_kanji;
 static ime_data_file_t s_hanzi_file; // the source of each streamed font (read by its glyph loader)
 static ime_data_file_t s_kanji_file;
-static ime_glue_timing_t s_time; // written by the worker before READY; read after it (diagnostics only)
+static ui_font_blob_t *s_hangul; // allocated only when the optional flash font is used
+static ime_data_file_t s_hangul_file;
+static ime_glue_timing_t s_time; // short diagnostic snapshots under s_mux
 
 // ---- the pinyin decoder handed to the KEYBOARD view (LVGL task only after READY) --------------------------------
 static size_t zh_search(void *ctx, const char *letters, size_t len)
@@ -226,6 +230,9 @@ static void *font_alloc(size_t n)
 
 static bool load_font(const char *name, ui_font_blob_t *font, ime_data_file_t *file, const char *layer)
 {
+    if (ui_font_blob_font(font) != NULL) {
+        return true; // a styled widget can still refer to the published font
+    }
     const esp_err_t err = ime_data_file(name, file);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "%s: %s; the %s layer stays off", name, esp_err_to_name(err), layer);
@@ -235,8 +242,12 @@ static bool load_font(const char *name, ui_font_blob_t *font, ime_data_file_t *f
         .read = font_read, .alloc = font_alloc, .free = heap_caps_free, .ctx = file, .len = file->size};
     const int64_t t0 = esp_timer_get_time();
     const ui_font_blob_status_t fs = ui_font_blob_open(font, &src, &lv_font_montserrat_24, yield_tick, NULL);
-    *(font == &s_kanji ? &s_time.kanji_font_ms : &s_time.hanzi_font_ms) =
-        (uint32_t)((esp_timer_get_time() - t0) / 1000);
+    const uint32_t elapsed_ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
+    portENTER_CRITICAL(&s_mux);
+    if (font == &s_kanji) s_time.kanji_font_ms = elapsed_ms;
+    if (font == &s_hanzi) s_time.hanzi_font_ms = elapsed_ms;
+    portEXIT_CRITICAL(&s_mux);
+
     if (fs != UI_FONT_BLOB_OK) {
         ESP_LOGW(TAG, "%s: %s; the %s layer stays off", name, ui_font_blob_status_name(fs), layer);
         return false;
@@ -282,79 +293,167 @@ static bool load_ja(void)
         heap_caps_free(blob);
         return false;
     }
+    s_ja_dictionary = blob;
     ESP_LOGI(TAG, "OpenWnn ready in %u ms: %u glyphs in %u font part(s), work area %u B",
              (unsigned)((esp_timer_get_time() - t0) / 1000), (unsigned)s_kanji.glyphs, (unsigned)s_kanji.parts,
              (unsigned)ime_wnn_work_size());
     return true;
 }
 
+static bool load_ko(void)
+{
+    ui_font_blob_t *font = font_alloc(sizeof(*font));
+    if (!font) return false;
+    memset(font, 0, sizeof(*font));
+    if (!load_font("font_hangul_24.bin", font, &s_hangul_file, "KO")) {
+        heap_caps_free(font);
+        return false;
+    }
+    s_hangul = font;
+    return true;
+}
+
+static language_module_t s_zh = {.label = "ZH", .load = load_zh, .duration_ms = &s_time.zh_ms};
+static language_module_t s_ja = {.label = "JA", .load = load_ja, .duration_ms = &s_time.ja_ms};
+static language_module_t s_ko = {.label = "KO", .load = load_ko, .duration_ms = &s_time.ko_ms};
+
 static void worker(void *arg)
 {
-    (void)arg;
+    language_module_t *module = arg;
     const int64_t t0 = esp_timer_get_time();
+    const esp_err_t mounted = ime_data_mount();
+    const int64_t opened = esp_timer_get_time();
+    const bool ready = mounted == ESP_OK && module->load();
+    const int64_t finished = esp_timer_get_time();
+    portENTER_CRITICAL(&s_mux);
     s_time.start_ms = (uint32_t)(t0 / 1000);
-    const esp_err_t merr = ime_data_mount();
-    s_time.mount_ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
-    if (merr != ESP_OK) {
-        ESP_LOGW(TAG, "ime_data mount: %s; the ZH and JA layers stay off", esp_err_to_name(merr));
-        atomic_store_explicit(&s_state, IME_GLUE_FAILED, memory_order_release);
-        vTaskDelete(NULL);
-        return;
+    s_time.mount_ms = (uint32_t)((opened - t0) / 1000);
+    *module->duration_ms = (uint32_t)((finished - opened) / 1000);
+    s_time.total_ms = (uint32_t)((finished - t0) / 1000);
+    portEXIT_CRITICAL(&s_mux);
+    if (!ready) {
+        ESP_LOGW(TAG, "%s language resources unavailable (mount: %s)",
+                 module->label, esp_err_to_name(mounted));
     }
-    vTaskDelay(1);
-    int64_t t = esp_timer_get_time();
-    s_zh_ok = load_zh();
-    s_time.zh_ms = (uint32_t)((esp_timer_get_time() - t) / 1000);
-    vTaskDelay(1);
-    t = esp_timer_get_time();
-    s_ja_ok = load_ja();
-    s_time.ja_ms = (uint32_t)((esp_timer_get_time() - t) / 1000);
-    s_time.total_ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
-    ESP_LOGI(TAG, "worker done in %u ms (ZH %s, JA %s), stack free %u",
-             (unsigned)((esp_timer_get_time() - t0) / 1000), s_zh_ok ? "ready" : "off", s_ja_ok ? "ready" : "off",
-             (unsigned)uxTaskGetStackHighWaterMark(NULL));
-    atomic_store_explicit(&s_state, (s_zh_ok || s_ja_ok) ? IME_GLUE_READY : IME_GLUE_FAILED, memory_order_release);
+    atomic_store(&module->state, ready ? IME_GLUE_READY : IME_GLUE_FAILED);
     vTaskDelete(NULL);
 }
 
-esp_err_t ime_glue_start(void)
+void ime_glue_claim(void)
 {
-    portENTER_CRITICAL(&s_mux);
-    const bool first = !s_started;
-    s_started = true;
-    portEXIT_CRITICAL(&s_mux);
-    if (!first) {
-        return s_start_err;
-    }
-    atomic_store(&s_claimed, true); // from here on `ime bench` must leave the decoders alone
-    atomic_store(&s_state, IME_GLUE_LOADING);
-    if (xTaskCreatePinnedToCore(worker, "ime_load", WORKER_STACK, NULL, WORKER_PRIO, NULL, 1) != pdPASS) {
-        s_start_err = ESP_ERR_NO_MEM;
-        atomic_store(&s_state, IME_GLUE_FAILED);
-    }
-    return s_start_err;
+    atomic_store(&s_claimed, true);
 }
 
-void ime_glue_install(ui_app_t *app)
+static void detach(language_module_t *module, ui_app_t *app)
 {
-    if (app == NULL || atomic_load_explicit(&s_state, memory_order_acquire) != IME_GLUE_READY) {
+    const int state = atomic_load(&module->state);
+    if (state == IME_GLUE_INSTALLED || state == IME_GLUE_READY) {
+        if (module == &s_ja) {
+            ui_app_set_ja_engine(app, NULL);
+            ime_wnn_close();
+            heap_caps_free(s_ja_dictionary);
+            s_ja_dictionary = NULL;
+        } else if (module == &s_zh) {
+            ui_app_set_zh_engine(app, NULL);
+            ime_pinyin_close();
+        }
+    }
+    atomic_store(&module->state, IME_GLUE_IDLE);
+}
+
+static void attach(language_module_t *module, ui_app_t *app)
+{
+    int state = atomic_load(&module->state);
+    if (module == &s_ko && state == IME_GLUE_IDLE && s_hangul) {
+        state = IME_GLUE_READY;
+    }
+    if (state == IME_GLUE_READY) {
+        if (module == &s_ko) {
+            ui_theme_set_hangul_font(ui_font_blob_font(s_hangul));
+            ui_view_keyboard_refresh_picker(&app->keyboard);
+        } else if (module == &s_ja) {
+            ui_theme_set_kanji_font(ui_font_blob_font(&s_kanji));
+            ui_app_set_ja_engine(app, &k_ja);
+        } else {
+            ui_theme_set_hanzi_font(ui_font_blob_font(&s_hanzi));
+            ui_app_set_zh_engine(app, &k_zh);
+        }
+        atomic_store(&module->state, IME_GLUE_INSTALLED);
+    } else if (state == IME_GLUE_IDLE) {
+        atomic_store(&module->state, IME_GLUE_LOADING);
+        if (xTaskCreatePinnedToCore(worker, "ime_load", WORKER_STACK, module, WORKER_PRIO, NULL, 1) != pdPASS) {
+            ESP_LOGW(TAG, "no worker stack for %s", module->label);
+            atomic_store(&module->state, IME_GLUE_FAILED);
+        }
+    }
+}
+
+static void sync_resources(ui_app_t *app, bool zh, bool ja, bool ko)
+{
+    if (atomic_load(&s_zh.state) == IME_GLUE_LOADING ||
+        atomic_load(&s_ja.state) == IME_GLUE_LOADING || atomic_load(&s_ko.state) == IME_GLUE_LOADING) {
         return;
     }
-    if (s_zh_ok) {
-        ui_theme_set_hanzi_font(ui_font_blob_font(&s_hanzi));
-        ui_app_set_zh_engine(app, &k_zh);
+    // Release disabled dictionaries before requesting memory for another language.
+    if (!zh && atomic_load(&s_zh.state) != IME_GLUE_IDLE) {
+        detach(&s_zh, app);
     }
-    if (s_ja_ok) {
-        ui_theme_set_kanji_font(ui_font_blob_font(&s_kanji));
-        ui_app_set_ja_engine(app, &k_ja); // the strip takes the layer's font when the layer turns on
+    if (!ja && atomic_load(&s_ja.state) != IME_GLUE_IDLE) {
+        detach(&s_ja, app);
     }
-    atomic_store_explicit(&s_state, IME_GLUE_INSTALLED, memory_order_release);
-    ESP_LOGI(TAG, "decoders installed: ZH %s, JA %s", s_zh_ok ? "on" : "off", s_ja_ok ? "on" : "off");
+    if (!ko && atomic_load(&s_ko.state) != IME_GLUE_IDLE) {
+        detach(&s_ko, app);
+    }
+    if (zh) {
+        attach(&s_zh, app);
+    }
+    if (ja && atomic_load(&s_zh.state) != IME_GLUE_LOADING) {
+        attach(&s_ja, app);
+    }
+    if (ko && atomic_load(&s_zh.state) != IME_GLUE_LOADING && atomic_load(&s_ja.state) != IME_GLUE_LOADING) {
+        if (!ui_theme_has_hangul_font()) {
+            attach(&s_ko, app);
+        } else if (s_hangul) {
+            // The published font survives a settings toggle and can be used immediately.
+            atomic_store(&s_ko.state, IME_GLUE_INSTALLED);
+        }
+    }
+}
+
+static ui_kbd_module_status_t picker_status(const language_module_t *module, bool requested)
+{
+    if (!requested) return UI_KBD_MODULE_DEFAULT;
+    switch (atomic_load(&module->state)) {
+    case IME_GLUE_FAILED:    return UI_KBD_MODULE_FAILED;
+    case IME_GLUE_INSTALLED: return UI_KBD_MODULE_DEFAULT;
+    default:                 return UI_KBD_MODULE_LOADING; // queued, running or awaiting attachment
+    }
+}
+
+void ime_glue_sync(ui_app_t *app, bool zh, bool ja, bool ko)
+{
+    if (!app || !ime_glue_owns_decoder()) return;
+    sync_resources(app, zh, ja, ko);
+    ui_view_keyboard_set_module_status(&app->keyboard, UI_KBD_LANG_ZH, picker_status(&s_zh, zh));
+    ui_view_keyboard_set_module_status(&app->keyboard, UI_KBD_LANG_JA, picker_status(&s_ja, ja));
+    ui_view_keyboard_set_module_status(&app->keyboard, UI_KBD_LANG_KO,
+                                       picker_status(&s_ko, ko && !ui_theme_has_hangul_font()));
 }
 
 ime_glue_state_t ime_glue_state(void)
 {
-    return (ime_glue_state_t)atomic_load(&s_state);
+    const int zh = atomic_load(&s_zh.state), ja = atomic_load(&s_ja.state);
+    const int ko = atomic_load(&s_ko.state);
+    if (zh == IME_GLUE_LOADING || ja == IME_GLUE_LOADING || ko == IME_GLUE_LOADING) {
+        return IME_GLUE_LOADING;
+    }
+    if (zh == IME_GLUE_READY || ja == IME_GLUE_READY || ko == IME_GLUE_READY) {
+        return IME_GLUE_READY;
+    }
+    if (zh == IME_GLUE_INSTALLED || ja == IME_GLUE_INSTALLED || ko == IME_GLUE_INSTALLED) {
+        return IME_GLUE_INSTALLED;
+    }
+    return zh == IME_GLUE_FAILED || ja == IME_GLUE_FAILED || ko == IME_GLUE_FAILED ? IME_GLUE_FAILED : IME_GLUE_IDLE;
 }
 
 const char *ime_glue_state_name(ime_glue_state_t s)
@@ -381,16 +480,19 @@ bool ime_glue_owns_decoder(void)
 
 bool ime_glue_timing(ime_glue_timing_t *out)
 {
-    const int st = atomic_load_explicit(&s_state, memory_order_acquire);
+    const int st = ime_glue_state();
     if (out == NULL || st == IME_GLUE_IDLE || st == IME_GLUE_LOADING) {
         return false;
     }
+    portENTER_CRITICAL(&s_mux);
     *out = s_time;
+    portEXIT_CRITICAL(&s_mux);
     return true;
 }
 
 bool ime_glue_layer_ready(bool ja)
 {
-    const int st = atomic_load_explicit(&s_state, memory_order_acquire);
-    return (st == IME_GLUE_READY || st == IME_GLUE_INSTALLED) && (ja ? s_ja_ok : s_zh_ok);
+    const language_module_t *module = ja ? &s_ja : &s_zh;
+    const int state = atomic_load(&module->state);
+    return state == IME_GLUE_READY || state == IME_GLUE_INSTALLED;
 }

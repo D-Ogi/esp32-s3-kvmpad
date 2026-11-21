@@ -14,8 +14,19 @@ extern "C" {
 
 #define KVM_HID_ITF_KEYBOARD   0
 #define KVM_HID_ITF_MOUSE      1
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+#if defined(CONFIG_TINYUSB_HID_COUNT) && CONFIG_TINYUSB_HID_COUNT == 4
+#define KVM_HPE_FOUR           1
+#define KVM_HID_ITF_PTP        2
+#define KVM_HID_ITF_CONSUMER   3  // IF3 also contains Radial, Studio and Joystick
+#define KVM_HID_ITF_COUNT      4
+#else
+#define KVM_HPE_FOUR           0
 #define KVM_HID_ITF_CONSUMER   2
 #define KVM_HID_ITF_COUNT      3
+#endif
 
 #define KVM_HID_PROTOCOL_BOOT   0   // HID 1.11 §7.2.6 SET_PROTOCOL wValue
 #define KVM_HID_PROTOCOL_REPORT 1

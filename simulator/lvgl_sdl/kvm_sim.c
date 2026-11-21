@@ -48,7 +48,7 @@
 #define KVM_SIM_OUT_DIR "."
 #endif
 
-#define FIXTURES_MAX 64
+#define FIXTURES_MAX 96
 
 typedef enum {
     GOLD_MATCH = 0,
@@ -401,7 +401,10 @@ static bool run_fixture(const opts_t *o, const char *name, row_t *row)
     sim.layout_chord = fx.layout_chord;
 
     const size_t base_alloc = host_lv_live_count();
+    const ui_control_palette_t previous_palette = ui_theme_control_palette();
+    ui_theme_set_control_palette((ui_control_palette_t)fx.settings.palette);
     if (!sim_app_start(&sim)) {
+        ui_theme_set_control_palette(previous_palette);
         printf("  %s: the shell refused to build\n", fx.name);
         return false;
     }
@@ -466,6 +469,7 @@ static bool run_fixture(const opts_t *o, const char *name, row_t *row)
     }
 
     sim_app_stop(&sim);
+    ui_theme_set_control_palette(previous_palette);
     const size_t alloc = host_lv_live_count();
     if (alloc != base_alloc) {
         printf("  %s: live LVGL allocations %zu -> %zu after the shell was destroyed (AT-UIFW-09)\n", fx.name,

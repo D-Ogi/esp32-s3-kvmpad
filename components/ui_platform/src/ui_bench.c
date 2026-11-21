@@ -321,6 +321,17 @@ void ui_bench_demo_result(ui_bench_demo_result_t *out)
     }
 }
 
+#if CONFIG_KVM_UI_BENCH_TAP
+bool ui_bench_screen_active(void)
+{
+    if (!ui_platform_lock(1000))
+        return false;
+    bool visible = s_screen && s_pad && lv_screen_active() == s_screen;
+    ui_platform_unlock();
+    return visible;
+}
+#endif
+
 bool ui_bench_pad_area(int16_t *x1, int16_t *y1, int16_t *x2, int16_t *y2)
 {
     bool ok = false;

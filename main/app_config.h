@@ -30,6 +30,8 @@ bool app_config_confirm_alt_f4(void);
 
 /** Write a pending record now (reboot, OTA, mode change). True when nothing is pending afterwards. */
 bool app_config_flush(void);
+uint8_t app_config_control_palette(void);
+bool app_config_set_control_palette(uint8_t value);
 
 /** Console: load status, write counters and the non-secret settings. */
 void app_config_print(void);
@@ -79,6 +81,7 @@ typedef struct {
     bool pair_require_accept;
     uint8_t control_approval; // kvm_control_approval_t
     bool confirm_alt_f4;
+    uint8_t brightness; // FR-505, percent
     bool keepawake_enabled;
     uint16_t keepawake_interval_s;
     uint8_t unicode_mode; // kvm_unicode_mode_t

@@ -28,6 +28,9 @@ enum {
     Q_CONSUMER_DOWN, // b = usage
     Q_CONSUMER_UP,
     Q_KEEPALIVE,
+#if KVM_HID_HAS_HPE
+    Q_RADIAL, Q_JOYSTICK, Q_PTP,
+#endif
 };
 
 #define CHORD_DONE 0xFF
@@ -36,6 +39,11 @@ enum { BURST_IDLE = 0, BURST_SENDING, BURST_CANCELLING };
 #define REMOTE_DELTA_LIMIT 4096 // 03 §6.5: dx/dy outside [-4096, 4096] -> ERR_RANGE
 
 typedef kvm_hid_staged_t staged_t;
+#if KVM_HID_HAS_HPE
+static void hpe_track_delivery(kvm_hid_core_t *, const uint8_t *);
+static void hpe_clear(kvm_hid_core_t *);
+static uint8_t hpe_neutral(kvm_hid_core_t *, uint8_t, uint8_t *);
+#endif
 
 static inline staged_t *staged(kvm_hid_core_t *core, uint8_t itf)
 {
@@ -75,6 +83,9 @@ static bool ledger_keyboard_empty(const kvm_hid_core_t *core)
 
 static bool ledger_empty(const kvm_hid_core_t *core)
 {
+#if KVM_HID_HAS_HPE
+    if (core->radial_pressed || core->joystick_active || core->ptp_active.count) return false;
+#endif
     return ledger_keyboard_empty(core) && core->buttons == 0 && core->consumer == 0;
 }
 
@@ -96,6 +107,11 @@ static uint8_t entry_itf(kvm_hid_core_t *core, const kvm_hid_qentry_t *e)
     case Q_WHEEL:
     case Q_KEEPALIVE:
         return KVM_HID_ITF_MOUSE;
+#if KVM_HID_HAS_HPE
+    case Q_PTP: return KVM_HID_ITF_PTP;
+    case Q_RADIAL:
+    case Q_JOYSTICK:
+#endif
     case Q_CONSUMER_DOWN:
     case Q_CONSUMER_UP:
         return KVM_HID_ITF_CONSUMER;
@@ -132,6 +148,9 @@ static void try_send(kvm_hid_core_t *core, uint8_t itf)
         return;
     }
     if (core->port.send != NULL && core->port.send(core->port.ctx, itf, s->buf, s->len)) {
+#if KVM_HID_HAS_HPE
+        if (itf == KVM_HID_ITF_PTP) hpe_track_delivery(core, s->buf);
+#endif
         s->pending = false;
         core->in_flight[itf] = true;
         core->in_flight_since[itf] = core->now_us;
@@ -161,7 +180,12 @@ static void stage_mouse(kvm_hid_core_t *core, int8_t dx, int8_t dy, int8_t wheel
 static void stage_consumer(kvm_hid_core_t *core)
 {
     staged_t *s = staged(core, KVM_HID_ITF_CONSUMER);
+#if KVM_HID_HAS_HPE
+    s->buf[0] = HPE_CONSUMER;
+    s->len = (uint8_t)(1 + kvm_hid_build_consumer(s->buf + 1, core->consumer));
+#else
     s->len = (uint8_t)kvm_hid_build_consumer(s->buf, core->consumer);
+#endif
     s->pending = true;
     try_send(core, KVM_HID_ITF_CONSUMER);
 }
@@ -169,9 +193,14 @@ static void stage_consumer(kvm_hid_core_t *core)
 static void stage_neutral(kvm_hid_core_t *core, uint8_t itf)
 {
     staged_t *s = staged(core, itf);
-    s->len = (uint8_t)kvm_hid_build_neutral(itf, protocol_of(core, itf), s->buf);
-    s->pending = true;
+    if (s->pending) return;
     core->neutral_pending[itf] = false;
+#if KVM_HID_HAS_HPE
+    s->len = hpe_neutral(core, itf, s->buf);
+#else
+    s->len = (uint8_t)kvm_hid_build_neutral(itf, protocol_of(core, itf), s->buf);
+#endif
+    s->pending = true;
     try_send(core, itf);
 }
 
@@ -234,6 +263,9 @@ static void ledger_clear(kvm_hid_core_t *core)
     memset(core->keys, 0, sizeof(core->keys));
     core->buttons = 0;
     core->consumer = 0;
+#if KVM_HID_HAS_HPE
+    hpe_clear(core);
+#endif
 }
 
 // ---- queue ---------------------------------------------------------------------------------
@@ -296,6 +328,10 @@ static kvm_hid_err_t q_push(kvm_hid_core_t *core, uint8_t kind, uint8_t a, uint1
     }
     return KVM_HID_OK;
 }
+
+#if KVM_HID_HAS_HPE
+#include "hpe_scheduler.inc"
+#endif
 
 static int8_t take_chunk(int32_t *acc)
 {
@@ -506,6 +542,11 @@ static bool process_head(kvm_hid_core_t *core)
         }
         return true;
     }
+#if KVM_HID_HAS_HPE
+    case Q_RADIAL: case Q_JOYSTICK: case Q_PTP:
+        hpe_process(core, e, itf);
+        return true;
+#endif
     case Q_CONSUMER_DOWN: {
         uint16_t before = core->consumer;
         core->consumer = e->b;
@@ -576,7 +617,7 @@ static kvm_hid_err_t host_gate(kvm_hid_core_t *core)
         core->c.rejected_suspended++;
         return KVM_HID_ERR_USB_SUSPENDED;
     }
-    if (core->usb != KVM_HOST_USB_MOUNTED) {
+    if (core->usb != KVM_HOST_USB_MOUNTED || !core->interface_count) {
         core->c.rejected_offline++; // INV-005: no simulated confirmation without a mounted HOST
         return KVM_HID_ERR_HOST_OFFLINE;
     }
@@ -606,6 +647,10 @@ static kvm_hid_err_t local_admit(kvm_hid_core_t *core, uint64_t now_us)
 
 static kvm_hid_err_t validate(kvm_hid_core_t *core, const kvm_hid_intent_t *in, bool remote)
 {
+#if KVM_HID_HAS_HPE
+    if (in->pad_input && (core->ptp_native || in->pad_generation != core->ptp_generation))
+        return KVM_HID_ERR_STALE_EPOCH;
+#endif
     switch (in->type) {
     case KVM_HID_KEY_DOWN:
     case KVM_HID_KEY_UP:
@@ -634,20 +679,49 @@ static kvm_hid_err_t validate(kvm_hid_core_t *core, const kvm_hid_intent_t *in, 
             return KVM_HID_ERR_RANGE;
         }
         return KVM_HID_OK;
-    case KVM_HID_CHORD:
-        if (kvm_chord_get(in->data.chord.chord_id) == NULL) {
+    case KVM_HID_CHORD: {
+        const kvm_chord_t *chord = kvm_chord_get(in->data.chord.chord_id);
+        if (chord == NULL) {
             core->c.rejected_usage++;
             return KVM_HID_ERR_USAGE;
         }
+        if (chord->kind == KVM_CHORD_KIND_CONSUMER && core->interface_count <= KVM_HID_ITF_CONSUMER)
+            return KVM_HID_ERR_CONTROL_DENIED;
         return KVM_HID_OK;
+    }
     case KVM_HID_CONSUMER_DOWN:
     case KVM_HID_CONSUMER_UP:
+        if (core->interface_count <= KVM_HID_ITF_CONSUMER) return KVM_HID_ERR_CONTROL_DENIED;
         if (remote || !kvm_consumer_is_allowed(in->data.consumer.usage)) {
             // TECH-075: remote Consumer only through a shortcut command_id (KVM_HID_CHORD).
             core->c.rejected_usage++;
             return KVM_HID_ERR_USAGE;
         }
         return KVM_HID_OK;
+#if KVM_HID_HAS_HPE
+    case KVM_HID_STUDIO_ACTION:
+        if (core->interface_count <= KVM_HID_ITF_CONSUMER) return KVM_HID_ERR_CONTROL_DENIED;
+        if (remote || core->active_profile != HPE_STUDIO_PROFILE) return KVM_HID_ERR_CONTROL_DENIED;
+        if (core->studio.status.peer_nonce != in->data.studio.peer_nonce) return KVM_HID_ERR_STALE_EPOCH;
+        return KVM_HID_OK;
+    case KVM_HID_RADIAL:
+        if (core->interface_count <= KVM_HID_ITF_CONSUMER) return KVM_HID_ERR_CONTROL_DENIED;
+        return remote || core->active_profile != HPE_DIAL_PROFILE ? KVM_HID_ERR_CONTROL_DENIED : KVM_HID_OK;
+    case KVM_HID_JOYSTICK:
+        if (core->interface_count <= KVM_HID_ITF_CONSUMER) return KVM_HID_ERR_CONTROL_DENIED;
+        if (remote) return KVM_HID_ERR_CONTROL_DENIED;
+        return hpe_joystick_valid(&in->data.joystick) ? KVM_HID_OK : KVM_HID_ERR_RANGE;
+    case KVM_HID_PTP_FRAME:
+        if (core->interface_count <= KVM_HID_ITF_PTP) return KVM_HID_ERR_CONTROL_DENIED;
+        if (remote || core->active_profile != HPE_MOUSE_PROFILE || !core->ptp_native || !core->ptp_surface)
+            return KVM_HID_ERR_CONTROL_DENIED;
+        if (in->data.ptp.generation != core->ptp_generation) return KVM_HID_ERR_STALE_EPOCH;
+        if (!hpe_frame_valid(&in->data.ptp.frame)) {
+            kvm_hid_core_release_all(core, KVM_RA_GESTURE_CANCEL);
+            return KVM_HID_ERR_RANGE;
+        }
+        return KVM_HID_OK;
+#endif
     case KVM_HID_RELEASE_ALL:
         return KVM_HID_OK;
     case KVM_HID_KEEPALIVE: // SYSTEM only, generated inside the core (INV-007)
@@ -674,6 +748,13 @@ static kvm_hid_err_t enqueue_intent(kvm_hid_core_t *core, const kvm_hid_intent_t
         return q_push(core, Q_WHEEL, 0, 0, in->data.wheel.horizontal, in->data.wheel.vertical);
     case KVM_HID_CHORD:
         return q_push(core, Q_CHORD, 0, in->data.chord.chord_id, 0, 0);
+#if KVM_HID_HAS_HPE
+    case KVM_HID_STUDIO_ACTION:
+        return hpe_studio_action(&core->studio, in->data.studio.tile_id, in->data.studio.action_id,
+                                 in->data.studio.peer_nonce, core->now_us) ? KVM_HID_OK : KVM_HID_ERR_CONTROL_DENIED;
+    case KVM_HID_RADIAL: case KVM_HID_JOYSTICK: case KVM_HID_PTP_FRAME:
+        return hpe_enqueue(core, in);
+#endif
     case KVM_HID_CONSUMER_DOWN:
         return q_push(core, Q_CONSUMER_DOWN, 0, in->data.consumer.usage, 0, 0);
     case KVM_HID_CONSUMER_UP:
@@ -894,6 +975,7 @@ void kvm_hid_core_init(kvm_hid_core_t *core, const kvm_hid_port_t *port, const k
         core->cfg.move_accum_limit = def.move_accum_limit;
     }
     core->usb = KVM_HOST_USB_UNINITIALIZED;
+    core->interface_count = KVM_HID_ITFS;
     core->owner.kind = OWNER_NONE;
     core->keepalive_interval_us = 30000000u;
     kvm_kbd_init(&core->kbd);
@@ -926,7 +1008,7 @@ void kvm_hid_core_release_all(kvm_hid_core_t *core, kvm_release_reason_t reason)
         if (s != NULL) {
             s->pending = false; // a staged non-neutral report is superseded by the neutral one
         }
-        core->neutral_pending[i] = true;
+        core->neutral_pending[i] = i < core->interface_count;
     }
     core->c.release_all++;
     if (reason < KVM_RA_COUNT) {
@@ -934,7 +1016,7 @@ void kvm_hid_core_release_all(kvm_hid_core_t *core, kvm_release_reason_t reason)
     }
     emit_event(core, KVM_HID_EV_RELEASE_ALL, (uint32_t)reason, core->owner.session_id);
     if (core->usb == KVM_HOST_USB_MOUNTED) {
-        for (uint8_t i = 0; i < KVM_HID_ITFS; i++) {
+        for (uint8_t i = 0; i < core->interface_count; i++) {
             if (!core->in_flight[i]) {
                 stage_neutral(core, i);
             }
@@ -955,18 +1037,40 @@ void kvm_hid_core_set_usb(kvm_hid_core_t *core, kvm_host_usb_t state, uint32_t u
                     core->in_flight[i] = false;
                 }
             }
+#if KVM_HID_HAS_HPE
+            core->neutral_barrier = true;
+            core->control_neutral_phase = 0;
+            if (usb_epoch != core->usb_epoch) {
+                core->ptp_generation++;
+                core->ptp_native = false;
+                core->ptp_surface = true;
+                core->ptp_active.count = 0;
+                core->ptp_lift.count = 0;
+            }
+#endif
             core->usb_epoch = usb_epoch;
             // TECH-035 / FR-402: every (re)mount and resume starts from neutral reports only.
             for (uint8_t i = 0; i < KVM_HID_ITFS; i++) {
                 staged_t *s = staged(core, i);
                 s->pending = false;
-                core->neutral_pending[i] = true;
+                core->neutral_pending[i] = i < core->interface_count;
             }
         }
         return;
     }
     core->usb = state;
-    if (prev == KVM_HOST_USB_MOUNTED || !ledger_empty(core) || core->q_count != 0 || core->chord_active) {
+    if (state != KVM_HOST_USB_SUSPENDED) {
+        // Configuration loss cancels endpoint transfers without completion callbacks.
+        memset(core->in_flight, 0, sizeof(core->in_flight));
+#if KVM_HID_HAS_HPE
+        core->ptp_native = false;
+        core->ptp_surface = true;
+        core->ptp_lift.count = 0;
+#endif
+    }
+    if (core->owner.kind == OWNER_REMOTE) {
+        revoke_remote(core, state == KVM_HOST_USB_SUSPENDED ? KVM_RA_USB_SUSPEND : KVM_RA_USB_LOSS);
+    } else if (prev == KVM_HOST_USB_MOUNTED || !ledger_empty(core) || core->q_count != 0 || core->chord_active) {
         // INV-006 / 03 §3 rule 6: the ledger is empty after umount or suspend, regardless of delivery.
         kvm_hid_core_release_all(core, state == KVM_HOST_USB_SUSPENDED ? KVM_RA_USB_SUSPEND : KVM_RA_USB_LOSS);
     }
@@ -974,14 +1078,24 @@ void kvm_hid_core_set_usb(kvm_hid_core_t *core, kvm_host_usb_t state, uint32_t u
 
 void kvm_hid_core_on_report_complete(kvm_hid_core_t *core, uint8_t itf)
 {
-    if (itf < KVM_HID_ITFS) {
+    if (itf < KVM_HID_ITFS && core->in_flight[itf]) {
         core->in_flight[itf] = false;
+#if KVM_HID_HAS_HPE
+        if (itf == KVM_HID_ITF_PTP) hpe_complete_ptp(core);
+#endif
     }
+}
+
+void kvm_hid_core_on_report_failed(kvm_hid_core_t *core, uint8_t itf)
+{
+    if (itf >= KVM_HID_ITFS) return;
+    core->in_flight[itf] = false;
+    kvm_hid_core_release_all(core, KVM_RA_COMPLETION_TIMEOUT);
 }
 
 static void keepalive_tick(kvm_hid_core_t *core)
 {
-    if (!core->keepalive_enabled) {
+    if (!core->keepalive_enabled || core->interface_count <= KVM_HID_ITF_MOUSE) {
         return;
     }
     if (core->owner.epoch != core->keepalive_epoch) {
@@ -1018,16 +1132,31 @@ void kvm_hid_core_poll(kvm_hid_core_t *core, uint64_t now_us)
             kvm_hid_core_release_all(core, KVM_RA_COMPLETION_TIMEOUT); // no chord repeat (02 §7.3)
         }
     }
+#if KVM_HID_HAS_HPE
+    hpe_studio_tick(&core->studio, now_us);
+    staged_t *control = staged(core, KVM_HID_ITF_CONSUMER);
+    if (control->pending && control->buf[0] == HPE_STUDIO_IN && control->buf[2] == 0x10 &&
+        (core->studio.status.phase != HPE_REQUESTED || !core->studio.sends ||
+         control->buf[4] != (uint8_t)core->studio.action_seq ||
+         control->buf[5] != (uint8_t)(core->studio.action_seq >> 8))) control->pending = false;
+#endif
     keepalive_tick(core);
     if (core->usb != KVM_HOST_USB_MOUNTED) {
         return;
     }
-    for (uint8_t i = 0; i < KVM_HID_ITFS; i++) {
+    for (uint8_t i = 0; i < core->interface_count; i++) {
         try_send(core, i);
         if (core->neutral_pending[i] && !core->in_flight[i]) {
             stage_neutral(core, i);
         }
     }
+#if KVM_HID_HAS_HPE
+    if (core->neutral_barrier) {
+        for (unsigned i=0; i<core->interface_count; i++)
+            if (core->neutral_pending[i] || core->staged[i].pending || core->in_flight[i]) return;
+        core->neutral_barrier = false;
+    }
+#endif
     if (core->chord_active) {
         chord_step(core);
     }
@@ -1038,6 +1167,20 @@ void kvm_hid_core_poll(kvm_hid_core_t *core, uint64_t now_us)
             chord_step(core);
         }
     }
+#if KVM_HID_HAS_HPE
+    // Studio housekeeping gets the shared endpoint after all input and neutralization work.
+    if (core->interface_count > KVM_HID_ITF_CONSUMER && !core->q_count && !itf_busy(core, KVM_HID_ITF_CONSUMER)) {
+        hpe_packet_t p;
+        if (hpe_studio_next(&core->studio, now_us, &p)) {
+            staged_t *s = staged(core, KVM_HID_ITF_CONSUMER);
+            if (hpe_encode_packet(s->buf, HPE_STUDIO_IN, &p)) {
+                s->len = HPE_STUDIO_WIRE;
+                s->pending = true;
+                try_send(core, KVM_HID_ITF_CONSUMER);
+            }
+        }
+    }
+#endif
 }
 
 kvm_hid_err_t kvm_hid_core_local(kvm_hid_core_t *core, const kvm_hid_intent_t *intent, uint64_t now_us)
@@ -1296,6 +1439,13 @@ void kvm_hid_core_snapshot(const kvm_hid_core_t *core, kvm_hid_snapshot_t *out)
 {
     memset(out, 0, sizeof(*out));
     out->host_usb = core->usb;
+#if KVM_HID_HAS_HPE
+    out->release_generation = core->c.release_all;
+    out->pad_generation = core->ptp_generation;
+    out->pad_native_requested = core->ptp_native;
+    out->pad_surface_enabled = core->ptp_surface;
+    out->neutralizing = core->neutral_barrier;
+#endif
     out->owner_kind = core->owner.kind;
     out->owner_epoch = core->owner.epoch;
     out->maintenance = core->maintenance;

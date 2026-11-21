@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "sources": [],
+  "state": [
+    {
+      "id": "aircraft",
+      "type": "int",
+      "initial": 0,
+      "min": 0,
+      "max": 1
+    }
+  ],
+  "connections": [
+    {
+      "from": "aircraft",
+      "to": "aircraft_setup.selected",
+      "transform": "identity"
+    },
+    {
+      "from": "aircraft",
+      "to": "aircraft_taxi.selected",
+      "transform": "identity"
+    },
+    {
+      "from": "aircraft",
+      "to": "aircraft_approach.selected",
+      "transform": "identity"
+    }
+  ],
+  "actions": [
+    {
+      "id": "select_aircraft_setup",
+      "trigger": "aircraft_setup.change",
+      "type": "state.set",
+      "capability": "ui.basic",
+      "args": {
+        "name": "aircraft",
+        "value": {
+          "event": "value"
+        }
+      }
+    },
+    {
+      "id": "select_aircraft_taxi",
+      "trigger": "aircraft_taxi.change",
+      "type": "state.set",
+      "capability": "ui.basic",
+      "args": {
+        "name": "aircraft",
+        "value": {
+          "event": "value"
+        }
+      }
+    },
+    {
+      "id": "select_aircraft_approach",
+      "trigger": "aircraft_approach.change",
+      "type": "state.set",
+      "capability": "ui.basic",
+      "args": {
+        "name": "aircraft",
+        "value": {
+          "event": "value"
+        }
+      }
+    }
+  ]
+}

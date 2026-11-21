@@ -48,6 +48,7 @@
 #include "ui_actions.h"
 #include "ui_overlay.h"
 #include "ui_router.h"
+#include "ui_theme.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -99,6 +100,7 @@ typedef enum {
     UI_SETTINGS_SEC_INPUT,      // ADR-020 keep awake
     UI_SETTINGS_SEC_KEYBOARD,   // ADR-037 input languages, FR-747 stepper, FR-741 (read-only until TASK-071)
     UI_SETTINGS_SEC_ABOUT,      // FR-751, TECH-084
+    UI_SETTINGS_SEC_APPEARANCE, // global palette and panel backlight
     UI_SETTINGS_SEC_COUNT,
 } ui_settings_section_t;
 
@@ -155,6 +157,8 @@ typedef enum {
      * favorite. This screen never edits the list itself - it redraws the one that comes back.
      */
     UI_SETTING_HOST_FAV_TOGGLE,
+    UI_SETTING_BRIGHTNESS, // FR-505, panel brightness in percent
+    UI_SETTING_PALETTE, // ui_control_palette_t
     UI_SETTING_COUNT,
 } ui_setting_id_t;
 
@@ -165,6 +169,9 @@ typedef void (*ui_settings_sink_fn)(void *ctx, ui_setting_id_t id, int32_t value
 #define UI_SETTINGS_INTERVAL_MIN 10u
 #define UI_SETTINGS_INTERVAL_MAX 300u
 #define UI_SETTINGS_INTERVAL_STEP 10u
+
+#define UI_SETTINGS_BRIGHTNESS_MIN 10u
+#define UI_SETTINGS_BRIGHTNESS_MAX 100u
 
 /** KVM_CONFIG_MAX_PAIRED (FR-726) and KVM_CONFIG_PAIR_NAME_CAP, mirrored; a test pins both. */
 #define UI_SETTINGS_CLIENTS_MAX 8
@@ -241,6 +248,8 @@ typedef struct {
     bool confirm_alt_f4;         // FR-734
     bool keepawake_enabled;      // FR-711
     uint16_t keepawake_interval_s;
+    uint8_t brightness;
+    uint8_t palette;
 
     uint8_t unicode_mode;                     // ui_unicode_mode_t, FR-747
     /** ADR-037: the composed languages the KEYBOARD view's language key offers. English is always on. */
@@ -326,6 +335,10 @@ struct ui_view_settings_s {
     lv_obj_t *interval_value;
     lv_obj_t *interval_down;
     lv_obj_t *interval_up;
+    lv_obj_t *palette[UI_PALETTE_COUNT];
+    lv_obj_t *brightness_value;
+    lv_obj_t *brightness_down;
+    lv_obj_t *brightness_up;
     lv_obj_t *clients_heading;
     ui_settings_client_row_t client_row[UI_SETTINGS_CLIENTS_MAX];
     lv_obj_t *clients_empty;

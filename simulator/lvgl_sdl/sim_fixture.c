@@ -14,6 +14,7 @@
 #include "sim_ja.h"
 #include "sim_zh.h"
 #include "ui_segmented.h"
+#include "ui_theme.h"
 #include "ui_topbar.h"
 
 typedef struct {
@@ -85,6 +86,7 @@ static const name_value_t k_sections[] = {
     {"remote", UI_SETTINGS_SEC_REMOTE},       {"clients", UI_SETTINGS_SEC_CLIENTS},
     {"shortcuts", UI_SETTINGS_SEC_SHORTCUTS}, {"input", UI_SETTINGS_SEC_INPUT},
     {"keyboard", UI_SETTINGS_SEC_KEYBOARD},   {"about", UI_SETTINGS_SEC_ABOUT},
+    {"appearance", UI_SETTINGS_SEC_APPEARANCE},
 };
 
 static const name_value_t k_approvals[] = {
@@ -104,6 +106,15 @@ static const name_value_t k_langs[] = {
     {"ko", UI_KBD_LANG_KO},
     {"zh", UI_KBD_LANG_ZH},
     {"ja", UI_KBD_LANG_JA},
+};
+
+static const name_value_t k_workspaces[] = {
+    {"full", UI_KBD_FULL}, {"above", UI_KBD_PAD_ABOVE}, {"left", UI_KBD_PAD_LEFT},
+    {"right", UI_KBD_PAD_RIGHT}, {"above-left", UI_KBD_PAD_ABOVE_BUTTONS_LEFT},
+};
+
+static const name_value_t k_palettes[] = {
+    {"day", UI_PALETTE_DAY}, {"night", UI_PALETTE_NIGHT}, {"high-contrast", UI_PALETTE_HIGH_CONTRAST},
 };
 
 static const name_value_t k_results[] = {
@@ -235,6 +246,13 @@ static bool parse_step(const char *rest, sim_step_t *step, const char *path, int
         step->arg = (int32_t)u;
     } else if (strcmp(word, "tap_lang") == 0) {
         step->kind = SIM_STEP_TAP_LANG;
+    } else if (strcmp(word, "tap_workspace") == 0 && got == 1) {
+        step->kind = SIM_STEP_TAP_WORKSPACE;
+    } else if (strcmp(word, "tap_rail") == 0 && got == 1) {
+        step->kind = SIM_STEP_TAP_RAIL;
+    } else if (strcmp(word, "pick_workspace") == 0 && got == 2 && LOOKUP(k_workspaces, arg, &v)) {
+        step->kind = SIM_STEP_PICK_WORKSPACE;
+        step->arg = v;
     } else if (strcmp(word, "hold_lang") == 0) {
         step->kind = SIM_STEP_HOLD_LANG;
     } else if (strcmp(word, "pick_lang") == 0 && got == 2 && LOOKUP(k_langs, arg, &v)) {
@@ -309,6 +327,7 @@ bool sim_fixture_load(const char *path, sim_fixture_t *out)
     stem_of(path, out->name, sizeof(out->name));
     snprintf(out->title, sizeof(out->title), "%s", out->name);
     out->view = UI_VIEW_MOUSE;
+    out->section = UI_SETTINGS_SEC_APPEARANCE;
     out->layout_chord = KVM_CHORD_LAYOUT_WIN;
     // FR-722 defaults: the code is good for 120 s inside a 180 s window, a decision for 30 s.
     out->pair.code_remaining_ms = 120000u;
@@ -321,6 +340,7 @@ bool sim_fixture_load(const char *path, sim_fixture_t *out)
     out->settings.pair_require_accept = true;
     out->settings.control_approval = UI_CONTROL_APPROVAL_ALWAYS;
     out->settings.keepawake_interval_s = 30u;
+    out->settings.brightness = 80u;
     out->settings.unicode_mode = UI_UNICODE_MODE_HOST_IME;
     snprintf(out->settings.host_layout, sizeof(out->settings.host_layout), "us");
     out->settings.layout_db_available = true; // this build links the generated tables; `layout_db 0` drops them
@@ -423,6 +443,10 @@ bool sim_fixture_load(const char *path, sim_fixture_t *out)
             out->approval.session_id = u;
         } else if (strcmp(key, "settings") == 0 && parse_bool(rest, &b)) {
             out->settings_open = b;
+        } else if (strcmp(key, "extensions") == 0 && parse_bool(rest, &b)) {
+            out->extensions_entry = b;
+        } else if (strcmp(key, "palette") == 0 && LOOKUP(k_palettes, rest, &v)) {
+            out->settings.palette = (uint8_t)v;
         } else if (strcmp(key, "zh") == 0 && parse_bool(rest, &b)) {
             out->zh_engine = b;
         } else if (strcmp(key, "ja") == 0 && parse_bool(rest, &b)) {
@@ -576,6 +600,16 @@ static bool run_step(sim_app_t *s, const sim_step_t *step)
     case SIM_STEP_TAP_LANG:
         target = ui_view_keyboard_lang_key(&s->app.keyboard);
         break;
+    case SIM_STEP_TAP_WORKSPACE:
+        target = s->app.keyboard.workspace_button;
+        break;
+    case SIM_STEP_TAP_RAIL:
+        target = s->app.keyboard.rail_handle;
+        if (!target || !lv_obj_is_visible(target)) return false;
+        break;
+    case SIM_STEP_PICK_WORKSPACE:
+        target = s->app.keyboard.workspace_choices[step->arg];
+        break;
     case SIM_STEP_HOLD_LANG:
         target = ui_view_keyboard_lang_key(&s->app.keyboard);
         if (target == NULL) {
@@ -667,11 +701,21 @@ static bool run_step(sim_app_t *s, const sim_step_t *step)
     } else {
         sim_click_obj(target);
     }
+    if (step->kind == SIM_STEP_TAP_WORKSPACE)
+        return ui_overlay_top(&s->app.router) == UI_OVERLAY_KBD_WORKSPACE;
+    if (step->kind == SIM_STEP_PICK_WORKSPACE)
+        return (int32_t)s->app.keyboard.workspace == step->arg && !ui_overlay_blocking(&s->app.router);
     return true;
+}
+
+static void open_extension_fixture(lv_event_t *event)
+{
+    ui_app_leave_for_extensions(lv_event_get_user_data(event));
 }
 
 bool sim_fixture_apply(sim_app_t *s, const sim_fixture_t *fx)
 {
+    if (fx->extensions_entry && !ui_app_add_extensions_button(&s->app, open_extension_fixture)) return false;
     sim_publish(s, &fx->st);
     if (fx->view != UI_VIEW_MOUSE) {
         const int32_t idx = nav_index_of(s, fx->view);
@@ -706,7 +750,7 @@ bool sim_fixture_apply(sim_app_t *s, const sim_fixture_t *fx)
             printf("    the Settings card refused to open\n");
             return false;
         }
-        if (fx->section != UI_SETTINGS_SEC_REMOTE) {
+        if (fx->section != ui_view_settings_section(&s->app.settings)) {
             sim_click_obj(s->app.settings.tab[fx->section]);
             lv_test_wait(10);
             if (ui_view_settings_section(&s->app.settings) != fx->section) {

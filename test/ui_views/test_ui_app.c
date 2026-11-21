@@ -26,6 +26,7 @@
 #include "hid_core.h"
 #include "hid_keymap.h"
 #include "host_lv_mem.h"
+#include "kvm_control_icons.h"
 #include "kvm_test.h"
 #include "lvgl.h"
 #include "ui_actions.h"
@@ -269,6 +270,277 @@ static void test_pad_rectangle(void)
     CHECK(!s_pad_on); // deinit takes the pad away
 }
 
+static unsigned extension_clicks;
+static void extensions_clicked(lv_event_t *event)
+{
+    CHECK(lv_event_get_user_data(event) == &s_app);
+    ++extension_clicks;
+}
+
+static void leave_for_extension(lv_event_t *event)
+{
+    extensions_clicked(event);
+    ui_app_leave_for_extensions(&s_app);
+}
+
+static bool contains_visible_label(lv_obj_t *root, const char *text)
+{
+    if (!lv_obj_is_visible(root)) return false;
+    if (lv_obj_check_type(root, &lv_label_class) && strstr(lv_label_get_text(root), text)) return true;
+    for (uint32_t n = 0; n < lv_obj_get_child_count(root); n++) {
+        if (contains_visible_label(lv_obj_get_child(root, (int32_t)n), text)) return true;
+    }
+    return false;
+}
+
+static unsigned visible_mask_pixels(const lv_draw_buf_t *shown, const lv_draw_buf_t *hidden,
+                                    const lv_area_t *box)
+{
+    unsigned count = 0;
+    for (int32_t y = box->y1; y <= box->y2; ++y) {
+        const uint16_t *a = (const uint16_t *)(const void *)(shown->data + (size_t)y * shown->header.stride);
+        const uint16_t *b = (const uint16_t *)(const void *)(hidden->data + (size_t)y * hidden->header.stride);
+        for (int32_t x = box->x1; x <= box->x2; ++x) {
+            int red = (int)(a[x] >> 11) - (int)(b[x] >> 11);
+            int green = (int)((a[x] >> 5) & 63) - (int)((b[x] >> 5) & 63);
+            int blue = (int)(a[x] & 31) - (int)(b[x] & 31);
+            if (LV_ABS(red) >= 8 || LV_ABS(green) >= 16 || LV_ABS(blue) >= 8) ++count;
+        }
+    }
+    return count;
+}
+
+static void check_drawer_icons(void)
+{
+    static const lv_image_dsc_t *const expected[] = {&kvm_icon_home, &kvm_icon_shortcuts, &kvm_icon_host,
+                                                      &kvm_icon_client, &kvm_icon_settings, &kvm_icon_extensions};
+    lv_obj_t *masks[6] = {0};
+    lv_area_t boxes[6];
+    for (unsigned i = 0; i < 6; ++i) {
+        lv_obj_t *button = s_app.keyboard.rail_nav[i];
+        for (unsigned n = 0; n < lv_obj_get_child_count(button); ++n) {
+            lv_obj_t *child = lv_obj_get_child(button, (int32_t)n);
+            if (lv_obj_check_type(child, &lv_image_class) && lv_image_get_src(child) == expected[i])
+                masks[i] = child;
+        }
+        CHECK(masks[i] && lv_obj_is_visible(masks[i]));
+        if (!masks[i]) return;
+        lv_obj_get_coords(masks[i], &boxes[i]);
+        bool inside = boxes[i].x1 >= 0 && boxes[i].y1 >= 0 && boxes[i].x2 < SCR_W && boxes[i].y2 < SCR_H;
+        CHECK(inside);
+        if (!inside) return;
+    }
+    for (unsigned palette = 0; palette < UI_PALETTE_COUNT; ++palette) {
+        ui_theme_set_control_palette((ui_control_palette_t)palette);
+        lv_draw_buf_t *shown = lv_snapshot_take(s_app.screen, LV_COLOR_FORMAT_RGB565);
+        for (unsigned i = 0; i < 6; ++i) lv_obj_set_hidden(masks[i], true);
+        lv_draw_buf_t *hidden = lv_snapshot_take(s_app.screen, LV_COLOR_FORMAT_RGB565);
+        for (unsigned i = 0; i < 6; ++i) lv_obj_set_hidden(masks[i], false);
+        CHECK(shown && hidden);
+        if (shown && hidden) {
+            for (unsigned i = 0; i < 6; ++i) {
+                unsigned pixels = visible_mask_pixels(shown, hidden, &boxes[i]);
+                printf("    drawer palette %u icon %u: %u contrasting pixels\n", palette, i, pixels);
+                CHECK(pixels >= 16);
+            }
+        }
+        if (shown) lv_draw_buf_destroy(shown);
+        if (hidden) lv_draw_buf_destroy(hidden);
+    }
+    ui_theme_set_control_palette(UI_PALETTE_DAY);
+}
+
+static void check_drawer_geometry(bool closed)
+{
+    lv_test_wait(400);
+    CHECK_EQ(s_app.keyboard.rail_collapsed, closed);
+    lv_area_t pad, handle;
+    lv_obj_t *tab = s_app.keyboard.rail_handle;
+    CHECK(tab && lv_obj_is_visible(tab) && s_pad_on && ui_router_pad_area(&s_app.router, &pad));
+    if (!tab || !s_pad_on || !ui_router_pad_area(&s_app.router, &pad)) return;
+    lv_obj_get_coords(tab, &handle);
+    CHECK_EQ(pad.y1, 0);
+    CHECK_EQ(lv_area_get_height(&pad), 213);
+    CHECK(closed ? lv_area_get_width(&pad) > 780 : lv_area_get_width(&pad) == 780);
+    CHECK(pad.x1 == s_pad.x1 && pad.y1 == s_pad.y1 && pad.x2 == s_pad.x2 && pad.y2 == s_pad.y2);
+    CHECK(handle.x1 >= 0 && handle.x2 < SCR_W && handle.y1 >= 0 && handle.y2 < SCR_H);
+    CHECK(lv_area_get_width(&handle) >= 44 && lv_area_get_height(&handle) >= 44);
+    CHECK(handle.x2 < pad.x1 || handle.x1 > pad.x2);
+    if (closed) {
+        CHECK_EQ(lv_area_get_width(&handle), 44);
+        for (unsigned j = 0; j < 6; j++) CHECK(!lv_obj_is_visible(s_app.keyboard.rail_nav[j]));
+    }
+}
+
+static void swipe_drawer_handle(int direction)
+{
+    lv_area_t a;
+    lv_obj_get_coords(s_app.keyboard.rail_handle, &a);
+    int32_t x = direction > 0 ? a.x1 + 3 : a.x2 - 3;
+    const int32_t y = (a.y1 + a.y2) / 2;
+    lv_test_mouse_move_to(x, y);
+    lv_test_mouse_press();
+    lv_test_wait(45);
+    for (int i = 1; i <= 5; ++i) {
+        lv_test_mouse_move_to(LV_CLAMP(0, x + direction * 13 * i, SCR_W - 1), y);
+        lv_test_wait(20);
+    }
+    release();
+}
+
+static void test_workspace_navigation(void)
+{
+    CHECK(start());
+    publish(KVM_HOST_USB_MOUNTED, UI_CLIENT_DISABLED);
+    CHECK(ui_app_add_extensions_button(&s_app, leave_for_extension) != NULL);
+    extension_clicks = 0;
+    const unsigned modes[] = {UI_KBD_PAD_ABOVE, UI_KBD_PAD_ABOVE_BUTTONS_LEFT};
+    const uint16_t overlays[] = {UI_OVERLAY_HOST_DETAILS, UI_OVERLAY_CLIENT_DETAILS, UI_OVERLAY_SETTINGS};
+    for (unsigned i = 0; i < 2; ++i) {
+        CHECK(ui_router_show(&s_app.router, UI_VIEW_KEYBOARD));
+        lv_test_wait(30);
+        click_obj(s_app.keyboard.workspace_button);
+        CHECK_EQ(ui_overlay_top(&s_app.router), UI_OVERLAY_KBD_WORKSPACE);
+        click_obj(s_app.keyboard.workspace_choices[modes[i]]);
+        CHECK(s_pad_on && s_pad.y1 == 0 && !lv_obj_is_visible(s_app.bar));
+        check_drawer_geometry(false);
+        check_drawer_icons();
+        const lv_area_t open_pad = s_pad;
+        click_obj(s_app.keyboard.rail_handle);
+        CHECK(s_app.keyboard.rail_moving && !s_pad_on);
+        check_drawer_geometry(true);
+        // The area reclaimed from the navigation controls must route only to the touchpad.
+        int32_t reclaimed_x = i == 0 ? (open_pad.x2 + s_pad.x2) / 2 : (s_pad.x1 + open_pad.x1) / 2;
+        CHECK(reclaimed_x >= s_pad.x1 && reclaimed_x <= s_pad.x2 &&
+              (reclaimed_x < open_pad.x1 || reclaimed_x > open_pad.x2));
+        lv_test_mouse_click_at(reclaimed_x, (s_pad.y1 + s_pad.y2) / 2);
+        lv_test_wait(60);
+        CHECK(s_app.keyboard.rail_collapsed && ui_overlay_top(&s_app.router) == UI_OVERLAY_NONE &&
+              ui_router_active(&s_app.router) == UI_VIEW_KEYBOARD);
+        click_obj(s_app.keyboard.rail_handle);
+        check_drawer_geometry(false);
+        int outward = i == 0 ? 1 : -1;
+        swipe_drawer_handle(outward);
+        check_drawer_geometry(true);
+        swipe_drawer_handle(-outward);
+        check_drawer_geometry(false);
+        publish(KVM_HOST_USB_MOUNTED, UI_CLIENT_LISTENING);
+        CHECK(contains_visible_label(s_app.keyboard.rail_nav[2], status_text(UI_TOPBAR_HOST)));
+        CHECK(contains_visible_label(s_app.keyboard.rail_nav[3], status_text(UI_TOPBAR_CLIENT)));
+        publish(KVM_HOST_USB_SUSPENDED, UI_CLIENT_STALE);
+        CHECK(contains_visible_label(s_app.keyboard.rail_nav[2], status_text(UI_TOPBAR_HOST)));
+        CHECK(contains_visible_label(s_app.keyboard.rail_nav[3], status_text(UI_TOPBAR_CLIENT)));
+        publish(KVM_HOST_USB_MOUNTED, UI_CLIENT_LISTENING);
+        click_obj(s_app.keyboard.workspace_button);
+        click_obj(s_app.keyboard.workspace_choices[UI_KBD_FULL]);
+        CHECK(!s_pad_on && lv_obj_is_visible(s_app.bar));
+        lv_area_t content;
+        lv_obj_get_coords(s_app.router.content_slot, &content);
+        CHECK_EQ(content.y1, TOP_H);
+        click_obj(s_app.keyboard.workspace_button);
+        click_obj(s_app.keyboard.workspace_choices[modes[i]]);
+        CHECK(s_pad_on && s_pad.y1 == 0 && !lv_obj_is_visible(s_app.bar));
+        for (unsigned j = 0; j < 6; ++j) {
+            lv_area_t bounds;
+            lv_obj_t *button = s_app.keyboard.rail_nav[j];
+            lv_obj_get_coords(button, &bounds);
+            CHECK(lv_obj_is_visible(button) && lv_area_get_width(&bounds) >= 44 && lv_area_get_height(&bounds) >= 44);
+            CHECK(bounds.y1 >= 0 && bounds.y2 <= s_pad.y2);
+            CHECK(i == 0 ? bounds.x1 > s_pad.x2 : bounds.x2 < s_pad.x1);
+        }
+        for (unsigned j = 0; j < 3; ++j) {
+            click_obj(s_app.keyboard.rail_nav[j + 2]);
+            CHECK_EQ(ui_overlay_top(&s_app.router), overlays[j]);
+            CHECK(!s_pad_on);
+            ui_overlay_dismiss(&s_app.router);
+            CHECK(s_pad_on && s_pad.y1 == 0);
+        }
+        for (unsigned j = 0; j < 2; ++j) {
+            click_obj(s_app.keyboard.rail_nav[j]);
+            CHECK_EQ(ui_router_active(&s_app.router), j == 0 ? UI_VIEW_MOUSE : UI_VIEW_SHORTCUTS);
+            CHECK(lv_obj_is_visible(s_app.bar));
+            CHECK(ui_router_show(&s_app.router, UI_VIEW_KEYBOARD));
+            CHECK(s_pad_on && s_pad.y1 == 0 && !lv_obj_is_visible(s_app.bar));
+        }
+        ui_app_leave(&s_app);
+        CHECK(lv_obj_is_visible(s_app.bar) && !s_pad_on);
+        ui_app_show(&s_app);
+        CHECK(s_pad_on && s_pad.y1 == 0 && !lv_obj_is_visible(s_app.bar));
+        click_obj(s_app.keyboard.rail_nav[5]);
+        CHECK_EQ(extension_clicks, i+1);
+        CHECK(lv_obj_is_visible(s_app.bar) && !s_pad_on);
+        ui_app_show(&s_app);
+        CHECK_EQ(ui_router_active(&s_app.router), UI_VIEW_MOUSE);
+    }
+    stop();
+}
+
+static void test_extensions_hit_target(void)
+{
+    CHECK(start());
+    CHECK(!ui_app_add_extensions_button(NULL, extensions_clicked));
+    lv_obj_t *btn = ui_app_add_extensions_button(&s_app, extensions_clicked);
+    CHECK(btn != NULL && ui_app_add_extensions_button(&s_app, extensions_clicked) == btn);
+    lv_obj_t *label = lv_obj_get_child(btn, 0);
+    CHECK(label && !strcmp(lv_label_get_text(label), "Extensions"));
+    lv_obj_t *mask = lv_obj_get_child(btn, 1);
+    CHECK(mask && lv_obj_check_type(mask, &lv_image_class) && !lv_obj_is_clickable(mask));
+    const uint32_t ink[] = {0x1D1D1F, 0xF0F5FA, 0xFFFFFF};
+    const uint32_t selected[] = {0x005497, 0xA8DAFF, 0x000000};
+    for (unsigned i = 0; i < UI_PALETTE_COUNT; ++i) {
+        ui_theme_set_control_palette((ui_control_palette_t)i);
+        CHECK_EQ(lv_color_to_u32(lv_obj_get_style_image_recolor(mask, 0)) & 0xffffff, ink[i]);
+        lv_obj_t *tab = ui_segmented_tab(s_app.nav, 0);
+        lv_obj_t *active_mask = lv_obj_get_child(tab, 0);
+        CHECK(lv_obj_has_state(tab, LV_STATE_CHECKED) && lv_obj_check_type(active_mask, &lv_image_class));
+        CHECK_EQ(lv_color_to_u32(lv_obj_get_style_image_recolor(active_mask, 0)) & 0xffffff, selected[i]);
+    }
+    ui_theme_set_control_palette(UI_PALETTE_DAY);
+    extension_clicks = 0;
+    for (unsigned enabled = 0; enabled <= 1; ++enabled) {
+        ui_settings_view_t settings = {.seq=enabled+1, .keepawake_enabled=enabled != 0};
+        ui_app_set_settings(&s_app, &settings);
+        lv_test_wait(30);
+        lv_obj_update_layout(s_app.screen);
+        lv_area_t target, text, tab, gear;
+        lv_obj_get_coords(btn,&target);
+        lv_obj_get_coords(label,&text);
+        lv_obj_get_coords(s_app.nav,&tab);
+        lv_obj_get_coords(s_app.settings_btn,&gear);
+        CHECK(target.x1 >= 0 && target.y1 >= 0 && target.x2 < tab.x1 && target.y2 < TOP_H);
+        CHECK(target.x2-target.x1+1 >= 96 && target.y2-target.y1+1 >= 56);
+        CHECK(text.x1 >= target.x1 && text.x2 <= target.x2 && text.y1 >= target.y1 && text.y2 <= target.y2);
+        lv_area_t icon_box;
+        lv_obj_get_coords(mask, &icon_box);
+        CHECK(icon_box.y1 >= target.y1 && icon_box.y2 < text.y1 && icon_box.x2 <= target.x2);
+        CHECK(s_pad_on && target.y2 < s_pad.y1 && gear.x2 < SCR_W);
+        CHECK(lv_obj_is_hidden(ui_topbar_keep_awake(s_app.bar)) == (enabled == 0));
+        lv_area_t last = tab;
+        lv_obj_t *slots[] = {ui_topbar_keep_awake(s_app.bar), ui_topbar_status_item(s_app.bar,UI_TOPBAR_HOST),
+                             ui_topbar_status_item(s_app.bar,UI_TOPBAR_CLIENT), s_app.settings_btn};
+        for (unsigned i=0; i<4; ++i) {
+            if (lv_obj_is_hidden(slots[i])) continue;
+            lv_area_t next;
+            lv_obj_get_coords(slots[i], &next);
+            CHECK(next.x1 > last.x2 && next.x2 < SCR_W && next.y1 >= 0 && next.y2 < TOP_H);
+            last = next;
+        }
+        printf("    Extensions %d..%d x %d..%d, label %d px, pad top %d, Settings right %d, Keep Awake %u\n",
+               (int)target.x1,(int)target.x2,(int)target.y1,(int)target.y2,(int)(text.x2-text.x1+1),
+               (int)s_pad.y1,(int)gear.x2,enabled);
+        lv_test_mouse_move_to(target.x1+3,target.y1+3);
+        lv_test_mouse_press(); lv_test_wait(60); release();
+        click_obj(btn);
+        CHECK_EQ(extension_clicks, (enabled+1)*2);
+    }
+    CHECK_EQ(s_rec_n,0);
+    click_obj(s_app.settings_btn);
+    CHECK_EQ(ui_overlay_top(&s_app.router),UI_OVERLAY_SETTINGS);
+    click_obj(btn);
+    CHECK_EQ(extension_clicks,4u);
+    stop();
+}
+
 static void test_indicator_details(void)
 {
     CHECK(start());
@@ -310,6 +582,7 @@ static void test_settings_overlay(void)
     lv_test_wait(20);
     CHECK_EQ(ui_overlay_top(&s_app.router), UI_OVERLAY_SETTINGS);
     CHECK(ui_view_settings_card(&s_app.settings, UI_OVERLAY_SETTINGS) != NULL);
+    CHECK_EQ(ui_view_settings_section(&s_app.settings), UI_SETTINGS_SEC_APPEARANCE);
     CHECK(!s_pad_on);           // a blocking card takes the pad away
     CHECK(s_cancels > cancels); // and asked for touch cancel + release first
     CHECK_EQ(s_rec_n, 0);       // nothing reached the domain action sink
@@ -353,6 +626,7 @@ static void test_settings_overlay(void)
     ui_app_set_settings(&s_app, &v);
     CHECK_EQ(ui_view_keyboard_languages(&s_app.keyboard), UI_KBD_LANG_BIT(UI_KBD_LANG_EN));
 
+    click_obj(s_app.settings.tab[UI_SETTINGS_SEC_REMOTE]);
     click_obj(ui_view_settings_toggle(&s_app.settings, UI_SETTING_REMOTE_ENABLED));
     CHECK_EQ(s_setting_n, 1);
     CHECK_EQ(s_setting[0].id, UI_SETTING_REMOTE_ENABLED);
@@ -364,6 +638,10 @@ static void test_settings_overlay(void)
     lv_test_wait(20);
     CHECK_EQ(ui_overlay_top(&s_app.router), UI_OVERLAY_NONE);
     CHECK(s_pad_on); // the pad is back
+    click_obj(s_app.settings_btn);
+    CHECK_EQ(ui_view_settings_section(&s_app.settings), UI_SETTINGS_SEC_REMOTE);
+    CHECK(lv_obj_is_visible(ui_view_settings_pair_button(&s_app.settings)));
+    ui_actions_submit(&s_act, UI_ACT_DISMISS_OVERLAY, UI_CTRL_SETTINGS_CLOSE, 0, fake_now(), NULL);
     stop();
 }
 
@@ -423,10 +701,20 @@ static void test_leave_releases_held_button(void)
     publish(KVM_HOST_USB_MOUNTED, UI_CLIENT_DISABLED);
     press_obj(s_app.mouse.btn_right);
     CHECK_EQ(count(UI_ACT_MOUSE_BUTTON_DOWN, KVM_MOUSE_BTN_RIGHT), 1);
+    CHECK(s_pad_on);
     ui_app_leave(&s_app);
+    CHECK(!s_pad_on);
     CHECK_EQ(count(UI_ACT_MOUSE_BUTTON_UP, KVM_MOUSE_BTN_RIGHT), 1);
     release();
     CHECK_EQ(count(UI_ACT_MOUSE_BUTTON_UP, KVM_MOUSE_BTN_RIGHT), 1); // no second UP for the same press
+    ui_app_show(&s_app);
+    CHECK(s_pad_on && s_pad.y1 >= TOP_H);
+    click_obj(s_app.settings_btn);
+    CHECK(!s_pad_on && ui_overlay_top(&s_app.router) == UI_OVERLAY_SETTINGS);
+    ui_app_leave(&s_app);
+    CHECK(!s_pad_on); // dismissing Settings while leaving must not recapture the new screen
+    ui_app_show(&s_app);
+    CHECK(s_pad_on);
     stop();
 }
 
@@ -697,6 +985,122 @@ static void test_zh_engine_pass_through(void)
     stop();
 }
 
+static void enter_extension(lv_event_t *e)
+{
+    (void)e;
+    ui_app_leave_for_extensions(&s_app);
+    lv_screen_load(s_home);
+}
+
+static lv_obj_t *keyboard_key(const char *name)
+{
+    for (uint32_t i = 0; i < ui_view_keyboard_key_count(); ++i) {
+        if (!strcmp(ui_view_keyboard_key_name(i), name)) return ui_view_keyboard_key_obj(&s_app.keyboard, i);
+    }
+    return NULL;
+}
+
+static void test_extensions_release_view_cache(void)
+{
+    CHECK(start());
+    publish(KVM_HOST_USB_MOUNTED, UI_CLIENT_DISABLED);
+    lv_obj_t *extensions = ui_app_add_extensions_button(&s_app, enter_extension);
+    lv_obj_t *home = s_app.mouse.root;
+    ui_view_keyboard_set_host_layout(&s_app.keyboard, "de");
+    click_obj(ui_segmented_tab(s_app.nav, 1));
+    click_obj(ui_segmented_tab(s_app.nav, 0));
+    CHECK(s_app.keyboard.root && !s_app.shortcuts.root);
+    const size_t keyboard_cached = host_lv_live_bytes();
+    click_obj(extensions);
+    lv_screen_load(s_app.screen);
+    ui_app_show(&s_app);
+    lv_test_wait(20);
+    const size_t keyboard_freed = keyboard_cached - host_lv_live_bytes();
+    CHECK(keyboard_cached > host_lv_live_bytes() + 48u * 1024u);
+    printf("    Keyboard only: %zu LVGL bytes recovered on Home\n", keyboard_freed);
+    size_t released = 0, baseline = 0;
+    for (unsigned pass = 0; pass < 32; ++pass) {
+        click_obj(ui_segmented_tab(s_app.nav, 1));
+        lv_obj_t *keys = s_app.keyboard.root;
+        CHECK(keys != NULL);
+        if (!pass) {
+            click_obj(keyboard_key("F1-F12"));
+            CHECK(s_app.keyboard.fn_layer);
+        }
+        click_obj(ui_segmented_tab(s_app.nav, 2));
+        CHECK(s_app.shortcuts.root && s_app.keyboard.root == keys);
+        click_obj(ui_segmented_tab(s_app.nav, 1));
+        CHECK(s_app.keyboard.root == keys && s_app.keyboard.fn_layer);
+        const size_t loaded = host_lv_live_bytes();
+        if (!pass) {
+            press_obj(keyboard_key("A"));
+            CHECK_EQ(count(UI_ACT_KEY_DOWN, KVM_KEY_A), 1);
+            lv_obj_send_event(extensions, LV_EVENT_CLICKED, NULL);
+            release();
+            CHECK_EQ(count(UI_ACT_KEY_UP, KVM_KEY_A), 1);
+        } else {
+            click_obj(extensions);
+        }
+        CHECK(lv_screen_active() == s_home && !s_pad_on);
+        CHECK(!s_app.keyboard.root && !s_app.shortcuts.root && s_app.mouse.root == home);
+        publish(KVM_HOST_USB_MOUNTED, UI_CLIENT_LISTENING); // exercise the store while both trees are absent
+        lv_screen_load(s_app.screen);
+        ui_app_show(&s_app);
+        lv_test_wait(20);
+        CHECK(ui_router_active(&s_app.router) == UI_VIEW_MOUSE && s_pad_on);
+        CHECK(!strcmp(ui_view_keyboard_host_layout(&s_app.keyboard), "de"));
+        const size_t remaining = host_lv_live_bytes();
+        CHECK(loaded > remaining + 48u * 1024u);
+        if (pass == 1) { released = loaded - remaining; baseline = remaining; }
+        if (pass > 1) CHECK_EQ(remaining, baseline);
+    }
+    printf("    32 Keyboard/Shortcuts -> Extensions -> Mouse cycles: %zu bytes returned to LVGL, %zu bytes live on Home\n",
+           released, baseline);
+    stop();
+}
+
+static void test_extension_restores_language_after_decoder(void)
+{
+    static const ui_kbd_conv_engine_t eng = {
+        .search = zh_none, .candidate = zh_cand, .choose = zh_n, .cancel_last = zh_z, .fixed_len = zh_z,
+        .consumed = zh_z, .parsed = zh_z, .complete = zh_f, .reset = zh_r};
+    CHECK(start());
+    publish(KVM_HOST_USB_MOUNTED, UI_CLIENT_DISABLED);
+    lv_obj_t *extensions = ui_app_add_extensions_button(&s_app, enter_extension);
+    ui_view_keyboard_set_text_mode(&s_app.keyboard, true);
+    ui_view_keyboard_set_languages(&s_app.keyboard, false, false, true);
+    ui_app_set_ja_engine(&s_app, &eng);
+    click_obj(ui_segmented_tab(s_app.nav, 1));
+    click_obj(ui_view_keyboard_lang_key(&s_app.keyboard));
+    CHECK_EQ(ui_view_keyboard_lang(&s_app.keyboard), UI_KBD_LANG_JA);
+    click_obj(s_app.keyboard.flick_toggle);
+    CHECK(s_app.keyboard.flick);
+    click_obj(extensions);
+    ui_app_set_ja_engine(&s_app, NULL);
+    lv_screen_load(s_app.screen);
+    ui_app_show(&s_app);
+    click_obj(ui_segmented_tab(s_app.nav, 1));
+    CHECK_EQ(ui_view_keyboard_lang(&s_app.keyboard), UI_KBD_LANG_EN);
+    const int actions = s_rec_n;
+    ui_app_set_ja_engine(&s_app, &eng);
+    CHECK_EQ(s_rec_n, actions);
+    CHECK_EQ(ui_view_keyboard_lang(&s_app.keyboard), UI_KBD_LANG_JA);
+    CHECK(s_app.keyboard.flick && !lv_obj_is_hidden(s_app.keyboard.flick_pad));
+    CHECK_EQ(s_app.keyboard.py_len, 0);
+    click_obj(extensions);
+    ui_app_set_ja_engine(&s_app, NULL);
+    lv_screen_load(s_app.screen);
+    ui_app_show(&s_app);
+    click_obj(ui_segmented_tab(s_app.nav, 1));
+    click_obj(keyboard_key("A"));
+    const int after_key = s_rec_n;
+    ui_app_set_ja_engine(&s_app, &eng);
+    CHECK_EQ(s_rec_n, after_key);
+    CHECK_EQ(ui_view_keyboard_lang(&s_app.keyboard), UI_KBD_LANG_EN);
+    CHECK(s_app.keyboard.held == UI_VIEW_KBD_NO_KEY);
+    stop();
+}
+
 static void test_refuses_bad_arguments(void)
 {
     ui_app_t app;
@@ -750,11 +1154,15 @@ int main(void)
 
     RUN_MEM(test_build_and_indicators);
     RUN_MEM(test_pad_rectangle);
+    RUN_MEM(test_extensions_hit_target);
+    RUN_MEM(test_workspace_navigation);
     RUN_MEM(test_indicator_details);
     RUN_MEM(test_settings_overlay);
     RUN_MEM(test_keyboard_language_picker);
     RUN_MEM(test_mode_switcher);
     RUN_MEM(test_leave_releases_held_button);
+    RUN_MEM(test_extensions_release_view_cache);
+    RUN_MEM(test_extension_restores_language_after_decoder);
     RUN_MEM(test_pair_entry_point);
     RUN_MEM(test_pairing_prompt_owns_the_screen);
     RUN_MEM(test_approval_prompt_through_the_shell);

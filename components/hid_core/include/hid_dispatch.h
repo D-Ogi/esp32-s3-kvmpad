@@ -27,6 +27,11 @@ esp_err_t hid_dispatch_start(void);
  */
 esp_err_t hid_dispatch_local(const kvm_hid_intent_t *intent);
 
+#if KVM_HID_HAS_HPE
+void hid_dispatch_set_profile(uint8_t profile);
+void hid_dispatch_studio_status(hpe_studio_status_t *out);
+#endif
+
 /** Keyboard view input through the modifier FSM (ADR-016). */
 esp_err_t hid_dispatch_ui_modifier_tap(uint8_t usage);
 esp_err_t hid_dispatch_ui_key_down(uint8_t usage);

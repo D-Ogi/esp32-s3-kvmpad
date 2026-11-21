@@ -59,6 +59,27 @@ Every loss of the lease asks the integrator for a revoke plus `RELEASE_ALL` with
 
 ## Integration
 
+### Optional HOST on an authenticated CLIENT connection
+
+After `hello.ack`, a paired Windows CLIENT can offer the HOST running on the same PC over its existing
+`/v1/ws` connection. Send `host.attach` with the two payload members `port` (1–65535) and `leaf`
+(the HOST server's DER leaf certificate, in standard padded base64). The complete UTF-8 JSON envelope
+must fit within 1024 bytes. The board obtains the PC's IPv4 address from the admitted TLS socket.
+It accepts IPv4-mapped IPv6 sockets as well. The `host.attached` reply carries the request sequence in
+`payload.ack_seq`. When the HOST closes, the same CLIENT sends `host.detach` with an empty
+`{}` payload. The `host.detached` reply echoes the detach sequence in `payload.ack_seq`.
+The CLIENT can then attach a restarted HOST with a new certificate or port on its existing
+connection and control lease. A refusal uses the normal protocol error.
+
+The HOST broker uses its own TLS private key. Its temporary trust on the board belongs to the exact
+CLIENT connection that sent the offer. The CLIENT's HID ownership and the foreground permissions for
+capture, telemetry and actions retain their own approval rules. A socket close, Remote off, unpair,
+maintenance, loss of the Wi-Fi address, or the ordinary three-second heartbeat timeout clears the
+temporary HOST trust. Accepted traffic on the same connection, including the CLIENT's usual ping,
+renews the timeout.
+
+### Protocol hooks
+
 ```c
 static kvm_rp_t g_rp; // ~2.9 KiB, statically allocated by the integrator
 

@@ -4,7 +4,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using KVMpad.Client.Core.Input;
 using KVMpad.Client.Core.Protocol;
 
@@ -83,6 +87,77 @@ public sealed class SessionLogic
     private readonly SessionOptions _options;
     private readonly CaptureLedger _ledger;
     private readonly SequenceCounter _seq = new();
+    private sealed record HostOffer(int Port, string Leaf) : IClientPayload
+    {
+        public void WriteTo(Utf8JsonWriter writer)
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("port", Port);
+            writer.WriteString("leaf", Leaf);
+            writer.WriteEndObject();
+        }
+    }
+    private sealed record DisplayProfile(string Serial, bool Native) : IClientPayload
+    {
+        public void WriteTo(Utf8JsonWriter writer)
+        {
+            writer.WriteStartObject();
+            writer.WriteString("usb_serial", Serial);
+            writer.WriteString("mode", Native ? "1024x600" : "640x480");
+            writer.WriteEndObject();
+        }
+    }
+
+    private sealed record PendingCommand(string Type, string Reply, IClientPayload Payload)
+    {
+        public ulong Sequence;
+        public TaskCompletionSource Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+    private readonly Dictionary<bool, PendingCommand> _commands = new(); // independent HOST and display requests
+
+    public string? DisplaySerial { get; private set; }
+
+    public Task RequestDisplayProfileAsync(string serial, bool native, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            if (State != ClientSessionState.Connected || serial.Length != 12 ||
+                !serial.All(char.IsAsciiHexDigit) || serial != DisplaySerial)
+                throw new InvalidOperationException("Connect to this USB KVMpad and release remote input control first.");
+            return RequestAsync(new("display.profile.request", "display.profile.queued", new DisplayProfile(serial, native)),
+                                display: true, cancellationToken);
+        }
+    }
+
+    public Task AttachHostAsync(int port, byte[] leaf, CancellationToken cancellationToken)
+    {
+        if (port is < 1 or > 65535 || leaf.Length is < 1 or > 1024)
+            throw new ArgumentException("Invalid HOST listener information.");
+        return RequestAsync(new("host.attach", "host.attached", new HostOffer(port, Convert.ToBase64String(leaf))), false, cancellationToken);
+    }
+
+    public Task DetachHostAsync(CancellationToken cancellationToken)
+        => RequestAsync(new("host.detach", "host.detached", new EmptyPayload()), false, cancellationToken);
+
+    private async Task RequestAsync(PendingCommand command, bool display, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (_gate)
+        {
+            if (!HasAuthenticatedSession)
+                throw new InvalidOperationException("Connect to the paired device first.");
+            if (!_commands.TryAdd(display, command))
+                throw new InvalidOperationException(display ? "A display change is already pending." : "A HOST request is already pending.");
+        }
+        try { await command.Result.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false); }
+        finally
+        {
+            lock (_gate)
+            {
+                if (ReferenceEquals(_commands.GetValueOrDefault(display), command)) _commands.Remove(display);
+            }
+        }
+    }
     private readonly InputRateLimiter _rateLimiter;
 
     private TimeSpan _lastPingSent = TimeSpan.MinValue;
@@ -103,6 +178,9 @@ public sealed class SessionLogic
 
     /// <summary>The device's non-secret session label from <c>hello.ack</c>. Never used as authorization (03 §6.2).</summary>
     public string? SessionId { get; private set; }
+
+    public bool HasAuthenticatedSession => SessionId != null && State is
+        ClientSessionState.Connected or ClientSessionState.ControlPending or ClientSessionState.Controlling;
 
     /// <summary>The lease epoch from <c>control.granted</c>. Null means no input may be sent.</summary>
     public uint? LeaseEpoch { get; private set; }
@@ -160,11 +238,7 @@ public sealed class SessionLogic
             _lastPingSent = _clock.Elapsed;
             SetState(ClientSessionState.Handshaking);
 
-            return
-            [
-                Encode(MessageTypes.Hello, null, new HelloPayload(_options.ClientName, _options.Capabilities)),
-                Encode(MessageTypes.StatusGet, null, new EmptyPayload()),
-            ];
+            return [Encode(MessageTypes.Hello, null, new HelloPayload(_options.ClientName, _options.Capabilities))];
         }
     }
 
@@ -199,11 +273,20 @@ public sealed class SessionLogic
             switch (message.Type)
             {
                 case MessageTypes.HelloAck:
+                    if (State != ClientSessionState.Handshaking || string.IsNullOrEmpty(message.SessionId))
+                    {
+                        LastErrorCode = ErrorCodes.Session;
+                        OnTransportClosed(SessionEndReason.ProtocolError);
+                        ErrorReceived?.Invoke(ErrorCodes.Session, false);
+                        return Array.Empty<byte[]>();
+                    }
                     SessionId = message.SessionId;
                     DeviceId = message.PayloadString("device_id");
                     DeviceCapabilities = ReadCapabilities(message);
+                    DisplaySerial = DeviceCapabilities.Contains("usb_display_profile") ? message.PayloadString("usb_serial") : null;
+                    byte[] statusRequest = Encode(MessageTypes.StatusGet, null, new EmptyPayload());
                     SetState(ClientSessionState.Connected);
-                    return Array.Empty<byte[]>();
+                    return [statusRequest];
 
                 case MessageTypes.StatusSnapshot:
                     Snapshot = StatusSnapshot.Parse(message);
@@ -240,7 +323,26 @@ public sealed class SessionLogic
                 case MessageTypes.InputAck:
                     return Array.Empty<byte[]>();
 
+                case "host.attached":
+                case "host.detached":
+                case "display.profile.queued":
+                    if (_commands.TryGetValue(message.Type == "display.profile.queued", out var cmd) &&
+                        cmd.Sequence != 0 && message.SessionId == SessionId && cmd.Reply == message.Type &&
+                        message.PayloadInt64("ack_seq") == (long)cmd.Sequence &&
+                        (message.ReplyToSeq == null || message.ReplyToSeq == cmd.Sequence))
+                        cmd.Result.TrySetResult();
+                    return Array.Empty<byte[]>();
+
                 case MessageTypes.Error:
+                    foreach (var (display, pending) in _commands)
+                    {
+                        if (pending.Sequence == 0 || message.SessionId != SessionId || message.ReplyToSeq != pending.Sequence) continue;
+                        pending.Result.TrySetException(display
+                            ? new InvalidOperationException("The device declined the USB profile change. Keep its USB monitor open and retry.")
+                            : new HostFailure(HostFailureReason.Rejected, message.ErrorCode));
+                        if (!ErrorCodes.IsFatalForConnection(message.ErrorCode ?? ErrorCodes.BadFrame))
+                            return Array.Empty<byte[]>();
+                    }
                     return OnError(message);
 
                 default:
@@ -257,9 +359,11 @@ public sealed class SessionLogic
     {
         string code = message.ErrorCode ?? ErrorCodes.BadFrame;
         LastErrorCode = code;
-        ErrorReceived?.Invoke(code, message.ErrorRetryable);
-
-        if (ErrorCodes.RequiresLocalRelease(code))
+        if (ErrorCodes.IsFatalForConnection(code))
+        {
+            OnTransportClosed(SessionEndReason.ProtocolError);
+        }
+        else if (ErrorCodes.RequiresLocalRelease(code))
         {
             LeaseEpoch = null;
             _rateLimiter.DiscardPending();
@@ -268,12 +372,7 @@ public sealed class SessionLogic
                 SetState(ClientSessionState.Connected);
         }
 
-        if (ErrorCodes.IsFatalForConnection(code))
-        {
-            EndReason = SessionEndReason.ProtocolError;
-            SetState(ClientSessionState.Disconnected);
-        }
-
+        ErrorReceived?.Invoke(code, message.ErrorRetryable);
         return Array.Empty<byte[]>();
     }
 
@@ -289,6 +388,13 @@ public sealed class SessionLogic
                 return Array.Empty<byte[]>();
 
             TimeSpan now = _clock.Elapsed;
+
+            if (State == ClientSessionState.Handshaking)
+            {
+                if (now - _lastPingSent >= ProtocolLimits.PongTimeout)
+                    OnTransportClosed(SessionEndReason.HeartbeatStale);
+                return Array.Empty<byte[]>();
+            }
 
             if (_outstandingPingNonce.HasValue && now - _lastInboundAt >= ProtocolLimits.PongTimeout)
             {
@@ -320,6 +426,22 @@ public sealed class SessionLogic
                 long nonce = ++_pingNonce;
                 _outstandingPingNonce = nonce;
                 return [Encode(MessageTypes.Ping, null, new PingPayload(nonce))];
+            }
+
+            foreach (var (display, pending) in _commands)
+            {
+                if (pending.Sequence != 0 || pending.Result.Task.IsCompleted) continue;
+                try
+                {
+                    var frame = Encode(pending.Type, null, pending.Payload);
+                    pending.Sequence = _seq.Last;
+                    return [frame];
+                }
+                catch (ProtocolFrameException)
+                {
+                    pending.Result.TrySetException(display ? new InvalidOperationException("Invalid USB profile request.")
+                        : new HostFailure(HostFailureReason.CertificateSize));
+                }
             }
 
             return Array.Empty<byte[]>();
@@ -364,7 +486,7 @@ public sealed class SessionLogic
     {
         lock (_gate)
         {
-            return State == ClientSessionState.Disconnected
+            return State is ClientSessionState.Disconnected or ClientSessionState.Handshaking
                 ? null
                 : Encode(MessageTypes.StatusGet, null, new EmptyPayload());
         }
@@ -375,9 +497,10 @@ public sealed class SessionLogic
     {
         lock (_gate)
         {
+            if (State == ClientSessionState.Disconnected) return Array.Empty<byte[]>();
             var frames = new List<byte[]>();
             frames.AddRange(BuildReleaseAllFrames(ReleaseReason.Shutdown));
-            if (State != ClientSessionState.Disconnected)
+            if (!string.IsNullOrEmpty(SessionId) && State != ClientSessionState.Disconnected)
                 frames.Add(Encode(MessageTypes.SessionClose, null, new EmptyPayload()));
             EndReason = SessionEndReason.ClosedByClient;
             return frames;
@@ -496,6 +619,14 @@ public sealed class SessionLogic
         if (State == state)
             return;
         State = state;
+        if (state == ClientSessionState.Disconnected)
+        {
+            DisplaySerial = null;
+            foreach (var (display, pending) in _commands)
+                pending.Result.TrySetException(display ? new InvalidOperationException("The paired CLIENT session closed.")
+                    : new HostFailure(HostFailureReason.SessionClosed));
+            _commands.Clear();
+        }
         StateChanged?.Invoke(state);
     }
 

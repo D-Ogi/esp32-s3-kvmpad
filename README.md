@@ -16,6 +16,8 @@ Featuring native USB HID, a gesture-driven multi-touch trackpad, an on-screen ke
 
 ![KVMpad UX overview](reference/kvm-essential-ux-overview.png)
 
+On the 7B, open the gear in the top bar and choose **Settings → Appearance** to set the color theme or adjust the panel backlight. Both choices persist across restarts.
+
 ## Hardware
 
 | | |

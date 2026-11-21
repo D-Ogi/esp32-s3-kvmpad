@@ -12,61 +12,73 @@ Generated file - do not edit by hand. Rendered by `kvm_sim` (TASK-070D) from the
 
 | Golden | Size | Bytes | SHA256 | Fixture |
 |---|---|---|---|---|
-| `approval_prompt.png` | 1024x600 | 15833 | `58da6368559e48a75bd0946568fdbb22460246c6345da04023ff4f555c6a56ed` | Control approval - Allow or Deny, 30 s |
-| `client_details.png` | 1024x600 | 17170 | `131d247d1c5647708d5a8caaf2c9a07f220f8f2a30ec4086d3ff3b0fea71bd9c` | CLIENT details card opened from the top bar indicator (FR-003) |
-| `client_lost.png` | 1024x600 | 11755 | `10210802e7352a2b138f860bc190a6bd239bace6e8f93e67570562d340c00d2c` | MOUSE view, CLIENT session stale (reconnecting) |
-| `client_offline.png` | 1024x600 | 11511 | `fbfdf349f6f8509c780b7c63c5bb888afe0a809ab91fd9a1855812474d16588d` | MOUSE view, no network: CLIENT offline, Wi-Fi link down |
-| `error_host_offline.png` | 1024x600 | 15114 | `7c9d9f2616fa9545a7c106b749cee7fcbdb44edc8fb1386474860a441832bb96` | HOST details card with a persistent HOST_OFFLINE error |
-| `error_queue_overflow.png` | 1024x600 | 15329 | `59e07b3567f2a14f6719f7ce597b531bddc17f24b00af96c0ced05fd5fff71f4` | HOST details card with a persistent HID queue overflow error |
-| `host_details.png` | 1024x600 | 15323 | `693dfce3b9f7162452e7b41b88968c24fe8ed4a0e89d314da27d33bfc180e6c3` | HOST details card opened from the top bar indicator (FR-003) |
-| `host_lost.png` | 1024x600 | 11506 | `4b5a66020c1fc15a1f7ea4e827168c4314565bc8330a597c2a3c90c8dce4ed42` | MOUSE view, HOST disconnected (FR-006: nothing is sent) |
-| `host_lost_keyboard.png` | 1024x600 | 20577 | `0b23987c13f3bd683d82174c89e7bab82d11a185e417289e79fa0c4dba89a717` | KEYBOARD view, HOST disconnected: every cap disabled |
-| `host_suspended.png` | 1024x600 | 11918 | `3acecd0cd88d163448b38df6985b3639579db4e200823e20e10905ace5cfab98` | MOUSE view, HOST USB suspended |
-| `keyboard.png` | 1024x600 | 19542 | `858b27c2ed6dc4aa35855dd7390a0326f4a3d0ff3a0bcf3f8e7c53ef1d4c4090` | KEYBOARD view, CapsLock LED off |
-| `keyboard_caps_on.png` | 1024x600 | 19856 | `511194c85f863900120d5b726febb15fff50b6bd5bcfa544489c45ed48297fe4` | KEYBOARD view, CapsLock LED on |
-| `keyboard_caps_unknown.png` | 1024x600 | 19690 | `84d21201517dd833706128b0d1622bc0c974552620ae26932fc328a9ab71de1a` | KEYBOARD view, the HOST has sent no LED report (FR-206) |
-| `keyboard_fn.png` | 1024x600 | 18995 | `13026fc794d1eda0580d65a0cf7d673bd1f589da4151a5d362a2396c2e0fc11a` | KEYBOARD view, local F1-F12 layer on (FR-207) |
-| `keyboard_ja.png` | 1024x600 | 23717 | `7cd8c988eb5f81b0bd53c48f719adddbc240548303c16c0adf722a1b36b623a0` | KEYBOARD view, JA layer composing "kanjihenkan": kana reading and the candidate strip (ADR-024 FR-746) |
-| `keyboard_ja_flick.png` | 1024x600 | 20551 | `db30d0a3c7ac27d44507dfe4e094d736388df98866fb71f6c28f57f2295d1b15` | KEYBOARD view, JA 12-key flick pad: "kanji" flicked in, reading and candidates (ADR-024 FR-746) |
-| `keyboard_key_held.png` | 1024x600 | 19996 | `13f5c09809dea6f72fcda04e1b240f9c64fe0142fbf7a9cefd423577fca4a664` | KEYBOARD view, the A cap held down (FR-203 native DOWN) |
-| `keyboard_ko.png` | 1024x600 | 21147 | `fb16474659cfe28b487d072036ccca8910406a75024d01d41d9237083f73198b` | KEYBOARD view, KO layer composing 안녕: 안 committed, 녕 in the preedit strip (ADR-024 FR-746) |
-| `keyboard_lang_picker.png` | 1024x600 | 23047 | `f4a51a8788fbcb49ed954c928eab0c0e4eefaa2a8564b360b501f5690e24414e` | KEYBOARD view, language picker held open on the KO layer: Korean current, the two decoder-less rows disabled with their reason (ADR-037) |
-| `keyboard_layout_br.png` | 1024x600 | 21735 | `0cfe578005fd7bbf3f4daabb30f9e5da2f970c8939c90521922d07a853c571cf` | KEYBOARD view, HOST layout br: ABNT2 geometry with the LSGT and Ro keys, cedilla legend (FR-742) |
-| `keyboard_layout_de.png` | 1024x600 | 21624 | `6005335800ba159e4995f3f37d721d30ed39727421af9a200561d8422ecc8707` | KEYBOARD view, HOST layout de: ISO geometry with the LSGT key and the ISO Enter, umlaut legends (FR-742) |
-| `keyboard_layout_fr.png` | 1024x600 | 21560 | `c7ac76f5371b942a8f91d53e31b95810d71c50997965919c7757c13d61c8ca8c` | KEYBOARD view, HOST layout fr: AZERTY on ISO geometry, AltGr legends in the bottom-right corner of a cap (FR-742) |
-| `keyboard_layout_jp.png` | 1024x600 | 19920 | `f9e9e11d26607163bf837642411a63afab2ab4c5806db66384edf7119e129dcf` | KEYBOARD view, HOST layout jp: JIS geometry with Yen, Ro, Muhenkan, Henkan and Kana on their own usages (FR-742, FR-743) |
-| `keyboard_layout_ru.png` | 1024x600 | 19196 | `529057367c5e4304de708cfbb0a1bb2d4771dd1f79c93a433d833b8ad5ecddb0` | KEYBOARD view, HOST layout ru: Cyrillic legends from the generated legend font, usages unchanged (FR-742, FR-743, TECH-078) |
-| `keyboard_layout_us.png` | 1024x600 | 19542 | `858b27c2ed6dc4aa35855dd7390a0326f4a3d0ff3a0bcf3f8e7c53ef1d4c4090` | KEYBOARD view, HOST layout us: ANSI geometry, no LSGT key, ASCII legends on their HID usages (FR-742, FR-743) |
-| `keyboard_mods.png` | 1024x600 | 20280 | `fb47d68a30ae28ba943325b4d286cf33c801d5cbf4ba4646f13549b98858b14a` | KEYBOARD view, LShift armed and LCtrl locked (FR-204, ADR-016) |
-| `keyboard_quick_layout.png` | 1024x600 | 22149 | `3141c5d86d56b625e3eded7bd6a6d882ddcbdfb7fd8e2f71341a473f34e40869` | KEYBOARD view, HOST layout quick switch held open: the pinned layouts first, then the recents that are not pinned, the layout in force marked (ADR-039 section 8) |
-| `keyboard_zh.png` | 1024x600 | 23154 | `3c7dcb31dac874b85a71324fed5c591293ec7622b2623917db9215cb2559bdc4` | KEYBOARD view, ZH layer composing "nihao": pinyin input and the candidate strip (ADR-024 FR-746) |
-| `maintenance.png` | 1024x600 | 16765 | `68e1b6e450438bfb7f6cbe6b69deb7ed2d9b539e7f9a585333090af2e06f01ed` | SHORTCUTS view during maintenance (OTA): local input blocked |
-| `mouse.png` | 1024x600 | 11260 | `be61c4033848f43a87bc7817bab5e3fd5b471b1bf59275548fb1dc87c0fe33b7` | MOUSE view, HOST active, CLIENT available |
-| `mouse_drag_lock.png` | 1024x600 | 11445 | `4fb75c40cce792e0cf63ef27e3b44cac1330a04ea6ee885792344408e36ad179` | MOUSE view, drag lock held by the gesture engine (FR-107) |
-| `mouse_help.png` | 1024x600 | 20113 | `e4aa60e0c220c288f297af2a8d67577fe8eb9a933e4e138052c28dab63ce18a5` | MOUSE view, the gesture help card opened with the "?" key |
-| `owner_remote.png` | 1024x600 | 16926 | `b0ab09e857f5d684954d91edb678edb32fc7533b37bd7bde587ca481a68bb5d8` | SHORTCUTS view, control owner REMOTE: local commands blocked (FR-006, FR-308) |
-| `pair_accept.png` | 1024x600 | 16059 | `69164f3826d9da27f3fcfc9298937c37cf4253c9463854078104a097e7d3de38` | Pairing - Accept or Reject the named client |
-| `pair_code.png` | 1024x600 | 16032 | `c85534c30c12d1ec5bf053d206c1d005df523acb3bcdfd31ea0664e3fcc143ea` | Pairing window - the code and the two countdowns |
-| `pair_toast_paired.png` | 1024x600 | 12059 | `db3161a13f220e665f1a6e231f665ab1b6599550838bde8856d29ea2c4ebb936` | Pairing outcome - paired, reported once |
-| `pair_unavailable.png` | 1024x600 | 16649 | `0f30fbdfa63aae5312b97ecd46459d9123ff49f9715605c1fca896c07c67ae19` | CLIENT details - pairing unavailable while remote is off |
-| `settings_about.png` | 1024x600 | 42527 | `188eb4db05e856e3f97f6e5ac4499ed87e0b54cad8524399ea5fda2dece21823` | Settings, About with the license, the Required Notice and the generated third-party notices (FR-751) |
-| `settings_clients.png` | 1024x600 | 13977 | `92cb4a7469a75a6e5d70220e6ccfa97916ac8a1014cc27c271a48498291db3af` | Settings, paired clients with the FR-733 trusted flag and Forget (FR-726) |
-| `settings_clients_full.png` | 1024x600 | 21581 | `93a72589e7aaa9de168a6ad8d63c187367e2c13de0fc2548fa02fb03c02fdf7a` | Settings, a full paired-client register (8 of 8): the list scrolls, no row is clipped |
-| `settings_confirm.png` | 1024x600 | 19077 | `cbc687a792ab646c463ebccddd0ee84b4643a10c13e1ebaea153dea438a992b0` | Settings, confirmation required before pair.require_accept is switched off (ADR-023) |
-| `settings_forget.png` | 1024x600 | 15973 | `9b8334f8c7ba5180082c42b24acc59e0a6b1af6aaff0f4d449efa62e62240e79` | Settings, Forget a paired client behind a confirmation (FR-726, ADR-023) |
-| `settings_host_layout.png` | 1024x600 | 14636 | `4a941b07bd74d4fda21ff8c0a270e28138c7aa26a1e36022f40f2d943bba3896` | Settings, Keyboard section: the HOST layout picker at its first level, opened on the page that holds the stored id (FR-741) |
-| `settings_host_layout_home.png` | 1024x600 | 17449 | `a5c7da27d19d86754d88453d15602c7f9b04d3840294951768f49cf15eca9a82` | Settings, HOST layout picker home: the layout in force with its home row, eight pinned favorites and the recents (ADR-039) |
-| `settings_host_layout_page.png` | 1024x600 | 14636 | `4a941b07bd74d4fda21ff8c0a270e28138c7aa26a1e36022f40f2d943bba3896` | Settings, HOST layout picker paged on: a page of layouts with no stored id among them, Prev and Next both live (FR-741) |
-| `settings_host_layout_search.png` | 1024x600 | 18183 | `1035579c6866b36220214099eff2c1191df7fa5e6fbfe6116b7fce9427c40a76` | Settings, HOST layout picker search: the query, the picker's own keyboard and the layouts whose id or name match (ADR-039) |
-| `settings_host_layout_star.png` | 1024x600 | 19986 | `aba949b8962eab2d3e78d69bf5c9aec31b2d5416b6f34ecd6a1b11eb70e3b3e7` | Settings, HOST layout list: the A-Z strip above the rows, one bucket away from the top, and a ninth favorite refused (ADR-039) |
-| `settings_host_layout_variants.png` | 1024x600 | 18747 | `ad6050dd6718ae39cf599d9841fca60903cc831eb039c91da3287edc8434bd54` | Settings, HOST layout picker at its second level: the variants of one layout, Back returns to the layout list (FR-741) |
-| `settings_input.png` | 1024x600 | 13570 | `8d256c3754ce10460d19f5ff9a376fd1f9a9058ac7802f6dacfbd6211a26aa35` | Settings, Input section with the keep-awake interval stepper (FR-711, ADR-020) |
-| `settings_keyboard.png` | 1024x600 | 22629 | `3025c340ed0289b8e94ad8d4bd8d6cfbbbb6eb7095d4e806221afd2212d1541f` | Settings, Keyboard section: the input language list with English always on, the HOST layout row with the stored id, Unicode delivery stepper with its setup hint (ADR-037, FR-741, FR-747) |
-| `settings_remote.png` | 1024x600 | 19103 | `d32d7abe92e31230e2d39604d3d6bd5b956f85671e6c34d24572ee9452d1840f` | Settings, Remote section with the ADR-023 safe defaults (FR-731, FR-732, FR-733) |
-| `settings_shortcuts.png` | 1024x600 | 10988 | `ad520fce4b48603a13f3ab1708e7accc3f6c07c0d4cbb676b2e51dede13de69c` | Settings, Shortcuts section with the FR-734 Alt+F4 confirmation policy (ADR-023) |
-| `settings_unknown.png` | 1024x600 | 18939 | `70ed4cbf3de7445d8b263420e09282dd579610a8ee69524063e25db13ac01b1e` | Settings before the domain published a record: every value Unknown, every control off (07 12.2) |
-| `shortcuts.png` | 1024x600 | 18707 | `6991846baeafb7376e4b2ba05227ce1110b63018f97612ae6951680b011b84f4` | SHORTCUTS view, commands available |
-| `shortcuts_confirm.png` | 1024x600 | 21238 | `cd9d13213883a9c3159e2bb55c6cd1c2f673e08e3ac7c1d43c6b862211a1f657` | SHORTCUTS view, Alt+F4 confirmation modal (FR-734, ADR-023) |
-| `shortcuts_host_lost.png` | 1024x600 | 17179 | `eacedc5b742b473bf809bb14ddaea14036f7537b0daeaa9b6d219c194f1d4d91` | SHORTCUTS view, HOST detached: local commands blocked (FR-308) |
-| `shortcuts_layout_ctrl.png` | 1024x600 | 18676 | `abd31072b015fb26a461b22636d121f884939db8315a6ab774c735dda1da917e` | SHORTCUTS view, HOST layout chord for macOS / Linux (FR-744) |
-| `shortcuts_toast.png` | 1024x600 | 18813 | `df1906d703a5dab11f73d58ae4ed594795ccbe1b63028e9d4a59a79086c82bfe` | SHORTCUTS view, Show desktop requested (the toast claims nothing about the HOST) |
+| `approval_prompt.png` | 1024x600 | 18161 | `4d0c74cd6994790bf604eb7efc41b6c46306312ea591e5fedcb2a188b1b58b0d` | Control approval - Allow or Deny, 30 s |
+| `client_details.png` | 1024x600 | 19505 | `6157677f496101f028808b859ea5b3dddb04c5e5d17513e2017790cb7e59c1fd` | CLIENT details card opened from the top bar indicator (FR-003) |
+| `client_lost.png` | 1024x600 | 15227 | `989c6648158653cff33a2b8f63e096f519d4da15f046d77a0835c38f93f6078b` | MOUSE view, CLIENT session stale (reconnecting) |
+| `client_offline.png` | 1024x600 | 14989 | `2fcb0b93180c03e180aaa40d829a33f41470d36275780b375fc322a18dbda62e` | MOUSE view, no network: CLIENT offline, Wi-Fi link down |
+| `error_host_offline.png` | 1024x600 | 17450 | `204cda1400cd9448789279c93806ce301c1a89c1c2d7ae327064c5f219161258` | HOST details card with a persistent HOST_OFFLINE error |
+| `error_queue_overflow.png` | 1024x600 | 17674 | `79abab307f6adaf40660205d57807e7c1b116aabe5203957bd5dd06db253398c` | HOST details card with a persistent HID queue overflow error |
+| `host_details.png` | 1024x600 | 17669 | `1e2726cce5a43079271cd45359fd3970c74b07543e8415c2ba810da279ebff0f` | HOST details card opened from the top bar indicator (FR-003) |
+| `host_lost.png` | 1024x600 | 14197 | `af55d9980c539336e4d17e06915e6f5ff35597a524a474e8668eed3083249cce` | MOUSE view, HOST disconnected (FR-006: nothing is sent) |
+| `host_lost_keyboard.png` | 1024x600 | 22942 | `6ce402d6ae4164c2ff150ebbf4f5ab39de72720aa8cfd7bd2af1c9cf02990d15` | KEYBOARD view, HOST disconnected: every cap disabled |
+| `host_suspended.png` | 1024x600 | 14547 | `c84efabebca372b84b10a89a5337f9e2c29b9e977d44f001db3836b950f8751a` | MOUSE view, HOST USB suspended |
+| `keyboard.png` | 1024x600 | 21394 | `51bc2f0c52998afeed1c3042b544ea9db486b4b563897e5ca7799cb56c4b2b24` | KEYBOARD view, CapsLock LED off |
+| `keyboard_caps_on.png` | 1024x600 | 21716 | `2abe455df997406fb7f8ffe0480a0893d7d4af63bf37e91d1f5ec6e264ad458f` | KEYBOARD view, CapsLock LED on |
+| `keyboard_caps_unknown.png` | 1024x600 | 21543 | `9dda86d35d648779d6eb6dbcee837383ab75c246e1d3fbe24b81619f50d30603` | KEYBOARD view, the HOST has sent no LED report (FR-206) |
+| `keyboard_fn.png` | 1024x600 | 20766 | `9b9d34b7cf9b481b64616c9959da2e736e89c923d0a680cd76288abd505833f8` | KEYBOARD view, local F1-F12 layer on (FR-207) |
+| `keyboard_ja.png` | 1024x600 | 25497 | `f1f2f910da70580ce62bfbbff8ed4bd9ffbe5e408d34404ecf18ff94843638b5` | KEYBOARD view, JA layer composing "kanjihenkan": kana reading and the candidate strip (ADR-024 FR-746) |
+| `keyboard_ja_flick.png` | 1024x600 | 22438 | `31beb5896ddbf0218c7285ecf360ca236cfb9f7a12298e9db67bddbd5d5d1c32` | KEYBOARD view, JA 12-key flick pad: "kanji" flicked in, reading and candidates (ADR-024 FR-746) |
+| `keyboard_key_held.png` | 1024x600 | 21857 | `ea57302b41d3b5ac6dd6412ebfe0761fae6fad14badc8bd6712291207c6dd320` | KEYBOARD view, the A cap held down (FR-203 native DOWN) |
+| `keyboard_ko.png` | 1024x600 | 23107 | `f170d012c510122f575aeb9a5365d65870faee78a54136cc48ae8b4ae8054ab3` | KEYBOARD view, KO layer composing 안녕: 안 committed, 녕 in the preedit strip (ADR-024 FR-746) |
+| `keyboard_lang_picker.png` | 1024x600 | 24456 | `255b6a5b0b888c37e4b5ad02b892fe01640f8fbadd0b34bfd84e605bcd6ec85f` | KEYBOARD view, language picker held open on the KO layer: Korean current, the two decoder-less rows disabled with their reason (ADR-037) |
+| `keyboard_layout_br.png` | 1024x600 | 23712 | `3d3530030fe0024f834fbf905f50de65ddc4d2c36999466afda80793283cf109` | KEYBOARD view, HOST layout br: ABNT2 geometry with the LSGT and Ro keys, cedilla legend (FR-742) |
+| `keyboard_layout_de.png` | 1024x600 | 23593 | `9c62cb27d46aa2f3a510634ccd689517dc542b59048514516ddf22a50f93e96b` | KEYBOARD view, HOST layout de: ISO geometry with the LSGT key and the ISO Enter, umlaut legends (FR-742) |
+| `keyboard_layout_fr.png` | 1024x600 | 23496 | `547ee973123afe8efdce5018b3fc48dd229dd11a0c8d67e3e939b1592f47ae6b` | KEYBOARD view, HOST layout fr: AZERTY on ISO geometry, AltGr legends in the bottom-right corner of a cap (FR-742) |
+| `keyboard_layout_jp.png` | 1024x600 | 21927 | `e28afc0024637265ff83c8f7c1a7e2ae5270d862bd78e7e0957c9a2a8b4478ff` | KEYBOARD view, HOST layout jp: JIS geometry with Yen, Ro, Muhenkan, Henkan and Kana on their own usages (FR-742, FR-743) |
+| `keyboard_layout_ru.png` | 1024x600 | 21163 | `a9e1af106d9999305e3901eeb1ae76ade3dde0e7c9bed1f5cc6b6deb0cee8cea` | KEYBOARD view, HOST layout ru: Cyrillic legends from the generated legend font, usages unchanged (FR-742, FR-743, TECH-078) |
+| `keyboard_layout_us.png` | 1024x600 | 21394 | `51bc2f0c52998afeed1c3042b544ea9db486b4b563897e5ca7799cb56c4b2b24` | KEYBOARD view, HOST layout us: ANSI geometry, no LSGT key, ASCII legends on their HID usages (FR-742, FR-743) |
+| `keyboard_mods.png` | 1024x600 | 22146 | `180b8e0c715cbc8fefcef52d8526621f234ac7c5df3381e40255e1e82962764b` | KEYBOARD view, LShift armed and LCtrl locked (FR-204, ADR-016) |
+| `keyboard_pad_above.png` | 1024x600 | 23569 | `803291605c8acbbd93b0037ac7559d24ab97c2eeb9580459f7e2c7c4ecb495d9` | Top-edge touchpad above the US keyboard with navigation and mouse buttons on the right |
+| `keyboard_pad_above_collapsed.png` | 1024x600 | 18671 | `4bb36404e2e75f84bc1e9546b75929087f1aeef1193104203695c8f30698378e` | Top-edge touchpad above the US keyboard with navigation and mouse buttons on the right with the navigation drawer collapsed |
+| `keyboard_pad_above_high_contrast.png` | 1024x600 | 22672 | `9827e142843fe71b7b7834721b53a71147d5ed1eeabe423247cbc467646168c2` | Top-edge touchpad above the US keyboard with navigation and mouse buttons on the right (High contrast) |
+| `keyboard_pad_above_left.png` | 1024x600 | 23561 | `d83da4524fb3ffb9c58b59cf6253ee88910fb6789894fd91d5070b2225f3076d` | Top-edge touchpad above the US keyboard with navigation and mouse buttons on the left |
+| `keyboard_pad_above_left_collapsed.png` | 1024x600 | 18669 | `1565c4d90f12713ac66582854261efaecdee1c245e777eea71417bc8abfeb3cd` | Top-edge touchpad above the US keyboard with navigation and mouse buttons on the left with the navigation drawer collapsed |
+| `keyboard_pad_above_left_high_contrast.png` | 1024x600 | 22673 | `25042a6aff5b95a112107bbeef1b289ffabc807d6d55eee8d9b42aafc4f43791` | Top-edge touchpad above the US keyboard with navigation and mouse buttons on the left (High contrast) |
+| `keyboard_pad_above_left_night.png` | 1024x600 | 24809 | `b2fc293cb0056ca7b1ce27191dbe58f45e8b9f0a649efceedb724240550acd2a` | Top-edge touchpad above the US keyboard with navigation and mouse buttons on the left (Night) |
+| `keyboard_pad_above_night.png` | 1024x600 | 24810 | `53bbce4e2356a10df4c6e15eb987479a3650ef56e9fbba8a92bb3179a9bc783a` | Top-edge touchpad above the US keyboard with navigation and mouse buttons on the right (Night) |
+| `keyboard_pad_left.png` | 1024x600 | 26413 | `736f7b7a76025c4501be771f6740919156f2f0f2beb362315163fe8ec577bf5c` | Keyboard with the touchpad left of the JIS keys, both mouse buttons and the Switch window shortcut |
+| `keyboard_pad_right.png` | 1024x600 | 26446 | `665477915e0203f80eaf28d02a094d33923e9b8c47b30eb833d97b8f5aa27f52` | JIS keyboard with the touchpad and window switcher on the right |
+| `keyboard_quick_layout.png` | 1024x600 | 23774 | `905a65abb28b18b8f0c829a87e442cd1de64bee0b441d11a4025fe2f148e69a7` | KEYBOARD view, HOST layout quick switch held open: the pinned layouts first, then the recents that are not pinned, the layout in force marked (ADR-039 section 8) |
+| `keyboard_workspaces.png` | 1024x600 | 23918 | `2627aa0e41abd89a79c6072e04f82a00676fad6aad5c303a42e76fffa5fbddaa` | Keyboard workspace picker with side touchpads and grouped top-edge button positions |
+| `keyboard_zh.png` | 1024x600 | 24941 | `4dc69851629811d479093cda472ce45a45f388eb80b315cca2bd277d725ed630` | KEYBOARD view, ZH layer composing "nihao": pinyin input and the candidate strip (ADR-024 FR-746) |
+| `maintenance.png` | 1024x600 | 18674 | `436e1dba55232dab07b633c98645f5a64c9a325ad28c2e6196b92a347b9c7523` | SHORTCUTS view during maintenance (OTA): local input blocked |
+| `mouse.png` | 1024x600 | 14716 | `7966646abbb383ec54566df943db733224bcbd8a08807117fa45309ac946bded` | MOUSE view, HOST active, CLIENT available |
+| `mouse_drag_lock.png` | 1024x600 | 15342 | `edfeb4d229afe30bdda2a93cc9cdb96a2e05d5025e16d703512fcb9da3839bbe` | MOUSE view, drag lock held by the gesture engine (FR-107) |
+| `mouse_help.png` | 1024x600 | 22420 | `c8bcfbe18e71406094be9bed9cf176d4aa3f190f7b7bdb3f77ae444156938e62` | MOUSE view, the gesture help card opened with the "?" key |
+| `owner_remote.png` | 1024x600 | 18826 | `baea1cf1788234dc138c80d785d39d9287e0d4bb46c9591198fd3177a5bed381` | SHORTCUTS view, control owner REMOTE: local commands blocked (FR-006, FR-308) |
+| `pair_accept.png` | 1024x600 | 18400 | `62b078d8370cc9943235252cebaa49034f9ff49d71f9e948ac7aa1c3a92bddec` | Pairing - Accept or Reject the named client |
+| `pair_code.png` | 1024x600 | 18385 | `51cbba098c00bbb7a02dae8775cb159a2a450b2a49f74a2c9e0945731745bee7` | Pairing window - the code and the two countdowns |
+| `pair_toast_paired.png` | 1024x600 | 15767 | `c377a5fb058b7f4ab53f6c70053a8007bdf2a0d13b4b1e1ed9a68ce574feb8fc` | Pairing outcome - paired, reported once |
+| `pair_unavailable.png` | 1024x600 | 19017 | `67941d728d909331385123e66208176f3a5f4e934b8c5781f88b791ea3630daa` | CLIENT details - pairing unavailable while remote is off |
+| `settings_about.png` | 1024x600 | 44354 | `aaae18b0f75b5c4c287df69907c34972e4cf1c3f70a2b56faa0f7ea110c82561` | Settings, About with the license, the Required Notice and the generated third-party notices (FR-751) |
+| `settings_appearance.png` | 1024x600 | 15025 | `0700bda1e4ab0e0af2cb597cf78c8cc4323b2f115fded5ef6661771115da105e` | Settings, Appearance with color theme and display brightness (FR-505) |
+| `settings_clients.png` | 1024x600 | 15924 | `d02dc7384690cfcb0e120e4b68e744c0d71fd20b724b293f367dae4388a78b6a` | Settings, paired clients with the FR-733 trusted flag and Forget (FR-726) |
+| `settings_clients_full.png` | 1024x600 | 23593 | `30fc607aa250f19c3b3a0fce1152796772ec8b4f76f712d531ba1b9d444316c3` | Settings, a full paired-client register (8 of 8): the list scrolls, no row is clipped |
+| `settings_confirm.png` | 1024x600 | 21059 | `0fbf515e4950ae27c57db3039aa8129d8355fef2fad096fc9df8925346d68efd` | Settings, confirmation required before pair.require_accept is switched off (ADR-023) |
+| `settings_forget.png` | 1024x600 | 17987 | `4aa96f7736f66b8f07223dbfa006a2cfd75cad80ff8e6d1c7a17145e8527b670` | Settings, Forget a paired client behind a confirmation (FR-726, ADR-023) |
+| `settings_host_layout.png` | 1024x600 | 16667 | `f52419108f32ca820ad4fb4a9fde96e90b45bf36d0902393a713e21725a00cca` | Settings, Keyboard section: the HOST layout picker at its first level, opened on the page that holds the stored id (FR-741) |
+| `settings_host_layout_home.png` | 1024x600 | 19328 | `0b4e37c1dbc18721d6b13c8168c5d01d19d5aaae708ea50e9e3d13ead48a5861` | Settings, HOST layout picker home: the layout in force with its home row, eight pinned favorites and the recents (ADR-039) |
+| `settings_host_layout_page.png` | 1024x600 | 16667 | `f52419108f32ca820ad4fb4a9fde96e90b45bf36d0902393a713e21725a00cca` | Settings, HOST layout picker paged on: a page of layouts with no stored id among them, Prev and Next both live (FR-741) |
+| `settings_host_layout_search.png` | 1024x600 | 20152 | `a78b4586ef3b1b25e786d9963fac2dce70c3ad2a60d1071aea57a01e903ce60e` | Settings, HOST layout picker search: the query, the picker's own keyboard and the layouts whose id or name match (ADR-039) |
+| `settings_host_layout_star.png` | 1024x600 | 21952 | `0a5eed3276e549a28d4646b3029dba2ffdb4149e4295360ca4b4e03e32afdbbb` | Settings, HOST layout list: the A-Z strip above the rows, one bucket away from the top, and a ninth favorite refused (ADR-039) |
+| `settings_host_layout_variants.png` | 1024x600 | 20683 | `4dda2a53db5be3e1bb10efc3c22e371e20b8cbaa0ee81a30b63194fa4ea69857` | Settings, HOST layout picker at its second level: the variants of one layout, Back returns to the layout list (FR-741) |
+| `settings_input.png` | 1024x600 | 15681 | `8347382d3fd11d464c5c4906b54c18e5d1f2ea5d44bba344427b86d9d81bb4ec` | Settings, Input with keep-awake interval (FR-711) |
+| `settings_keyboard.png` | 1024x600 | 24930 | `64263a8c2c67fb94363142d9e752fe24b922324853fb6d15ebf4d6915722a207` | Settings, Keyboard section: the input language list with English always on, the HOST layout row with the stored id, Unicode delivery stepper with its setup hint (ADR-037, FR-741, FR-747) |
+| `settings_remote.png` | 1024x600 | 21431 | `b1541de6cdf7c103848107ab225971631f708ba196d469e44ab1c5841169e2e4` | Settings, Remote section with the ADR-023 safe defaults (FR-731, FR-732, FR-733) |
+| `settings_shortcuts.png` | 1024x600 | 13006 | `b2fb831c4c4d1ddfc462e4b4709d5433182a48316e2b871f7f7e010eb01b9240` | Settings, Shortcuts section with the FR-734 Alt+F4 confirmation policy (ADR-023) |
+| `settings_unknown.png` | 1024x600 | 21258 | `7f9d4fa6e47633fb21bbe691fe6bcad121ade505e648710d3e08f6bc5c7f13d0` | Settings before the domain published a record: every value Unknown, every control off (07 12.2) |
+| `shortcuts.png` | 1024x600 | 20599 | `993bfb32c753f9db416e7241d7a6f306cee3f62c7b67bea2d6f2d4a8e6368a2e` | SHORTCUTS view, commands available |
+| `shortcuts_confirm.png` | 1024x600 | 22840 | `2b3e85c593a0c462e81068552ea5a0edcd5f5d7e732e481eaf43763bb0fdc1f2` | SHORTCUTS view, Alt+F4 confirmation modal (FR-734, ADR-023) |
+| `shortcuts_host_lost.png` | 1024x600 | 19127 | `44eac026ab2ab0d61527e97ee9b5d8dab311b7d62e2bd863795be980499c04d1` | SHORTCUTS view, HOST detached: local commands blocked (FR-308) |
+| `shortcuts_layout_ctrl.png` | 1024x600 | 20570 | `fe45878fa967310821694819dc5d0e2ef60675999315adfee4e6cd83b5cb0e43` | SHORTCUTS view, HOST layout chord for macOS / Linux (FR-744) |
+| `shortcuts_toast.png` | 1024x600 | 20662 | `774b51ec53674d058199b6e2e8d6ec74b5191ad1ee44fac8db3602f8173b63bf` | SHORTCUTS view, Show desktop requested (the toast claims nothing about the HOST) |

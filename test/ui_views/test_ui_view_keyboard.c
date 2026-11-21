@@ -38,6 +38,7 @@
 #include "hid_core.h"
 #include "hid_keymap.h"
 #include "host_lv_mem.h"
+#include "kvm_hid_intent.h"
 #include "kvm_test.h"
 #include "lvgl.h"
 #include "ui_actions.h"
@@ -775,6 +776,157 @@ static void test_geometry(void)
     stop();
 }
 
+static void choose_workspace(int requested)
+{
+    click_obj(s_kbd.workspace_button);
+    CHECK_EQ(ui_overlay_top(&s_r), UI_OVERLAY_KBD_WORKSPACE);
+    CHECK(ui_overlay_blocking(&s_r));
+    if (ui_overlay_top(&s_r) != UI_OVERLAY_KBD_WORKSPACE) return;
+    lv_area_t choices[UI_KBD_WORKSPACE_COUNT];
+    lv_obj_update_layout(s_scr);
+    for (unsigned j = 0; j < UI_KBD_WORKSPACE_COUNT; j++) {
+        lv_obj_get_coords(s_kbd.workspace_choices[j], &choices[j]);
+        CHECK(lv_obj_is_visible(s_kbd.workspace_choices[j]));
+        CHECK(lv_area_get_height(&choices[j]) >= UI_TOUCH_MIN && lv_area_get_width(&choices[j]) >= UI_TOUCH_MIN);
+    }
+    CHECK(choices[UI_KBD_FULL].y2 < choices[UI_KBD_PAD_LEFT].y1);
+    CHECK(choices[UI_KBD_PAD_LEFT].y2 < choices[UI_KBD_PAD_RIGHT].y1);
+    CHECK(choices[UI_KBD_PAD_RIGHT].y2 < choices[UI_KBD_PAD_ABOVE].y1);
+    CHECK(choices[UI_KBD_PAD_ABOVE_BUTTONS_LEFT].y1 == choices[UI_KBD_PAD_ABOVE].y1 &&
+          choices[UI_KBD_PAD_ABOVE_BUTTONS_LEFT].x2 < choices[UI_KBD_PAD_ABOVE].x1);
+    lv_area_t pad;
+    CHECK(!ui_router_pad_area(&s_r, &pad));
+    click_obj(s_kbd.workspace_choices[requested]);
+    CHECK_EQ(ui_overlay_top(&s_r), UI_OVERLAY_NONE);
+    CHECK_EQ(s_kbd.workspace, requested);
+}
+
+static bool separate_areas(const lv_area_t *a, const lv_area_t *b)
+{
+    return a->x2 < b->x1 || b->x2 < a->x1 || a->y2 < b->y1 || b->y2 < a->y1;
+}
+
+static void test_hybrid_workspaces(void)
+{
+    CHECK(start());
+    lv_area_t pad, expected;
+    CHECK_EQ(s_kbd.workspace, UI_KBD_FULL);
+    if (s_kbd.desc.pad_obj == NULL) {
+        CHECK(s_kbd.desc.pad_obj != NULL);
+        stop();
+        return;
+    }
+    CHECK(!ui_router_pad_area(&s_r, &pad));
+    const int layouts[] = {UI_KBD_PAD_ABOVE, UI_KBD_PAD_ABOVE_BUTTONS_LEFT, UI_KBD_PAD_RIGHT, UI_KBD_PAD_LEFT};
+    for (size_t layout = 0; layout < sizeof(layouts) / sizeof(layouts[0]); layout++) {
+        choose_workspace(layouts[layout]);
+        CHECK(s_kbd.hybrid_pad != NULL);
+        CHECK(s_kbd.desc.pad_obj(s_kbd.desc.ctx) == s_kbd.hybrid_pad);
+        if (s_kbd.hybrid_pad == NULL || !ui_router_pad_area(&s_r, &pad)) {
+            CHECK(false);
+            continue;
+        }
+        lv_obj_update_layout(s_scr);
+        lv_obj_get_coords(s_kbd.hybrid_pad, &expected);
+        CHECK(pad.x1 == expected.x1 && pad.x2 == expected.x2 &&
+              pad.y1 == expected.y1 && pad.y2 == expected.y2);
+        CHECK(lv_area_get_width(&pad) >= UI_TOUCH_MIN && lv_area_get_height(&pad) >= UI_TOUCH_MIN);
+        unsigned visible = 0;
+        for (uint32_t i = 0; i < ui_view_keyboard_key_count(); i++) {
+            lv_obj_t *key = ui_view_keyboard_key_obj(&s_kbd, i);
+            if (key && lv_obj_is_visible(key)) {
+                lv_area_t box;
+                lv_obj_get_coords(key, &box);
+                CHECK(separate_areas(&pad, &box));
+                visible++;
+            }
+        }
+        CHECK(visible > 0);
+        lv_obj_t *letter = visible_key(KVM_KEY_A);
+        CHECK(letter && lv_obj_is_visible(letter));
+        if (letter == NULL) {
+            continue;
+        }
+        lv_area_t letter_box;
+        lv_obj_get_coords(letter, &letter_box);
+        if (layouts[layout] == UI_KBD_PAD_ABOVE || layouts[layout] == UI_KBD_PAD_ABOVE_BUTTONS_LEFT) {
+            CHECK(pad.y1 == 0 && pad.y2 < letter_box.y1);
+            CHECK(!lv_obj_is_visible(s_r.topbar_slot));
+            lv_area_t button;
+            lv_obj_get_coords(s_kbd.hybrid_buttons[0], &button);
+            CHECK(layouts[layout] == UI_KBD_PAD_ABOVE ? pad.x2 < button.x1 : button.x2 < pad.x1);
+            CHECK(!lv_obj_is_visible(s_kbd.window_shortcut));
+        } else {
+            CHECK(layouts[layout] == UI_KBD_PAD_LEFT ? pad.x2 < letter_box.x1 : letter_box.x2 < pad.x1);
+            CHECK(pad.y1 >= TOP_H && lv_obj_is_visible(s_r.topbar_slot));
+            CHECK(lv_obj_is_visible(s_kbd.window_shortcut));
+            s_rec_n = 0;
+            click_obj(s_kbd.window_shortcut);
+            CHECK_EQ(s_rec_n, 1);
+            CHECK_EQ(count(UI_ACT_SHORTCUT_REQUEST, KVM_CHORD_ALT_TAB), 1);
+        }
+        s_rec_n = 0;
+        click_obj(s_kbd.hybrid_pad); // No key or mouse-button event on the LVGL surface.
+        CHECK_EQ(s_rec_n, 0);
+        click_obj(letter);
+        CHECK_EQ(count(UI_ACT_KEY_DOWN, KVM_KEY_A), 1);
+        CHECK_EQ(count(UI_ACT_KEY_UP, KVM_KEY_A), 1);
+        for (unsigned i = 0; i < 2; i++) {
+            lv_obj_t *button = s_kbd.hybrid_buttons[i];
+            const uint16_t mask = i == 0 ? KVM_MOUSE_BTN_LEFT : KVM_MOUSE_BTN_RIGHT;
+            CHECK(button && lv_obj_is_visible(button));
+            if (button == NULL) {
+                continue;
+            }
+            lv_area_t box;
+            lv_obj_get_coords(button, &box);
+            CHECK(separate_areas(&pad, &box));
+            CHECK(lv_area_get_width(&box) >= UI_TOUCH_MIN && lv_area_get_height(&box) >= UI_TOUCH_MIN);
+            s_rec_n = 0;
+            press_obj(button);
+            lv_test_wait(700);
+            CHECK_EQ(count(UI_ACT_MOUSE_BUTTON_DOWN, mask), 1);
+            CHECK_EQ(count(UI_ACT_MOUSE_BUTTON_UP, mask), 0);
+            release();
+            CHECK_EQ(count(UI_ACT_MOUSE_BUTTON_UP, mask), 1);
+            CHECK_EQ(s_rec_n, 2);
+        }
+        printf("    workspace %d: pad %d,%d..%d,%d; %u visible key caps\n",
+               layouts[layout], (int)pad.x1, (int)pad.y1, (int)pad.x2, (int)pad.y2, visible);
+    }
+
+    s_rec_n = 0;
+    press_obj(s_kbd.hybrid_buttons[1]);
+    publish(KVM_HOST_USB_SUSPENDED);
+    CHECK(s_kbd.desc.pad_obj(s_kbd.desc.ctx) == NULL);
+    CHECK(!ui_router_pad_area(&s_r, &pad));
+    release();
+    CHECK_EQ(count(UI_ACT_MOUSE_BUTTON_DOWN, KVM_MOUSE_BTN_RIGHT), 1);
+    CHECK_EQ(count(UI_ACT_MOUSE_BUTTON_UP, KVM_MOUSE_BTN_RIGHT), 1);
+    s_rec_n = 0;
+    click_obj(s_kbd.hybrid_buttons[0]);
+    click_obj(visible_key(KVM_KEY_A));
+    click_obj(s_kbd.window_shortcut);
+    CHECK_EQ(s_rec_n, 0);
+    publish(KVM_HOST_USB_MOUNTED);
+    CHECK(ui_router_pad_area(&s_r, &pad));
+    CHECK_EQ(s_kbd.workspace, UI_KBD_PAD_LEFT);
+
+    press_obj(s_kbd.hybrid_buttons[0]);
+    CHECK(ui_router_show(&s_r, UI_VIEW_MOUSE));
+    release();
+    CHECK(!ui_router_pad_area(&s_r, &pad)); // The mouse fixture exposes no pad.
+    CHECK_EQ(count(UI_ACT_MOUSE_BUTTON_DOWN, KVM_MOUSE_BTN_LEFT), 1);
+    CHECK_EQ(count(UI_ACT_MOUSE_BUTTON_UP, KVM_MOUSE_BTN_LEFT), 1);
+    CHECK(ui_router_show(&s_r, UI_VIEW_KEYBOARD));
+    CHECK_EQ(s_kbd.workspace, UI_KBD_PAD_LEFT);
+    CHECK(ui_router_pad_area(&s_r, &pad));
+    choose_workspace(UI_KBD_FULL);
+    CHECK(s_kbd.desc.pad_obj(s_kbd.desc.ctx) == NULL);
+    CHECK(!ui_router_pad_area(&s_r, &pad));
+    stop();
+}
+
 // ---- HOST layout (FR-741/742/743, ADR-024) --------------------------------------------------
 // The tables are generated, so these tests state what the layout *data* says and check that the field draws it;
 // they never restate a layout by hand. A tree whose generator has not run ships no layout at all, and then every
@@ -951,6 +1103,116 @@ static void test_host_layout_altgr(void)
         CHECK((ad11->flags & KBD_KEY_DEAD) != 0u);
         CHECK(strcmp(ui_view_keyboard_key_legend(&s_kbd, cap_of_slot(KBD_SLOT_AD11), 0),
                      kbd_layouts_legend(ad11, 0)) == 0);
+    }
+    stop();
+}
+
+typedef struct {
+    const char *layout;
+    const char *workspace;
+    int32_t min_width, min_height;
+    unsigned count;
+} hybrid_geometry_t;
+
+// A wholly clipped key still needs auditing. Skip intentional hiding only.
+static bool included_in_layout(lv_obj_t *obj)
+{
+    for (lv_obj_t *p = obj; p; p = lv_obj_get_parent(p)) {
+        if (lv_obj_is_hidden(p)) return false;
+    }
+    return obj != NULL;
+}
+
+static void audit_hybrid_target(hybrid_geometry_t *g, lv_obj_t *obj, const char *name)
+{
+    CHECK(obj != NULL);
+    if (!included_in_layout(obj)) return;
+    lv_area_t box;
+    lv_obj_get_coords(obj, &box);
+    int32_t w = lv_area_get_width(&box), h = lv_area_get_height(&box);
+    if (w < g->min_width) g->min_width = w;
+    if (h < g->min_height) g->min_height = h;
+    g->count++;
+    lv_area_t shown = box;
+    bool complete = lv_obj_area_is_visible(obj, &shown) &&
+                    box.x1 == shown.x1 && box.y1 == shown.y1 &&
+                    box.x2 == shown.x2 && box.y2 == shown.y2;
+    if (!complete || w < UI_TOUCH_MIN || h < UI_TOUCH_MIN) {
+        printf("    %s/%s %s: %dx%d at (%d,%d)..(%d,%d), visible (%d,%d)..(%d,%d)\n",
+               g->layout, g->workspace, name, (int)w, (int)h, (int)box.x1, (int)box.y1,
+               (int)box.x2, (int)box.y2, (int)shown.x1, (int)shown.y1, (int)shown.x2, (int)shown.y2);
+    }
+    CHECK(complete);
+    CHECK(w >= UI_TOUCH_MIN && h >= UI_TOUCH_MIN);
+}
+
+static void audit_caption(const hybrid_geometry_t *g, lv_obj_t *label, const char *caption)
+{
+    CHECK(label && lv_obj_check_type(label, &lv_label_class));
+    if (!label || !lv_obj_check_type(label, &lv_label_class)) return;
+    lv_point_t needed;
+    lv_text_get_size(&needed, caption, lv_obj_get_style_text_font(label, LV_PART_MAIN),
+                     lv_obj_get_style_text_letter_space(label, LV_PART_MAIN),
+                     lv_obj_get_style_text_line_space(label, LV_PART_MAIN), LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_area_t visible;
+    lv_obj_get_content_coords(label, &visible);
+    const bool shown = lv_obj_area_is_visible(label, &visible);
+    const bool fits = shown && lv_area_get_width(&visible) >= needed.x && lv_area_get_height(&visible) >= needed.y;
+    printf("    %s/%s '%s': full text %dx%d, visible label %dx%d, text '%s'\n",
+           g->layout, g->workspace, caption, (int)needed.x, (int)needed.y,
+           (int)lv_area_get_width(&visible), (int)lv_area_get_height(&visible), lv_label_get_text(label));
+    CHECK(strcmp(lv_label_get_text(label), caption) == 0);
+    CHECK(fits);
+}
+
+static void test_hybrid_layout_bounds(void)
+{
+    CHECK(start());
+    const char *layouts[] = {"us", "de", "jp"};
+    const kbd_geometry_t geometries[] = {KBD_GEOM_ANSI, KBD_GEOM_ISO, KBD_GEOM_JIS};
+    for (unsigned i = 0; i < sizeof(layouts) / sizeof(layouts[0]); i++) {
+        if (!kbd_layouts_find(layouts[i])) {
+            printf("    Skipping hybrid layout %s: missing table\n", layouts[i]);
+            continue;
+        }
+        ui_view_keyboard_set_host_layout(&s_kbd, layouts[i]);
+        CHECK_EQ(ui_view_keyboard_geometry(&s_kbd), geometries[i]);
+        for (int mode = UI_KBD_PAD_ABOVE; mode < UI_KBD_WORKSPACE_COUNT; mode++) {
+            choose_workspace(mode);
+            for (int layer = 0; layer < 2; layer++) {
+                const char *const names[] = {"full","above","left","right","above-left"};
+                const char *placement = names[mode];
+                hybrid_geometry_t g = {layouts[i], placement, SCR_W, SCR_H, 0};
+                lv_obj_update_layout(s_scr);
+                for (uint32_t k = 0; k < ui_view_keyboard_key_count(); k++) {
+                    audit_hybrid_target(&g, ui_view_keyboard_key_obj(&s_kbd, k), ui_view_keyboard_key_name(k));
+                }
+                audit_hybrid_target(&g, s_kbd.hybrid_pad, "Touchpad");
+                audit_hybrid_target(&g, s_kbd.hybrid_buttons[0], "Left click");
+                audit_hybrid_target(&g, s_kbd.hybrid_buttons[1], "Right click");
+                audit_hybrid_target(&g, s_kbd.window_shortcut, "Switch window");
+                audit_hybrid_target(&g, s_kbd.workspace_button, "2-in-1");
+                const char *const actions[] = {"Home", "Shortcuts", "Host", "Client", "Settings", "Extensions"};
+                for (unsigned n = 0; n < 6; n++) {
+                    audit_hybrid_target(&g, s_kbd.rail_nav[n], actions[n]);
+                }
+                audit_hybrid_target(&g, s_kbd.rail_handle, "Drawer handle");
+                audit_hybrid_target(&g, ui_view_keyboard_layout_strip(&s_kbd), "Host layout");
+                CHECK(g.count > 60);
+                printf("    %s/%s %s: %u targets, minimum %dx%d\n", layouts[i], placement,
+                       s_kbd.fn_layer ? "Fn" : "numbers", g.count, (int)g.min_width, (int)g.min_height);
+                audit_caption(&g, lv_obj_get_child(s_kbd.hybrid_buttons[0], -1), "Left click");
+                audit_caption(&g, lv_obj_get_child(s_kbd.hybrid_buttons[1], -1), "Right click");
+                audit_caption(&g, lv_obj_get_child(s_kbd.workspace_button, -1), "2-in-1");
+                audit_caption(&g, s_kbd.cap_label[index_of_usage(KVM_KEY_RIGHT_ALT)], "AltGr");
+                if (geometries[i] == KBD_GEOM_JIS) {
+                    audit_caption(&g, s_kbd.cap_label[cap_of_slot(KBD_SLOT_HENK)], "Henkan");
+                    audit_caption(&g, s_kbd.cap_label[cap_of_slot(KBD_SLOT_MUHE)], "Muhenkan");
+                }
+                click_obj(fn_key_obj());
+                CHECK_EQ(s_kbd.fn_layer, layer == 0);
+            }
+        }
     }
     stop();
 }
@@ -2037,11 +2299,56 @@ static void test_lang_cycle_skips_unavailable(void)
     CHECK(ui_view_keyboard_lang_pick_button(&s_kbd, UI_KBD_LANG_ZH) != NULL);
     CHECK(ui_view_keyboard_lang_pick_button(&s_kbd, UI_KBD_LANG_JA) != NULL);
     CHECK(lv_obj_is_disabled(ui_view_keyboard_lang_pick_button(&s_kbd, UI_KBD_LANG_JA)));
+    // A dictionary worker may finish while this same picker is still on screen.
+    lv_obj_t *ja_row = ui_view_keyboard_lang_pick_button(&s_kbd, UI_KBD_LANG_JA);
+    lv_obj_t *ja_status = lv_obj_get_child(ja_row, 2);
+    ui_view_keyboard_set_module_status(&s_kbd, UI_KBD_LANG_JA, UI_KBD_MODULE_LOADING);
+    CHECK(strcmp(lv_label_get_text(ja_status), "Loading module...") == 0);
+    CHECK(lv_obj_is_disabled(ja_row));
+    ui_view_keyboard_set_module_status(&s_kbd, UI_KBD_LANG_JA, UI_KBD_MODULE_FAILED);
+    CHECK(strcmp(lv_label_get_text(ja_status), "Load failed. Toggle off/on in Settings.") == 0);
+    CHECK(lv_obj_is_disabled(ja_row));
+    CHECK(lv_obj_is_clickable(ui_view_keyboard_lang_pick_button(&s_kbd, UI_KBD_LANG_ZH)));
+    lv_obj_update_layout(ja_row);
+    CHECK(lv_obj_get_x2(ja_status) <= lv_obj_get_content_width(ja_row));
+    ui_view_keyboard_set_module_status(&s_kbd, UI_KBD_LANG_JA, UI_KBD_MODULE_LOADING);
+    ui_view_keyboard_set_conv_engine(&s_kbd, UI_KBD_LAYER_JA, &k_fake_zh);
+    CHECK(!lv_obj_is_disabled(ja_row) && lv_obj_is_clickable(ja_row));
+    CHECK(strcmp(lv_label_get_text(ja_status), "") == 0);
+    ui_view_keyboard_set_module_status(&s_kbd, UI_KBD_LANG_JA, UI_KBD_MODULE_DEFAULT);
+    ui_view_keyboard_set_conv_engine(&s_kbd, UI_KBD_LAYER_JA, NULL);
+    CHECK(lv_obj_is_disabled(ja_row) && !lv_obj_is_clickable(ja_row));
     click_obj(picker_close_btn());
     CHECK(!ui_view_keyboard_picker_open(&s_kbd));
     CHECK_EQ(s_kbd.c.picker_opens, 1u);
     CHECK_EQ(s_kbd.c.picker_closes, 1u);
     drop_engines();
+    stop();
+}
+
+static void test_optional_hangul_font_while_picker_is_open(void)
+{
+    const lv_font_t *installed = ui_theme_font(UI_FONT_HANGUL);
+    ui_theme_set_hangul_font(NULL);
+    CHECK(start());
+    ui_view_keyboard_set_text_mode(&s_kbd, true);
+    hold_lang();
+    lv_obj_t *row = ui_view_keyboard_lang_pick_button(&s_kbd, UI_KBD_LANG_KO);
+    CHECK(row != NULL && lv_obj_is_disabled(row));
+    CHECK(strcmp(lv_label_get_text(lv_obj_get_child(row, 2)), "Korean module unavailable") == 0);
+    ui_view_keyboard_set_module_status(&s_kbd, UI_KBD_LANG_KO, UI_KBD_MODULE_LOADING);
+    CHECK(strcmp(lv_label_get_text(lv_obj_get_child(row, 2)), "Loading module...") == 0);
+    ui_theme_set_hangul_font(installed);
+    ui_view_keyboard_refresh_picker(&s_kbd);
+    CHECK(lv_obj_is_clickable(row) && !lv_obj_is_disabled(row));
+    click_obj(row);
+    CHECK(s_kbd.hangul && !ui_view_keyboard_picker_open(&s_kbd));
+    CHECK(lv_obj_get_style_text_font(s_kbd.preedit, LV_PART_MAIN) == installed);
+    s_rec_n = 0;
+    type_letters("dkssud");
+    CHECK_EQ(s_rec_n, 1);
+    CHECK_EQ(s_rec[0].value, 0xC548u);
+    CHECK_EQ(kvm_hangul_preedit(&s_kbd.ime), 0xB155u);
     stop();
 }
 
@@ -2559,6 +2866,7 @@ int main(void)
     RUN(test_lang_names);
     RUN_MEM(test_lang_cycle);
     RUN_MEM(test_lang_cycle_skips_unavailable);
+    RUN_MEM(test_optional_hangul_font_while_picker_is_open);
     RUN_MEM(test_lang_english_only);
     RUN_MEM(test_lang_long_press_is_not_a_tap);
     RUN_MEM(test_lang_turned_off_while_active);
@@ -2580,6 +2888,8 @@ int main(void)
     RUN_MEM(test_quick_switch_strip_short_id);
     RUN_MEM(test_quick_switch_offers_nothing_to_offer);
     RUN_MEM(test_quick_switch_geometry);
+    RUN_MEM(test_hybrid_workspaces);
+    RUN_MEM(test_hybrid_layout_bounds);
     RUN_MEM(test_geometry);
     RUN_MEM(test_lifecycle);
 

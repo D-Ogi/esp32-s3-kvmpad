@@ -226,7 +226,15 @@ void kvm_rp_send_hello_ack(kvm_rp_t *rp, kvm_rp_session_t *s, uint64_t reply_to)
     envelope_open(rp, &w, s, "hello.ack", reply_to);
     kvm_rp_wb_lit(&w, ",\"payload\":{\"protocol\":1,\"device_id\":");
     kvm_rp_wb_jstr(&w, ascii_id_safe(st.device_id) ? st.device_id : "kvm");
-    kvm_rp_wb_lit(&w, ",\"capabilities\":[\"keyboard\",\"mouse\",\"shortcuts\"],\"host\":");
+    kvm_rp_wb_lit(&w, ",\"capabilities\":[\"keyboard\",\"mouse\",\"shortcuts\"");
+    if (rp->hooks.display_profile && s->authenticated && s->operator_role && st.usb_serial[12]=='\0' &&
+        strspn(st.usb_serial, "0123456789ABCDEF")==12) {
+        kvm_rp_wb_lit(&w, ",\"usb_display_profile\"],\"usb_serial\":");
+        kvm_rp_wb_jstr(&w, st.usb_serial);
+    } else {
+        kvm_rp_wb_lit(&w, "]");
+    }
+    kvm_rp_wb_lit(&w, ",\"host\":");
     kvm_rp_wb_jstr(&w, host_state_name(rp->host_usb));
     kvm_rp_wb_lit(&w, ",\"role\":");
     kvm_rp_wb_jstr(&w, s->operator_role ? "operator" : "observer");
@@ -328,5 +336,27 @@ void kvm_rp_send_input_ack(kvm_rp_t *rp, kvm_rp_session_t *s, uint64_t reply_to)
     kvm_rp_wb_lit(&w, ",\"server_timestamp_us\":");
     kvm_rp_wb_u64(&w, rp->now_us);
     kvm_rp_wb_lit(&w, ",\"payload\":{}");
+    envelope_send(rp, &w, s);
+}
+void kvm_rp_send_ack(kvm_rp_t *rp, kvm_rp_session_t *s, const char *type, uint64_t reply_to)
+{
+    kvm_rp_wbuf_t w;
+    envelope_open(rp, &w, s, type, reply_to);
+    kvm_rp_wb_lit(&w, ",\"payload\":{\"ack_seq\":");
+    kvm_rp_wb_u64(&w, reply_to);
+    kvm_rp_wb_lit(&w, "}");
+    envelope_send(rp, &w, s);
+}
+
+void kvm_rp_send_pack_status(kvm_rp_t *rp, kvm_rp_session_t *s, uint64_t reply_to,
+                             const char *state, uint32_t offset)
+{
+    kvm_rp_wbuf_t w;
+    envelope_open(rp, &w, s, "pack.status", reply_to);
+    kvm_rp_wb_lit(&w, ",\"payload\":{\"state\":");
+    kvm_rp_wb_jstr(&w, state);
+    kvm_rp_wb_lit(&w, ",\"offset\":");
+    kvm_rp_wb_u64(&w, offset);
+    kvm_rp_wb_lit(&w, "}");
     envelope_send(rp, &w, s);
 }

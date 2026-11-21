@@ -304,6 +304,7 @@ static inline uint64_t sh_open_control(sh_t *h, const char *authorization, uint6
         KVM_SRT_ADMIT_OK) {
         return 0u;
     }
+    snprintf(adm.peer_ipv4, sizeof(adm.peer_ipv4), "192.0.2.17"); // observed by the socket adapter
     if (kvm_srt_conn_open(&h->srt, conn_id, &adm, sh_now_us()) < 0) {
         return 0u;
     }

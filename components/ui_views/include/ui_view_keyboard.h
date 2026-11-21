@@ -88,6 +88,7 @@
 #include "ui_actions.h"
 #include "ui_router.h"
 #include "ui_store.h"
+#include "ui_status_item.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -127,6 +128,12 @@ typedef enum {
     UI_KBD_LANG_COUNT = 4,
 } ui_kbd_lang_t;
 
+typedef enum {
+    UI_KBD_MODULE_DEFAULT = 0,
+    UI_KBD_MODULE_LOADING,
+    UI_KBD_MODULE_FAILED,
+} ui_kbd_module_status_t;
+
 /** Bit of `langs`: which languages Settings has turned on. English is always set. */
 #define UI_KBD_LANG_BIT(l) ((uint8_t)(1u << (l)))
 
@@ -138,7 +145,17 @@ typedef enum {
 #define UI_OVERLAY_KBD_LANG 0x0601u
 /** ADR-039 section 8: the quick switch of the HOST layout, opened by a long press on the layout strip. */
 #define UI_OVERLAY_KBD_LAYOUT 0x0602u
-#define UI_KBD_OVERLAYS 2
+#define UI_OVERLAY_KBD_WORKSPACE 0x0603u
+#define UI_KBD_OVERLAYS 3
+
+typedef enum {
+    UI_KBD_FULL,
+    UI_KBD_PAD_ABOVE,
+    UI_KBD_PAD_LEFT,
+    UI_KBD_PAD_RIGHT,
+    UI_KBD_PAD_ABOVE_BUTTONS_LEFT,
+    UI_KBD_WORKSPACE_COUNT
+} ui_kbd_workspace_t;
 
 /** How many pinned and recently used layouts the quick switch offers (ADR-039 sections 3 and 4). */
 #define UI_VIEW_KBD_FAV_MAX 8
@@ -227,6 +244,27 @@ typedef struct {
 
     // created by desc.create (NULL before / after)
     lv_obj_t *root;
+    ui_kbd_workspace_t workspace;
+    lv_obj_t *field;
+    lv_obj_t *hybrid_panel;
+    lv_obj_t *hybrid_pad;
+    lv_obj_t *hybrid_tools;
+    lv_obj_t *hybrid_rail;
+    lv_obj_t *rail_body;
+    lv_obj_t *rail_handle;
+    const ui_status_desc_t *rail_status[2];
+    lv_point_t rail_press;
+    bool rail_collapsed;
+    bool rail_moving;
+    bool rail_swiped;
+    lv_obj_t *rail_nav[6];
+    lv_obj_t *extensions_entry;
+    lv_obj_t *hybrid_buttons[2];
+    lv_obj_t *window_shortcut;
+    lv_obj_t *workspace_button;
+    lv_obj_t *workspace_choices[UI_KBD_WORKSPACE_COUNT];
+    ui_action_key_sink_t mouse_sink;
+    uint8_t mouse_held;
     lv_obj_t *row_util;
     lv_obj_t *row_number;           // visible while the F1-F12 layer is off
     lv_obj_t *row_fn;               // visible while it is on
@@ -265,6 +303,11 @@ typedef struct {
     char toast_text[96];
 
     bool fn_layer;                  // local F1-F12 layer (FR-207)
+    struct {
+        ui_kbd_lang_t language;
+        bool fn;
+        bool flick;
+    } resume;                       // presentation choices retained when extensions borrow the widget memory
     bool hangul;                    // local KO composition layer (FR-746)
     bool jamo_shift;                // KO layer: the next letter takes its Shift jamo
     bool text_mode_ok;              // a delivery mode other than host-ime is selected (FR-747)
@@ -309,6 +352,7 @@ typedef struct {
     void *layout_ctx;
     uint8_t usage_live[UI_VIEW_KBD_KEY_CAP]; // usage of each cap under `layout`; 0 = the table's own usage
     uint8_t langs;                  // UI_KBD_LANG_BIT mask from Settings; the EN bit is always set
+    ui_kbd_module_status_t module_status[UI_KBD_LANG_COUNT];
     bool keys_enabled;              // mirror of the last applied enable state
     uint8_t held;                   // table index of the held ordinary key, or UI_VIEW_KBD_NO_KEY
     ui_view_keyboard_counters_t c;
@@ -342,6 +386,11 @@ void ui_view_keyboard_set_zh_engine(ui_view_keyboard_t *k, const ui_kbd_conv_eng
 /** The router that shows the language picker and owns the toast layer. Call after ui_view_keyboard_init(). */
 void ui_view_keyboard_bind_router(ui_view_keyboard_t *k, ui_router_t *router);
 
+/** Select a workspace through the local workspace picker. Requires the keyboard to be visible. */
+bool ui_view_keyboard_select_workspace(ui_view_keyboard_t *k, ui_kbd_workspace_t workspace);
+/** Preserve local layer choices after on_leave and before evicting the tree. Never retains a held key or text. */
+void ui_view_keyboard_remember_layers(ui_view_keyboard_t *k);
+
 /** The view's overlay descriptors (UI_KBD_OVERLAYS of them) for ui_router_init(). */
 const ui_overlay_descriptor_t *ui_view_keyboard_overlays(ui_view_keyboard_t *k, uint8_t *n);
 
@@ -351,6 +400,9 @@ const ui_overlay_descriptor_t *ui_view_keyboard_overlays(ui_view_keyboard_t *k, 
  * Defaults to English alone.
  */
 void ui_view_keyboard_set_languages(ui_view_keyboard_t *k, bool ko, bool zh, bool ja);
+
+/** Show loader feedback for a missing language resource. Called by the LVGL owner. */
+void ui_view_keyboard_set_module_status(ui_view_keyboard_t *k, ui_kbd_lang_t lang, ui_kbd_module_status_t status);
 
 /** The mask of UI_KBD_LANG_BIT() that ui_view_keyboard_set_languages() left (the EN bit is always set). */
 uint8_t ui_view_keyboard_languages(const ui_view_keyboard_t *k);
@@ -367,6 +419,9 @@ bool ui_view_keyboard_lang_available(const ui_view_keyboard_t *k, ui_kbd_lang_t 
 
 /** Why it cannot be, for the picker and the toast; NULL when it can. */
 const char *ui_view_keyboard_lang_reason(const ui_view_keyboard_t *k, ui_kbd_lang_t lang);
+
+/** Reflect a language resource becoming available while its picker is open. LVGL owner only. */
+void ui_view_keyboard_refresh_picker(ui_view_keyboard_t *k);
 
 /** The language cap, the picker's row for `lang` and the text of the toast on screen (NULL / "" when down). */
 lv_obj_t *ui_view_keyboard_lang_key(const ui_view_keyboard_t *k);

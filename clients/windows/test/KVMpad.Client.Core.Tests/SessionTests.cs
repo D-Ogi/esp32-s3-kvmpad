@@ -4,7 +4,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Text;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using KVMpad.Client.Core.Input;
 using KVMpad.Client.Core.Protocol;
 using KVMpad.Client.Core.Session;
@@ -18,6 +22,250 @@ namespace KVMpad.Client.Core.Tests;
 /// </summary>
 public sealed class SessionTests
 {
+    [Fact]
+    public async Task ConnectedHostAttachesOnceAfterHelloWithoutRequestingHidControl()
+    {
+        var (logic, _, _) = NewSession();
+        var offered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int starts = 0;
+        var host = new ConnectedHost(logic, async (attached, token) => {
+            Interlocked.Increment(ref starts);
+            Task ack = logic.AttachHostAsync(8765, [1, 2, 3], token);
+            offered.SetResult();
+            await ack;
+            attached();
+            ready.SetResult();
+            await Task.Delay(Timeout.Infinite, token);
+        }, () => { });
+        logic.OnTransportOpened();
+        await host.StartAsync();
+        Assert.False(host.Running);
+        logic.OnMessage(ProtocolCodec.Decode("""{"v":1,"type":"hello.ack","seq":1,"session_id":"paired","payload":{}}"""));
+        await offered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Task lifetime = host.StartAsync(); // A simultaneous manual start reuses the running HOST.
+        var frame = ProtocolCodec.Decode(Assert.Single(logic.OnTick()));
+        Assert.Equal("host.attach", frame.Type);
+        Assert.Null(frame.LeaseEpoch);
+        Assert.Equal("Starting HOST", host.Status);
+        logic.OnMessage(ProtocolCodec.Decode(JsonSerializer.SerializeToUtf8Bytes(new {
+            v = 1, type = "host.attached", seq = 2, session_id = "paired", payload = new { ack_seq = frame.Seq } })));
+        await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("HOST ready", host.Status);
+        Assert.False(logic.CanSendInput);
+        host.Stop();
+        await lifetime.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(host.Running);
+        Assert.Equal("HOST stopped", host.Status);
+        logic.OnMessage(ProtocolCodec.Decode("""{"v":1,"type":"control.granted","seq":3,"session_id":"paired","lease_epoch":7,"payload":{}}"""));
+        logic.BuildControlRelease(); // Back to Connected must respect the operator's Stop.
+        Assert.Equal(ClientSessionState.Connected, logic.State);
+        Assert.False(host.Running);
+        Assert.Equal(1, starts);
+        await host.CloseAsync();
+    }
+
+    [Fact]
+    public async Task ConnectedHostFailureKeepsHidAvailableAndRetriedHostClosesWithSession()
+    {
+        var (logic, _, _) = NewSession();
+        var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var retry = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cleanup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int starts = 0;
+        ConnectedHost? host = null;
+        host = new ConnectedHost(logic, async (ready, token) => {
+            if (Interlocked.Increment(ref starts) == 1) throw new HostFailure(HostFailureReason.MissingComponent);
+            ready();
+            retry.SetResult();
+            try { await Task.Delay(Timeout.Infinite, token); }
+            finally { await cleanup.Task; }
+        }, () => { if (host?.Status?.StartsWith("HOST unavailable", StringComparison.Ordinal) == true) failed.TrySetResult(); });
+        Handshake(logic);
+        await failed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Contains("component is missing", host.Status);
+        Assert.True(logic.CanSendInput);
+        logic.BuildControlRelease();
+        Assert.False(host.Running);
+        Task second = host.StartAsync();
+        await retry.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        logic.OnTransportClosed();
+        Task closing = host.CloseAsync();
+        Assert.False(closing.IsCompleted);
+        cleanup.SetResult();
+        await closing.WaitAsync(TimeSpan.FromSeconds(5));
+        await second;
+        Assert.False(host.Running);
+        Assert.Null(host.Status);
+        Assert.Equal(2, starts);
+        Handshake(logic, sessionId: "next"); // A retired process cannot attach to a replacement session.
+        await host.StartAsync();
+        Assert.False(host.Running);
+        var fresh = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (next, _, _) = NewSession();
+        var nextHost = new ConnectedHost(next, (_, _) => { fresh.SetResult(); return Task.CompletedTask; }, () => { });
+        Handshake(next, sessionId: "new-board");
+        await fresh.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await nextHost.CloseAsync();
+    }
+
+    [Fact]
+    public async Task ClosingBeforeAuthenticationOrBeforeHostReadyDiscardsLateCallbacks()
+    {
+        var (abandoned, _, _) = NewSession();
+        int starts = 0;
+        var early = new ConnectedHost(abandoned, (_, _) => { ++starts; return Task.CompletedTask; }, () => { });
+        abandoned.OnTransportOpened();
+        await early.CloseAsync();
+        abandoned.OnMessage(ProtocolCodec.Decode("""{"v":1,"type":"hello.ack","seq":1,"session_id":"old","payload":{}}"""));
+        Assert.False(early.Running);
+        Assert.Null(early.Status);
+        Assert.Equal(0, starts);
+
+        var (logic, _, _) = NewSession();
+        var launching = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reported = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ConnectedHost? host = null;
+        bool showedReady = false, cancellationSeen = false;
+        host = new ConnectedHost(logic, async (ready, token) => {
+            launching.SetResult();
+            await reported.Task;
+            cancellationSeen = token.IsCancellationRequested;
+            ready(); // The helper's notification was already in flight as the GUI disconnected.
+        }, () => { if (host?.Status == "HOST ready") showedReady = true; });
+        Handshake(logic);
+        await launching.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Task closed = host.CloseAsync();
+        Assert.False(closed.IsCompleted);
+        reported.SetResult();
+        await closed.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(cancellationSeen);
+        Assert.False(showedReady);
+        Assert.Null(host.Status);
+    }
+
+    [Fact]
+    public async Task DisplayProfileUsesPairedUsbIdentityAndItsOwnAcknowledgment()
+    {
+        const string serial = "441BF6C9229C";
+        var (logic, _, _) = NewSession();
+        logic.OnTransportOpened();
+        logic.OnMessage(ProtocolCodec.Decode("""{"v":1,"type":"hello.ack","seq":1,"session_id":"paired","payload":{"usb_serial":"441BF6C9229C","capabilities":["usb_display_profile"]}}"""));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => logic.RequestDisplayProfileAsync("441BF6C92290", true, default));
+        var update = logic.RequestDisplayProfileAsync(serial, true, default);
+        var frame = ProtocolCodec.Decode(Assert.Single(logic.OnTick()));
+        Assert.Equal("display.profile.request",frame.Type);
+        Assert.Equal(serial,frame.PayloadString("usb_serial"));
+        Assert.Equal("1024x600",frame.PayloadString("mode"));
+        void Reply(string type, string session, ulong seq) => logic.OnMessage(ProtocolCodec.Decode(
+            JsonSerializer.SerializeToUtf8Bytes(new {v=1,type,seq=5,session_id=session,payload=new {ack_seq=seq}})));
+        Reply("host.attached","paired",frame.Seq);
+        Reply("display.profile.queued","other",frame.Seq);
+        Reply("display.profile.queued","paired",frame.Seq+1);
+        Assert.False(update.IsCompleted);
+        Reply("display.profile.queued","paired",frame.Seq);
+        await update;
+    }
+
+    [Fact]
+    public async Task HostAttachUsesTheCurrentSessionAndRequiresItsOwnAcknowledgment()
+    {
+        var (logic, _, _) = NewSession();
+        byte[] certificate = [1, 2, 3];
+        await Assert.ThrowsAsync<InvalidOperationException>(() => logic.AttachHostAsync(8765, certificate, default));
+        logic.OnTransportOpened();
+        logic.OnMessage(ProtocolCodec.Decode("""{"v":1,"type":"hello.ack","seq":1,"session_id":"paired","payload":{}}"""));
+        var attached = logic.AttachHostAsync(8765, certificate, default);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => logic.AttachHostAsync(8765, certificate, default));
+        var frame = ProtocolCodec.Decode(Assert.Single(logic.OnTick()));
+        Assert.Equal("host.attach", frame.Type);
+        Assert.Equal("paired", frame.SessionId);
+        Assert.Null(frame.LeaseEpoch);
+        Assert.Equal(8765L, frame.PayloadInt64("port"));
+        Assert.Equal("AQID", frame.PayloadString("leaf"));
+        void Confirm(string id, ulong ack)
+            => logic.OnMessage(ProtocolCodec.Decode(JsonSerializer.SerializeToUtf8Bytes(
+                new { v = 1, type = "host.attached", seq = 3, session_id = id, payload = new { ack_seq = ack } })));
+        Confirm("another", frame.Seq);
+        Confirm("paired", frame.Seq + 1);
+        Assert.False(attached.IsCompleted);
+        Confirm("paired", frame.Seq);
+        await attached;
+        Assert.False(logic.CanSendInput);
+        Assert.Equal(ClientSessionState.Connected, logic.State);
+        var detached = logic.DetachHostAsync(default);
+        var closing = ProtocolCodec.Decode(Assert.Single(logic.OnTick()));
+        Assert.Equal("host.detach", closing.Type);
+        Assert.Equal("{}", closing.Payload?.GetRawText());
+        Confirm("paired", closing.Seq);
+        Assert.False(detached.IsCompleted);
+        logic.OnMessage(ProtocolCodec.Decode(JsonSerializer.SerializeToUtf8Bytes(new {
+            v = 1, type = "host.detached", seq = 6, session_id = "paired", payload = new { ack_seq = closing.Seq } })));
+        await detached;
+        var next = logic.AttachHostAsync(8766, [7], default);
+        var fresh = ProtocolCodec.Decode(Assert.Single(logic.OnTick()));
+        Assert.Equal("Bw==", fresh.PayloadString("leaf"));
+        Confirm("paired", fresh.Seq);
+        await next;
+        Assert.Equal(ClientSessionState.Connected, logic.State);
+    }
+
+    [Fact]
+    public async Task HostAttachCancellationRejectionAndDisconnectEndOnlyTheirPendingRequest()
+    {
+        var (logic, _, _) = NewSession();
+        Handshake(logic);
+        using var cancel = new CancellationTokenSource();
+        var abandoned = logic.AttachHostAsync(8765, [3], cancel.Token);
+        cancel.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => abandoned);
+        Assert.Empty(logic.OnTick());
+        var denied = logic.AttachHostAsync(8765, [4], default);
+        var offer = ProtocolCodec.Decode(Assert.Single(logic.OnTick()));
+        logic.OnMessage(ProtocolCodec.Decode(JsonSerializer.SerializeToUtf8Bytes(new {
+            v = 1, type = "error", seq = 5, reply_to_seq = offer.Seq, session_id = offer.SessionId,
+            payload = new { code = "ERR_CONTROL_DENIED", retryable = true } })));
+        var rejection = await Assert.ThrowsAsync<HostFailure>(() => denied);
+        Assert.Contains("ERR_CONTROL_DENIED", rejection.Message);
+        var lost = logic.AttachHostAsync(8765, [5], default);
+        logic.OnTransportClosed();
+        await Assert.ThrowsAsync<HostFailure>(() => lost);
+    }
+
+    [Fact]
+    public void HostDiagnosticsUseOnlyKnownProtocolAndTransportInformation()
+    {
+        const string untrusted = "private-test-value";
+        var rejected = new HostFailure(HostFailureReason.Rejected, untrusted);
+        Assert.DoesNotContain(untrusted, HostDiagnostics.Describe(rejected));
+        Assert.DoesNotContain(untrusted, HostDiagnostics.Describe(new IOException(untrusted)));
+        Assert.Equal("Transfer interrupted.", HostDiagnostics.Describe(new Exception(untrusted), "Transfer interrupted."));
+        Assert.Contains("ERR_SESSION", HostDiagnostics.Describe(new HostFailure(HostFailureReason.Rejected, "ERR_SESSION")));
+        Assert.Contains("TCP", HostDiagnostics.Describe(new IOException(untrusted,
+            new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.ConnectionRefused))));
+        Assert.Contains("TLS", HostDiagnostics.Describe(new IOException(untrusted,
+            new System.Security.Authentication.AuthenticationException(untrusted))));
+        var schannel = new System.ComponentModel.Win32Exception(unchecked((int)0x8009030E), untrusted);
+        Assert.Contains("SEC_E_NO_CREDENTIALS", HostDiagnostics.Describe(new System.Security.Authentication.AuthenticationException(untrusted, schannel)));
+        Assert.Contains("authentication", HostDiagnostics.Describe(new System.Net.Http.HttpRequestException(untrusted, null, System.Net.HttpStatusCode.Unauthorized)));
+        Assert.Contains("in time", HostDiagnostics.Describe(new TimeoutException(untrusted)));
+    }
+
+    [Fact]
+    public void RefusedProxyRouteIsDistinctFromDirectOrUnrelatedFailures()
+    {
+        var endpoint = new Uri("wss://192.0.2.42:8443/v1/ws");
+        var refused = new IOException("test", new System.Net.Sockets.SocketException(
+            (int)System.Net.Sockets.SocketError.ConnectionRefused));
+        var proxy = new System.Net.WebProxy("http://proxy.example:8080");
+        Assert.True(HostDiagnostics.RefusedOnProxyRoute(refused, endpoint, proxy));
+        Assert.False(HostDiagnostics.RefusedOnProxyRoute(refused, endpoint, new System.Net.WebProxy()));
+        Assert.False(HostDiagnostics.RefusedOnProxyRoute(new IOException(), endpoint, proxy));
+        proxy.BypassList = [@"192\.0\.2\.42"];
+        Assert.False(HostDiagnostics.RefusedOnProxyRoute(refused, endpoint, proxy));
+        Assert.Contains("proxy", HostDiagnostics.Describe(new HostFailure(HostFailureReason.ProxyRefused, inner: refused)));
+    }
+
     private static (SessionLogic Logic, FakeClock Clock, CaptureLedger Ledger) NewSession(int budget = 100)
     {
         var clock = new FakeClock();
@@ -43,15 +291,21 @@ public sealed class SessionTests
     [Fact]
     public void TheHandshakeOpensWithHelloThenStatusGet()
     {
-        (SessionLogic logic, _, _) = NewSession();
+        (SessionLogic logic, FakeClock clock, _) = NewSession();
         IReadOnlyList<byte[]> frames = logic.OnTransportOpened();
 
-        Assert.Equal(2, frames.Count);
+        Assert.Single(frames);
         Assert.Equal(MessageTypes.Hello, ProtocolCodec.Decode(frames[0]).Type);
-        Assert.Equal(MessageTypes.StatusGet, ProtocolCodec.Decode(frames[1]).Type);
+        Assert.Null(logic.BuildStatusGet());
+        clock.Advance(ProtocolLimits.PingInterval);
+        Assert.Empty(logic.OnTick());
         Assert.Equal(ClientSessionState.Handshaking, logic.State);
         // Not "Connected" until the device says so (AT-CONN-04).
         Assert.False(logic.CanSendInput);
+        var ack = ProtocolCodec.Decode("""{"v":1,"type":"hello.ack","seq":1,"session_id":"from-board","payload":{}}""");
+        var status = ProtocolCodec.Decode(Assert.Single(logic.OnMessage(ack)));
+        Assert.Equal(MessageTypes.StatusGet, status.Type);
+        Assert.Equal("from-board", status.SessionId);
     }
 
     [Fact]
@@ -110,7 +364,7 @@ public sealed class SessionTests
 
         // The sequence starts again at 1 for the new session.
         Assert.Equal(1u, SeqOf(reopened[0]));
-        Assert.Equal(0u, logic.Sequence.Last - 2);
+        Assert.Equal(1u, logic.Sequence.Last);
 
         // And the events queued under the old session are gone, not replayed.
         Assert.Equal(0, logic.RateLimiter.PendingCount);

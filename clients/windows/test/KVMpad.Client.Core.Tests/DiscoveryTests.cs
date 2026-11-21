@@ -4,9 +4,16 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using KVMpad.Client.Core.Discovery;
 using KVMpad.Client.Core.Protocol;
+using KVMpad.Client.Core.Storage;
 using Xunit;
 
 namespace KVMpad.Client.Core.Tests;
@@ -55,6 +62,135 @@ public sealed class DiscoveryTests
         Assert.True(device.PairingOpen);
         Assert.Equal("192.168.1.50", device.ConnectHost);
         Assert.Equal("KVMpad-7F3A._kvmpad._tcp.local", device.InstanceName);
+    }
+
+    [Theory]
+    [InlineData("KVMpad-229C")]
+    [InlineData("KVMpad-229C._kvmpad._tcp.local")]
+    [InlineData("KVMPAD-229C._KVMPAD._TCP.LOCAL.")]
+    public void DiscoveryRetainsTheActualCredentialIdOnRefreshAndAfterRestart(string storedId)
+    {
+        var stored = new PairedDevice(storedId, "Old name", "192.0.2.10", 8443, new string('a', 64),
+            "fixture", DateTimeOffset.UnixEpoch);
+        var seen = Assert.Single(DeviceCollator.Collate([MdnsMessage.Parse(
+            BuildAnswer("KVMpad-229C", 9443, "New name", "1", false))]));
+
+        foreach (var result in new[] {
+            DeviceListEntry.Merge([], [stored]),
+            DeviceListEntry.Merge([seen, seen], [stored]),
+            DeviceListEntry.Merge([], [stored]),
+            DeviceListEntry.Merge([seen], [stored])
+        })
+        {
+            var row = Assert.Single(result);
+            Assert.Equal(storedId, row.DeviceId);
+            Assert.Same(stored, row.Paired);
+        }
+        var visible = Assert.Single(DeviceListEntry.Merge([seen], [stored]));
+        Assert.Equal(9443, visible.Discovered!.Port);
+        Assert.NotEqual(stored.Host, visible.Discovered.ConnectHost);
+    }
+
+    [Fact]
+    public void ManualPairingKeepsTheConfirmedBoardIdentityAcrossAddressAndNameChanges()
+    {
+        string pin = new string('a', 64), other = new string('b', 64);
+        const string name = "KVMpad-229C";
+        var saved = new PairedDevice(name + "._kvmpad._tcp.local", name, "192.0.2.10", 8443,
+            pin, "fixture", DateTimeOffset.UnixEpoch);
+        Assert.Equal(name, DeviceListEntry.IdForManualPairing([], name, pin));
+        Assert.Equal(saved.DeviceId, DeviceListEntry.IdForManualPairing([saved], "Renamed", pin.ToUpperInvariant()));
+        string distinct = DeviceListEntry.IdForManualPairing([saved], name, other);
+        Assert.True(Guid.TryParseExact(distinct, "N", out _));
+        var second = new PairedDevice(distinct, name, "192.0.2.11", 8443, other, "fixture-2", DateTimeOffset.UnixEpoch);
+        Assert.Equal(distinct, DeviceListEntry.IdForManualPairing([saved, second], name, other));
+        Assert.True(Guid.TryParseExact(DeviceListEntry.IdForManualPairing([], "", other), "N", out _));
+    }
+
+    [Fact]
+    public void DevicesWithMatchingAddressAndDisplayNameHaveSeparateCredentials()
+    {
+        var seen = Assert.Single(DeviceCollator.Collate([MdnsMessage.Parse(
+            BuildAnswer("Desk.one", 8443, "KVMpad", "1", false))]));
+        var stored = new PairedDevice("Desk.two", seen.DisplayName, seen.ConnectHost, seen.Port,
+            new string('a', 64), "fixture", DateTimeOffset.UnixEpoch);
+        var rows = DeviceListEntry.Merge([seen], [stored]);
+        Assert.Collection(rows, live => Assert.Null(live.Paired), offline => Assert.Same(stored, offline.Paired));
+        Assert.Equal("Desk.one", DeviceListEntry.InstanceKey("Desk.one._kvmpad._tcp.local"));
+    }
+
+    [Fact]
+    public void WhenBothLegacyIdsExistTheLatestPairingWinsRegardlessOfEnumerationOrder()
+    {
+        var older = new PairedDevice("KVMpad-229C._kvmpad._tcp.local", "Desk", "192.0.2.10", 8443,
+            new string('a', 64), "fixture-old", DateTimeOffset.UnixEpoch);
+        var newer = new PairedDevice("KVMpad-229C", "Desk", "192.0.2.10", 8443,
+            new string('b', 64), "fixture-new", DateTimeOffset.UnixEpoch.AddDays(1));
+        Assert.Same(newer, Assert.Single(DeviceListEntry.Merge([], [older, newer])).Paired);
+        Assert.Same(newer, Assert.Single(DeviceListEntry.Merge([], [newer, older])).Paired);
+    }
+
+    [Theory]
+    [InlineData("KVMpad-229C")]
+    [InlineData("KVMPAD-229C._KVMPAD._TCP.LOCAL.")]
+    public async Task PairedCommandsUseCurrentAddressAndPortWithTheSelectedCredential(string storedId)
+    {
+        var paired = new PairedDevice(storedId, "Paired desk", "192.0.2.10", 8443, new string('a', 64),
+            "fixture-token", DateTimeOffset.UnixEpoch);
+        var devices = DeviceCollator.Collate([
+            MdnsMessage.Parse(BuildAnswer("Other", 9999, "Paired desk", "1", false)),
+            MdnsMessage.Parse(BuildAnswer("KVMpad-229C", 9443, "Renamed desk", "1", false))
+        ]);
+        int queries = 0;
+        var current = await MdnsBrowser.ResolvePairedAsync(paired, CancellationToken.None, (window, _) => {
+            ++queries;
+            Assert.InRange(window, TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(3));
+            return Task.FromResult(devices);
+        });
+        Assert.Equal(1, queries);
+        Assert.Equal("192.168.1.50", current.Host);
+        Assert.Equal(9443, current.Port);
+        Assert.Equal(paired.DeviceId, current.DeviceId);
+        Assert.Equal(paired.DeviceName, current.DeviceName);
+        Assert.Equal(paired.PinnedFingerprint, current.PinnedFingerprint);
+        Assert.Equal(paired.Token, current.Token);
+        Assert.Equal(paired.PairedAt, current.PairedAt);
+        Assert.Equal("192.0.2.10", paired.Host);
+        Assert.Equal(8443, paired.Port);
+    }
+
+    [Theory]
+    [InlineData("no announcements")]
+    [InlineData("other instance")]
+    [InlineData("no port")]
+    [InlineData("socket unavailable")]
+    [InlineData("interface unavailable")]
+    public async Task PairedCommandsKeepSavedEndpointWhenDiscoveryIsUnavailable(string scenario)
+    {
+        var paired = new PairedDevice("Desk", "My desk", "192.0.2.10", 8443, new string('a', 64),
+            "fixture", DateTimeOffset.UnixEpoch);
+        Task<IReadOnlyList<DiscoveredDevice>> Browse(TimeSpan window, CancellationToken token) => scenario switch {
+            "no announcements" => Task.FromResult<IReadOnlyList<DiscoveredDevice>>([]),
+            "socket unavailable" => throw new SocketException((int)SocketError.AddressAlreadyInUse),
+            "interface unavailable" => throw new NetworkInformationException(),
+            _ => Task.FromResult(DeviceCollator.Collate([MdnsMessage.Parse(BuildAnswer(
+                scenario == "no port" ? "Desk" : "Different", scenario == "no port" ? 0 : 9443,
+                paired.DeviceName, "1", false))]))
+        };
+        Assert.Same(paired, await MdnsBrowser.ResolvePairedAsync(paired, CancellationToken.None, Browse));
+    }
+
+    [Fact]
+    public async Task CancelledDiscoveryCannotStartAPairedConnection()
+    {
+        using var stop = new CancellationTokenSource();
+        var paired = new PairedDevice("Desk", "My desk", "192.0.2.10", 8443, new string('a', 64),
+            "fixture", DateTimeOffset.UnixEpoch);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            MdnsBrowser.ResolvePairedAsync(paired, stop.Token, (_, _) => {
+                stop.Cancel();
+                return Task.FromResult<IReadOnlyList<DiscoveredDevice>>([]);
+            }));
     }
 
     [Fact]
@@ -198,7 +334,87 @@ public sealed class DiscoveryTests
         Assert.Equal("1", text["v"]);
     }
 
+    [Fact]
+    public void ChangedDhcpAddressReplacesOnlyItsFamilyAndKeepsTheWholeNewSet()
+    {
+        var old = EndpointRecords(0, port: 8443, addresses: ["192.0.2.10", "2001:db8::1"]);
+        var changed = EndpointRecords(1500, port: 9443, addresses: ["192.0.2.20", "192.0.2.21"]);
+        var device = Assert.Single(DeviceCollator.Collate([old, changed]));
+        Assert.Equal("192.0.2.20", device.ConnectHost);
+        Assert.Equal(9443, device.Port);
+        Assert.Equal(["192.0.2.20", "192.0.2.21", "2001:db8::1"], device.Addresses.Select(ip => ip.ToString()));
+        var ipv6Only = EndpointRecords(2600, addresses: ["2001:db8::2"]);
+        device = Assert.Single(DeviceCollator.Collate([old, changed, ipv6Only]));
+        Assert.Equal("192.0.2.20", device.ConnectHost);
+        Assert.Equal(["192.0.2.20", "192.0.2.21", "2001:db8::2"], device.Addresses.Select(ip => ip.ToString()).Order());
+    }
+
+    [Fact]
+    public void SplitFlushAndSharedAnswersPreserveMultipleCurrentAddresses()
+    {
+        var first = EndpointRecords(0, port: 8443, addresses: ["192.0.2.10"]);
+        var second = EndpointRecords(100, addresses: ["192.0.2.11"]);
+        var shared = EndpointRecords(1600, flush: false, addresses: ["192.0.2.12", "192.0.2.12"]);
+        var device = Assert.Single(DeviceCollator.Collate([first, second, shared]));
+        Assert.Equal(["192.0.2.10", "192.0.2.11", "192.0.2.12"],
+            device.Addresses.Select(ip => ip.ToString()).Order());
+    }
+
+    [Fact]
+    public void GoodbyeWithdrawsOnlyTheNamedAddressAndMatchingSrv()
+    {
+        var first = EndpointRecords(0, port: 8443, addresses: ["192.0.2.10", "2001:db8::1"]);
+        var current = EndpointRecords(3, port: 9443, addresses: ["192.0.2.20", "2001:db8::2"]);
+        var goodbye = EndpointRecords(8, port: 8443, ttl: 0, addresses: ["192.0.2.10", "2001:db8::1"]);
+        var device = Assert.Single(DeviceCollator.Collate([first, current, goodbye]));
+        Assert.Equal(9443, device.Port);
+        Assert.Equal(["192.0.2.20", "2001:db8::2"], device.Addresses.Select(ip => ip.ToString()));
+        Assert.Empty(DeviceCollator.Collate([first, current, goodbye, EndpointRecords(9, port: 9443, ttl: 0)]));
+        var reannounced = EndpointRecords(10, port: 8443, addresses: ["192.0.2.10"]);
+        var restored = Assert.Single(DeviceCollator.Collate([first, goodbye, reannounced]));
+        Assert.Equal(8443, restored.Port);
+        Assert.Equal("192.0.2.10", restored.ConnectHost);
+    }
+
+    [Fact]
+    public void KnownAnswersInAQueryCannotRestoreAnOldEndpoint()
+    {
+        var current = EndpointRecords(0, port: 9443, addresses: ["192.0.2.20"]);
+        var query = EndpointRecords(2000, port: 8443, response: false, addresses: ["192.0.2.10"]);
+        var device = Assert.Single(DeviceCollator.Collate([current, query]));
+        Assert.Equal(9443, device.Port);
+        Assert.Equal("192.0.2.20", Assert.Single(device.Addresses).ToString());
+    }
+
     // ---- datagram construction -------------------------------------------------------------------
+
+    private static MdnsResponse EndpointRecords(long timeMs, int? port = null, uint ttl = 120, bool flush = true,
+        bool response = true, params string[] addresses)
+    {
+        var records = new List<(string Owner, DnsRecordType Type, byte[] Data)>();
+        if (port is int p)
+        {
+            var srv = new List<byte> { 0, 0, 0, 0, (byte)(p >> 8), (byte)p };
+            WriteName(srv, "Desk.local");
+            records.Add(("Desk._kvmpad._tcp.local", DnsRecordType.Srv, srv.ToArray()));
+        }
+        foreach (var address in addresses)
+        {
+            byte[] data = IPAddress.Parse(address).GetAddressBytes();
+            records.Add(("Desk.local", data.Length == 4 ? DnsRecordType.A : DnsRecordType.Aaaa, data));
+        }
+        var message = new List<byte> { 0, 0, response ? (byte)0x84 : (byte)0, 0, 0, 0, 0, (byte)records.Count, 0, 0, 0, 0 };
+        foreach (var (owner, type, data) in records)
+        {
+            WriteName(message, owner);
+            message.AddRange([0, (byte)type, flush ? (byte)0x80 : (byte)0, 1,
+                (byte)(ttl >> 24), (byte)(ttl >> 16), (byte)(ttl >> 8), (byte)ttl, 0, (byte)data.Length]);
+            message.AddRange(data);
+        }
+        var parsed = MdnsMessage.Parse(message.ToArray());
+        parsed.ReceivedAtMs = timeMs;
+        return parsed;
+    }
 
     private static byte[] BuildAnswer(
         string instance,

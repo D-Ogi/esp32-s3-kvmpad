@@ -1,0 +1,230 @@
+{
+  "version": 1,
+  "sources": [],
+  "state": [],
+  "connections": [],
+  "actions": [
+    {
+      "id": "act_yoke",
+      "trigger": "yoke.change",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "axes": {
+          "X": "$event.x",
+          "Y": "$event.y"
+        }
+      }
+    },
+    {
+      "id": "act_throttle",
+      "trigger": "throttle.change",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "axes": {
+          "Z": "$event.value"
+        }
+      }
+    },
+    {
+      "id": "act_yaw",
+      "trigger": "yaw.change",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "axes": {
+          "Rz": "$event.value"
+        }
+      }
+    },
+    {
+      "id": "act_brake_down",
+      "trigger": "brake.press",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "buttons": {
+          "1": true
+        }
+      }
+    },
+    {
+      "id": "act_brake_up",
+      "trigger": "brake.release",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "buttons": {
+          "1": false
+        }
+      }
+    },
+    {
+      "id": "act_flaps_down",
+      "trigger": "flaps.press",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "buttons": {
+          "2": true
+        }
+      }
+    },
+    {
+      "id": "act_flaps_up",
+      "trigger": "flaps.release",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "buttons": {
+          "2": false
+        }
+      }
+    },
+    {
+      "id": "hat_n_down",
+      "trigger": "hat_n.press",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "hat": 0
+      }
+    },
+    {
+      "id": "hat_n_up",
+      "trigger": "hat_n.release",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "hat": 8
+      }
+    },
+    {
+      "id": "hat_ne_down",
+      "trigger": "hat_ne.press",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "hat": 1
+      }
+    },
+    {
+      "id": "hat_ne_up",
+      "trigger": "hat_ne.release",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "hat": 8
+      }
+    },
+    {
+      "id": "hat_e_down",
+      "trigger": "hat_e.press",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "hat": 2
+      }
+    },
+    {
+      "id": "hat_e_up",
+      "trigger": "hat_e.release",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "hat": 8
+      }
+    },
+    {
+      "id": "hat_se_down",
+      "trigger": "hat_se.press",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "hat": 3
+      }
+    },
+    {
+      "id": "hat_se_up",
+      "trigger": "hat_se.release",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "hat": 8
+      }
+    },
+    {
+      "id": "hat_s_down",
+      "trigger": "hat_s.press",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "hat": 4
+      }
+    },
+    {
+      "id": "hat_s_up",
+      "trigger": "hat_s.release",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "hat": 8
+      }
+    },
+    {
+      "id": "hat_sw_down",
+      "trigger": "hat_sw.press",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "hat": 5
+      }
+    },
+    {
+      "id": "hat_sw_up",
+      "trigger": "hat_sw.release",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "hat": 8
+      }
+    },
+    {
+      "id": "hat_w_down",
+      "trigger": "hat_w.press",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "hat": 6
+      }
+    },
+    {
+      "id": "hat_w_up",
+      "trigger": "hat_w.release",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "hat": 8
+      }
+    },
+    {
+      "id": "hat_nw_down",
+      "trigger": "hat_nw.press",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "hat": 7
+      }
+    },
+    {
+      "id": "hat_nw_up",
+      "trigger": "hat_nw.release",
+      "type": "hid.joystick.set_axes",
+      "capability": "hid.joystick",
+      "args": {
+        "hat": 8
+      }
+    }
+  ]
+}

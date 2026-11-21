@@ -82,15 +82,36 @@ dotnet test clients/windows/test/KVMpad.Client.Core.Tests/bin/Release/net9.0/KVM
   --filter "FullyQualifiedName~PairingTests"
 ```
 
-## What does not work yet
+## Device connection and appearance
 
-- **Nothing has run against a board or a real device on a LAN.** Every hardware and network result is
-  `NOT_RUN_HW`: the device's acceptance of the `Authorization` header, mDNS against a real responder, a real
-  pairing window, and whether typed text arrives correctly on the HOST.
-- Pairing is implemented end to end against the real EC-JPAKE and is proven against the four ADR-029 interop
-  vectors in-process, but it has never spoken to a device.
-- **Advanced → Connect manually** exists for development: a token and a certificate fingerprint obtained some
-  other way, no pairing run.
+For a USB extended desktop, start the USB monitor on the KVMpad, then open **Tools → USB display…** in CLIENT. This works over USB independently of the network connection. The dialog shows the desktop size and, when different, the active USB signal size. Select a resolution offered by Windows and choose **Apply**. The change applies to the current session. **Windows display settings** opens the system controls for choosing Extend or arranging the displays.
+
+When the USB signal is already 1024 × 600 and Windows still uses a 640 × 480 desktop, choose **Use 1024 × 600** if Windows offers it. After a signal change the dialog waits for Windows to list the new desktop mode. If it remains unavailable, the dialog shows both sizes. Choose **Refresh** to check the offer again.
+
+The signed driver offers one size per USB profile on unit 1. For either **640 × 480** or **1024 × 600** in the same dialog, connect CLIENT to the paired KVMpad with its USB monitor already active, then choose the size and **Apply**. CLIENT requests the signal size over the existing session, follows the same physical board across USB reconnection and applies the matching Windows desktop mode. Release remote input control before changing the signal. The feature works with the standalone USB monitor and the portrait USB Monitor Console extension.
+
+When the KVMpad sits to the left of or above another monitor, CLIENT can keep their shared edge in place as the KVMpad desktop grows or shrinks. The other displays keep their positions. If the new size would still overlap a display or break the layout, the dialog links to Windows display settings.
+
+For command-line use with the GUI session disconnected, run `KVMpad.Client.exe --usb-resolution DEVICE-ID 1024x600` or select `640x480`. Use the paired ID listed by `--pack-devices`. A native USB signal can carry a smaller Windows desktop. After applying a change, check both the desktop and USB signal sizes.
+
+If the KVMpad already advertises the desired USB signal, run `KVMpad.Client.exe --usb-match-signal USB_SERIAL 1024x600` from the active Windows desktop. Use the 12-digit USB serial shown in **Tools → USB display…**. This command uses the local Windows display API and also accepts `640x480`. It verifies the board serial and signal, applies an offered Windows desktop size, then checks both dimensions. A matching desktop requires no mode change.
+
+On **Devices**, select the paired board and choose **Connect**. The CLIENT starts the HOST for that connection. When Cursor Magnifier requests a display, Windows opens its monitor picker. Choose the monitor, move the pointer onto it and confirm its name on the KVMpad.
+Open **Host input** to request control, start capture, send a shortcut, or type text. The connection status stays visible on every tab.
+If discovery is unavailable, choose **Advanced…**, select the saved KVMpad, enter its address and port, and choose **Connect**.
+For first-time setup at a known address, select **Pair a new KVMpad**, open the pairing window on the board and choose **Continue to PIN**.
+Connect, Extension Studio and the standalone HOST look up the paired board before connecting. They use its saved address when discovery is unavailable. Advanced uses the address and port you enter.
+If Windows selects a proxy and the TCP connection is refused, the CLIENT reports the proxy route. The KVMpad handshake has not started at that point.
+The standard PIN pairing was exercised on unit 1. The release retained one saved CLIENT after an OTA reboot,
+and the device admitted the paired control connection. A successful desktop share additionally requires
+selection of a display in Windows and confirmation on the board. [HOST guide](../../hosts/windows/README.md)
+
+Windows controls use the system light, dark or contrast palette. Icons keep their text labels and scale
+with display DPI. On KVMpad, open the gear in the top bar and choose **Settings → Appearance**.
+Select **Day**, **Night** or **High contrast**. The same pane controls the panel backlight.
+[Shared control icons](../../design/assets/control-icons)
+
+## Development options
 - There is no layout picker in the window yet. The layout follows the device's `host_layout` when it is
   published, and otherwise the `HostLayoutId` setting, which has to be edited in the settings file by hand.
 
@@ -126,3 +147,113 @@ Enter). Everything else is reported as unavailable rather than guessed at (FR-70
 - Every authored source file carries the three-line license header (ADR-025), checked by
   `python -I tools/check_license_headers.py`. `KVMpad.Client.sln` has no comment syntax and is exempt as a
   generated file.
+## Offline Extension Studio
+
+The standalone Extension SDK includes the editor, CLI, examples and Python libraries for the target interpreter. Extract the ZIP, open its directory and run `python -I -B start.py` with the Python version listed in `runtime.json`. The SDK guide walks through creating, previewing and staging a checklist. [SDK guide and build command](../../tools/extension_sdk/README.md)
+
+Choose **Tools → Extension Studio…** in the Windows client, or run
+`py -3 tools/kvmpack/kvmpack.py studio` from the repository root. Studio uses Python 3 with Tk,
+`jsonschema` and Pillow. Install its dependencies in the interpreter selected by `py -3`.
+The packaged client includes the editor, schema files, simulator and four example projects.
+
+Open a source folder or an unsigned `.kvmpack` from **File**, or start from a template. Choose a widget
+type below the canvas, choose its **Parent** and select **Add widget**. A Column, Row or Grid can hold
+children. Drag a widget on the layout canvas or enter its coordinates relative to its parent in **Widget**.
+The Flight Yoke and Cursor Magnifier templates include the capability declarations for their respective controls.
+Use **Apply widget changes** to update a label,
+move an action to an event, or bind a telemetry source or state variable to a property. The Manifest, UI and
+Bindings tabs edit the complete JSON documents. **Validate** checks the same rules as the pack CLI.
+
+Select a Button and choose **Import PNG…** to add an icon and apply the current widget edits.
+Use **Button icon** to reuse a package image, or select the empty entry to remove it from the button.
+The package stores the original PNG. Studio and the device display it beside the caption at up to
+32 × 32 pixels, preserving its proportions and transparency. Buttons smaller than 64 pixels wide
+or 40 pixels high show the caption alone.
+
+**Simulate** opens a local 1024 × 600 browser surface. Try the checklist buttons, drag the yoke,
+release a spring-loaded control, or choose **Demo telemetry** to feed the instrument indicators synthetic
+samples. Choose **Appearance → Day**, **Night** or **High contrast** to inspect the current state in another
+palette. **System** follows the operating system. **Home** resets the preview. The simulator keeps control
+and capture actions local to the preview.
+Use **Permissions** to review HOST and USB requirements. **File → Export diagnostics** writes counts,
+declared permissions and validation results.
+
+**Package…** writes a portable archive. **File → Save source as…** saves an editable copy in a new
+folder. **Install via card…** writes an installer into the selected FAT microSD root and reads it back
+to verify the bytes of the validated archive. The CLI command
+`py -3 tools/kvmpack/kvmpack.py stage SOURCE --card MOUNT` uses the same path. Each version has its own
+installer filename. Eject the card,
+insert it in the device, then choose **Extensions → Install from card** on the panel and review the
+requested permissions.
+
+For a LAN transfer, pair the board with the Windows CLIENT. Insert a writable card and open
+**Extensions → Receive from paired client** on the board. In Studio, choose **Install to paired device…**,
+select the paired device and send the archive for review. The board displays the validated pack and its
+permissions. Approve on the panel to install. The CLIENT reports success after the board commits.
+
+From the checkout use `py -3 tools/kvmpack/kvmpack.py devices` to list paired IDs, then
+`py -3 tools/kvmpack/kvmpack.py install --device PAIRED-ID extension.kvmpack`. The CLI uses the
+installed CLIENT executable on PATH or a local Release/Debug build. Signed archive uploads can use
+`--verify-key trusted-public.pem` for the desktop validation pass.
+
+Listing paired devices reads the local credential store. Before an install or a standalone HOST
+connection, the CLIENT browses for the paired mDNS instance for up to three seconds and uses its
+current address and port. If discovery is unavailable or the instance is absent, the CLIENT uses
+the saved endpoint. Both paths authenticate with the original certificate pin and pairing token.
+
+Transfer requests share the authenticated, certificate-pinned `/v1/ws` CLIENT transport. A dedicated
+connection completes `hello`, then uses `pack.offer` (size and SHA-256), `pack.data` (offset and up to
+256 hex-encoded bytes), `pack.end`, `pack.poll` and `pack.cancel`. The device replies with `pack.status`
+and the persisted offset. A window waits 60 seconds for a paired sender. Transfer allows 30 seconds
+without progress and five minutes total, followed by 90 seconds for physical review. The board accepts
+one transfer at a time, bounded to 256 KiB. Closing the connection cancels uncommitted receipt or review.
+The final physical approval starts the storage commit. If the connection closes during commit,
+check the device library for the result. Denial, cancellation, expiry and validation failures are distinct.
+
+## Prepare an H.264 video for offline playback
+
+Choose **Tools → Prepare card video…** in the Windows client. Select the original video, a destination
+folder and a playback mode, then choose **Prepare playback**. The importer copies the original,
+verifies its SHA-256 digest and writes the selected companion beside it. An existing identical
+original can be reused when preparing another mode. Copy the original and its companions together
+to the FAT32 or exFAT card root. In **Extensions → Video files**, select the video and its playback mode.
+The importer follows the Windows app colors, including custom high-contrast selections in the playback menu.
+
+An MP4 trimmed between keyframes can retain earlier H.264 samples needed to decode the start of the clip.
+The importer prepares the visible portion of the edit and preserves its playback timing. If direct decoding
+on the board runs out of memory, the playback screen identifies the mode to prepare in the Windows client.
+
+| Playback mode | Companion suffix | Input |
+| --- | --- | --- |
+| Exact | `.kvc` | H.264 MP4 or Annex B |
+| Reduced | `.kvr` | H.264 MP4 or Annex B |
+| Large bank | `.kvb` | H.264 MP4 or Annex B |
+| Temporal blend | `.kvf` | Constant-frame-rate H.264 MP4 with presentation timestamps |
+| Temporal smart loose | `.kvs` | Constant-frame-rate H.264 MP4 with presentation timestamps |
+
+For example, preparing both temporal modes for `bear.mp4` yields `bear.mp4.kvf` and
+`bear.mp4.kvs`. Each contains the display frames and timings for that mode. Reduced, Large bank and both temporal modes
+use the KVMpad native reader included in the client's `media` folder and require H.264 cropping
+aligned to four source pixels on each edge. If your build omits
+the reader, the importer asks you to select an existing KVMpad `card-pixels.exe`.
+
+The importer uses Python 3.11 or newer with Tk and standard FFmpeg 5.1 or newer. Put both
+`ffmpeg.exe` and `ffprobe.exe` on PATH before starting the Windows client. The Exact path uses
+the Python standard library and the installed FFmpeg tools. Source files may be MP4 with a single
+H.264 video track or Annex B `.h264` / `.264`. Supported video is progressive 8-bit SDR YUV420,
+up to 1920 × 1080, with square or unspecified sample aspect and BT.601, BT.709 or unspecified matrix.
+The device's half-size conversion produces 960 × 540 pixels for a 1920 × 1080 source.
+The companion retains every presented picture and its timing.
+For reordered frames in MP4, the stock reader uses the file offset reported by ffprobe to associate
+each displayed picture with its sample timing.
+The board accepts original files up to 2,147,483,647 bytes. The FAT32 companion limit is 4,294,967,295 bytes.
+
+To prepare only the companion next to an original from the checkout, run
+`py -3 tools/live_view/prepare_card_video.py "C:\Videos\clip.mp4"`.
+Reduced and large-bank modes use the native reader supplied with `--reader` or built with `--ffmpeg-build`.
+
+To include the native reader when building the Windows client from source, first build the
+handoff FFmpeg host archives with `tools/live_view/build_ffmpeg.py`. From the repository root,
+run `py -3 clients/windows/native/build-card-video-reader.py <host-build-directory>`. A normal
+client build or publish copies the resulting `card-pixels.exe` into `media`. For an existing
+build outside the checkout, pass `-p:CardVideoReader=<absolute-exe-path>` to `dotnet publish`.

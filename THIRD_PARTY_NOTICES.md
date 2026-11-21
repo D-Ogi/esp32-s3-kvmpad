@@ -8,6 +8,7 @@ reads the path column of the tables below; every vendored path must appear there
 
 | Path (glob) | Component | Upstream, version / commit | License |
 |---|---|---|---|
+| `components/pack_runtime/third_party/aws_lc/*` | Portable Ed25519 verification group operations and constants extracted from AWS-LC 1.73.0, plus its unmodified Fiat-Crypto 32-bit field implementation. Used when publisher keys are provisioned. | `aws-lc-sys` 0.41.0, `aws-lc-rs` commit `2201001603bde2dbe326ba47ad77c43a1b29c47c`; `crypto/fipsmodule/curve25519` and `third_party/fiat/curve25519_32.h` | ISC (AWS-LC/BoringSSL), public domain (ref10), MIT (Fiat-Crypto). License texts are in the same directory. |
 | `components/ui_theme/fonts/kvm_font_hangul_24.c` | Hangul legend font of the KO composition strip: a 24 px 4 bpp subset (compatibility jamo + the 2350 KS X 1001 syllables) derived from Noto Sans KR Regular by `tools/fonts/gen_hangul_font.py` with lv_font_conv 1.5.3 (MIT; a build tool, not shipped). Copyright 2014-2021 Adobe (http://www.adobe.com/). Noto is a trademark of Google Inc. | notofonts/noto-cjk, tag `Sans2.004`, `Sans/SubsetOTF/KR/NotoSansKR-Regular.otf` (SHA256 `69975a0a…148d68`) | OFL-1.1 (`components/ui_theme/fonts/OFL-NotoSansKR.txt`) |
 | `components/ui_theme/fonts/kvm_font_legend_*.c` | Legend fonts of the HOST keyboard layouts (FR-742, TECH-078): 24 / 16 / 14 px 4 bpp subsets of the 882 legend code points the generated layout tables use that Noto Sans (Latin, Greek, Cyrillic) covers — Latin-1, Latin Extended A/B, IPA, spacing modifiers, combining diacritics, Greek and Cyrillic — each with a Montserrat fallback of the same size, derived from Noto Sans Regular by `tools/fonts/gen_legend_font.py` with lv_font_conv 1.5.3 (MIT; a build tool, not shipped). Copyright 2022 The Noto Project Authors. Noto is a trademark of Google Inc. | notofonts/latin-greek-cyrillic, tag `NotoSans-v2.015`, `NotoSans/unhinted/otf/NotoSans-Regular.otf` (SHA256 `bfb44de2…d5c21b`) | OFL-1.1 (`components/ui_theme/fonts/OFL-NotoSans.txt`) |
 | `components/ime_engine/openwnn/*` | OpenWnn (iWnn) dictionary search engine (Japanese, FR-746) — the whole directory; the two rows after this one cover its dictionary data and the files derived from the upstream Java. This row covers `include/*`, `engine/*` and `NOTICE`: the freestanding C engine (`ndapi`, `ndbdic`, `ndcommon`, `ndfdic`, `ndldic`, `ndrdic`, `neapi`, `necode`, `nj_str`) and its headers, copied unchanged from `jni/` of the upstream tree; the upstream `Android.mk`/`Android.bp`, the Java sources and the JNI glue are omitted. Copyright (C) 2008-2012 OMRON SOFTWARE Co., Ltd.; Copyright (C) 2008-2012 The Android Open Source Project (`NOTICE`). | AOSP `platform/packages/inputmethods/OpenWnn` at commit `5067ec8ec5a80ab12218c961f9b083fbccc71b93` (archive SHA256 `b0c9b076…00163`) | Apache-2.0 (`components/ime_engine/openwnn/NOTICE`) |
@@ -23,6 +24,7 @@ reads the path column of the tables below; every vendored path must appear there
 | `font_hanzi_24.bin` | Hanzi font of the ZH candidate strip (TASK-072): every character of the pinyin dictionary plus CJK and full-width punctuation, 24 px 4 bpp (16 580 glyphs, LVGL-compressed, KVMFONT1 version 2 container read in place), derived from Noto Sans SC Regular by `tools/fonts/gen_hanzi_font_blob.py` with lv_font_conv 1.5.3 (MIT; a build tool, not shipped). Copyright 2014-2021 Adobe (http://www.adobe.com/). Noto is a trademark of Google Inc. | notofonts/noto-cjk, tag `Sans2.004`, `Sans/SubsetOTF/SC/NotoSansSC-Regular.otf` (SHA256 `faa6c9df…6d5ea9`) | OFL-1.1 (shipped next to it in the image as `ofl_noto_cjk.txt`) |
 | `wnn_ja.bin` | Japanese dictionaries of the OpenWnn clause conversion (TASK-072): the single-kanji, independent-word and ancillary-word dictionaries and the connection matrix, extracted byte for byte from `components/ime_engine/openwnn/data/WnnJpnDic.c` by `tools/ime/build_wnn_blob.py` into the `KVMWNNJA` container that `components/ime_engine/include/ime_wnn.h` documents, and read in place by the engine | as the OpenWnn row above | Apache-2.0 |
 | `font_kanji_24.bin` | Kanji / kana font of the JA candidate strip (TASK-072, ADR-033): the JIS X 0208 repertoire plus Japanese punctuation, 24 px 4 bpp (6 655 glyphs, LVGL-compressed, KVMFONT1 version 2), derived from Noto Sans JP Regular by `tools/fonts/gen_hanzi_font_blob.py --set ja` with lv_font_conv 1.5.3. Copyright 2014-2021 Adobe (http://www.adobe.com/). Noto is a trademark of Google Inc. | notofonts/noto-cjk, tag `Sans2.004`, `Sans/SubsetOTF/JP/NotoSansJP-Regular.otf` (SHA256 `dff723ba…5073`) | OFL-1.1 (the same `ofl_noto_cjk.txt`) |
+| `font_hangul_24.bin` | Korean composition font for the optional data module. The 2401 glyphs are derived from Noto Sans KR Regular with lv_font_conv 1.5.3. Copyright 2014–2021 Adobe. Noto is a trademark of Google Inc. | notofonts/noto-cjk, tag `Sans2.004`, `Sans/SubsetOTF/KR/NotoSansKR-Regular.otf` (SHA256 `69975a0a…148d68`) | OFL-1.1, included in the image as `ofl_noto_cjk.txt` |
 
 ## Data derived into generated KVMpad files (TASK-071, ADR-024)
 
@@ -43,11 +45,14 @@ TECH-078) have their own row in the vendored table above.
 | ESP-IDF | Apache-2.0 |
 | LVGL | MIT |
 | TinyUSB | MIT |
-| Espressif managed components pinned by `dependencies.lock` (2026-11-02): `esp_tinyusb`, `esp_lcd_touch`, `esp_lcd_touch_gt911`, `esp_lvgl_adapter`, `esp_lvgl_port` (until ADR-027 item 1), and the adapter's transitive `button`, `knob`, `cmake_utilities`, `esp_lv_decoder`, `esp_lv_fs`, `esp_mmap_assets`, `esp_new_jpeg` | Apache-2.0 (as declared in each component's manifest) |
+| Espressif managed components pinned by `dependencies.lock` (2026-11-02): `esp_tinyusb`, `esp_lcd_touch`, `esp_lcd_touch_gt911`, `esp_lvgl_adapter`, `esp_lvgl_port` (until ADR-027 item 1), and the adapter's transitive `button`, `knob`, `cmake_utilities`, `esp_lv_decoder`, `esp_lv_fs`, `esp_mmap_assets` | Apache-2.0 (as declared in each component's manifest) |
+| `espressif/esp_new_jpeg` 1.0.2, Copyright (c) 2024 Espressif Systems (Shanghai) Co., Ltd. | ESPRESSIF MIT License for use on Espressif Systems products. The copyright and permission notice are in the component's [LICENSE](https://github.com/espressif/esp-adf-libs/blob/daee964980d14d7fcf9da10821827399ef600577/esp_new_jpeg/LICENSE). |
 | `espressif/freetype` (transitive, adapter) | FreeType License (FTL) / GPL-2.0 dual |
 | `espressif/libpng`, `espressif/zlib`, `espressif/qoi` (transitive, adapter) | libpng-2.0 / Zlib / MIT |
 
 Exact versions are pinned in `dependencies.lock` from TASK-000 on; this table names licenses, not versions.
+
+ESP32-S3 media builds adapt zlib's `inffast.c` to fill long single-byte repeats and copy disjoint output matches in bulk. The generated source retains Mark Adler's copyright and zlib license notice. [Build adaptation](tools/cmake/kvmpad_zlib.cmake)
 
 ## Built from the pinned ESP-IDF tree into other KVMpad binaries (not copied)
 
@@ -55,6 +60,13 @@ Exact versions are pinned in `dependencies.lock` from TASK-000 on; this table na
 |---|---|---|
 | Mbed TLS 4.x / TF-PSA-Crypto 1.x (`components/mbedtls` of ESP-IDF v6.1) | firmware (TLS, PSA, EC-JPAKE pairing); Windows CLIENT `kvmpad_pairing.dll` (`clients/windows/native`, ADR-028/029) | Apache-2.0 (chosen of Apache-2.0 OR GPL-2.0-or-later) |
 | lodepng (inside LVGL, `LV_USE_LODEPNG`) | desktop simulator only (`simulator/lvgl_sdl`), never the firmware | Zlib |
+| TJpgDec, Copyright ChaN, 2012 | The live JPEG path calls the ESP32-S3 ROM decoder through the pinned ESP-IDF header. | TJpgDec notice in the SDK's `esp_rom/esp32s3/include/esp32s3/rom/tjpgd.h` |
+
+## Optional H.264 decoder
+
+H.264 builds link FFmpeg 6.1.1 `libavformat`, `libavcodec` and `libavutil` under LGPL-2.1-or-later. The configuration enables the H.264 decoder and parser and the MOV and raw H.264 demuxers. The source archive includes the upstream license, the matching upstream source, and the reconstruction overlays. Their upstream notices and licenses apply independently of the KVMpad license.
+
+The build script verifies the source archive digest, stages the overlays and records the complete configure arguments. Rebuild those three archives and configure the firmware with `-DKVM_MEDIA_FFMPEG=<build-directory>` to relink. Distribution of a statically linked build requires providing the matching library source, changes and materials needed for relinking. [Build script](tools/live_view/build_ffmpeg.py)
 
 The Windows CLIENT's managed projects take no NuGet package at run time; the test project's packages (xunit, the VSTest SDK) are
 pinned in `clients/windows/Directory.Packages.props` and are not shipped.

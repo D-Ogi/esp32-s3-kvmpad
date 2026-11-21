@@ -53,7 +53,6 @@ internal sealed class AboutForm : Form
             Dock = DockStyle.Fill,
             Height = 92,
             BorderStyle = BorderStyle.None,
-            BackColor = SystemColors.Control,
             Text = LicenseNotice.LicenseName + "\r\n"
                 + LicenseNotice.AboutBlock + "\r\n"
                 + LicenseNotice.ProjectUrl,

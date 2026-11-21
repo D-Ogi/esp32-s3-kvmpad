@@ -49,6 +49,7 @@ static void key_event_cb(lv_event_t *e)
         break;
     case LV_EVENT_RELEASED:
     case LV_EVENT_PRESS_LOST:
+    case LV_EVENT_INDEV_RESET:
     case LV_EVENT_DELETE:
         // Prohibition 3: a lost press, a teardown or a view change must not leave a key DOWN.
         emit(key, sink, false);
@@ -126,10 +127,11 @@ lv_obj_t *ui_action_key_create(lv_obj_t *parent, const ui_action_key_desc_t *des
         lv_label_set_text(label, desc->label);
         lv_obj_set_style_max_width(label, LV_PCT(100), LV_PART_MAIN);
     }
-    // Only the four codes that move the down flag, so the hot draw path never calls the handler.
+    // Only events that move the down flag, so the hot draw path never calls the handler.
     lv_obj_add_event_cb(key, key_event_cb, LV_EVENT_PRESSED, sink);
     lv_obj_add_event_cb(key, key_event_cb, LV_EVENT_RELEASED, sink);
     lv_obj_add_event_cb(key, key_event_cb, LV_EVENT_PRESS_LOST, sink);
+    lv_obj_add_event_cb(key, key_event_cb, LV_EVENT_INDEV_RESET, sink);
     lv_obj_add_event_cb(key, key_event_cb, LV_EVENT_DELETE, sink);
     return key;
 }

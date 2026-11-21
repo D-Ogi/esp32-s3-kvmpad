@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "root": {
+    "id": "flight_instruments",
+    "type": "Column",
+    "bounds": {
+      "x": 0,
+      "y": 0,
+      "w": 1024,
+      "h": 568
+    },
+    "props": {
+      "layout": "absolute"
+    },
+    "children": [
+      {
+        "id": "gauge_ias",
+        "type": "GaugeArc",
+        "bounds": {
+          "x": 8,
+          "y": 8,
+          "w": 298,
+          "h": 350
+        },
+        "props": {
+          "title": "IAS",
+          "unit": "kt",
+          "min": 0,
+          "max": 400
+        }
+      },
+      {
+        "id": "horizon",
+        "type": "Horizon",
+        "bounds": {
+          "x": 314,
+          "y": 8,
+          "w": 396,
+          "h": 350
+        },
+        "props": {
+          "title": "Artificial Horizon"
+        }
+      },
+      {
+        "id": "gauge_alt",
+        "type": "GaugeNeedle",
+        "bounds": {
+          "x": 718,
+          "y": 8,
+          "w": 298,
+          "h": 350
+        },
+        "props": {
+          "title": "Altitude",
+          "unit": "ft",
+          "min": 0,
+          "max": 40000
+        }
+      },
+      {
+        "id": "heading",
+        "type": "ValueTile",
+        "bounds": {
+          "x": 8,
+          "y": 374,
+          "w": 318,
+          "h": 174
+        },
+        "props": {
+          "title": "Heading",
+          "unit": "°"
+        }
+      },
+      {
+        "id": "vspeed",
+        "type": "ValueTile",
+        "bounds": {
+          "x": 340,
+          "y": 374,
+          "w": 332,
+          "h": 174
+        },
+        "props": {
+          "title": "Vertical Speed",
+          "unit": "fpm"
+        }
+      },
+      {
+        "id": "roll_text",
+        "type": "ValueTile",
+        "bounds": {
+          "x": 686,
+          "y": 374,
+          "w": 330,
+          "h": 174
+        },
+        "props": {
+          "title": "Roll",
+          "unit": "°"
+        }
+      }
+    ]
+  }
+}

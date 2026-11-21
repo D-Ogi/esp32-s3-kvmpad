@@ -54,6 +54,10 @@ kvm_suite(test_kbd_fsm
     SOURCES ${REPO}/components/hid_core/src/kbd_fsm.c ${REPO}/components/hid_core/src/hid_keymap.c
     INCLUDES ${REPO}/components/hid_core/include)
 kvm_suite(test_hid_core SOURCES ${HID_CORE_SOURCES} INCLUDES ${HID_CORE_INCLUDES})
+kvm_suite(test_hpe SOURCES ${HID_CORE_SOURCES} ${REPO}/components/usb_hid_device/src/hpe_reports.c
+    ${REPO}/components/usb_hid_device/src/hpe_studio.c ${REPO}/components/ui_touch_bridge/src/ptp_contacts.c
+    INCLUDES ${HID_CORE_INCLUDES} ${REPO}/components/touch_input/include ${REPO}/components/ui_touch_bridge/include)
+target_compile_definitions(test_hpe PRIVATE CONFIG_TINYUSB_HID_COUNT=4)
 kvm_suite(test_hid_vectors SOURCES ${HID_CORE_SOURCES} INCLUDES ${HID_CORE_INCLUDES})
 kvm_suite(test_hid_stress SOURCES ${HID_CORE_SOURCES} INCLUDES ${HID_CORE_INCLUDES})
 kvm_suite(test_hid_burst

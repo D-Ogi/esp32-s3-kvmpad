@@ -3,6 +3,7 @@
 // Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
 
 using System;
+using System.Net;
 using System.Net.WebSockets;
 using System.Threading;
 using System.Threading.Tasks;
@@ -86,20 +87,34 @@ public sealed class ClientWebSocketTransport : IMessageTransport
     }
 
     public bool IsOpen => _socket?.State == WebSocketState.Open;
+    public byte[]? BoardCertificate { get; private set; }
+    public string BoardHost => _endpoint.Host;
 
     public string? NegotiatedSubprotocol => _socket?.SubProtocol;
 
     /// <summary>The reason the last handshake or pinning check failed, for the status line.</summary>
     public string? LastFailureReason { get; private set; }
+    public HttpStatusCode LastUpgradeStatus { get; private set; }
+    public bool CertificateRejected { get; private set; }
 
     public async Task ConnectAsync(CancellationToken cancellationToken)
     {
         var socket = new ClientWebSocket();
+        CertificateRejected = false;
+        LastFailureReason = null;
+        LastUpgradeStatus = 0;
+        socket.Options.CollectHttpResponseDetails = true;
+        byte[]? acceptedDer = null;
         socket.Options.RemoteCertificateValidationCallback = (_, certificate, _, _) =>
         {
             PinningVerdict verdict = _pinner.Check(certificate);
             if (!verdict.Accepted)
+            {
                 LastFailureReason = verdict.Reason;
+                CertificateRejected = true;
+            }
+            else
+                acceptedDer = certificate!.GetRawCertData();
             return verdict.Accepted;
         };
         socket.Options.AddSubProtocol(ProtocolLimits.SessionSubprotocol);
@@ -110,9 +125,12 @@ public sealed class ClientWebSocketTransport : IMessageTransport
         {
             await socket.ConnectAsync(_endpoint.SessionUri, cancellationToken).ConfigureAwait(false);
         }
-        catch
+        catch (Exception error)
         {
+            LastUpgradeStatus = socket.HttpStatusCode;
             socket.Dispose();
+            if (HostDiagnostics.RefusedOnProxyRoute(error, _endpoint.SessionUri, System.Net.Http.HttpClient.DefaultProxy))
+                throw new HostFailure(HostFailureReason.ProxyRefused, inner: error);
             throw;
         }
 
@@ -124,6 +142,7 @@ public sealed class ClientWebSocketTransport : IMessageTransport
             throw new InvalidOperationException(LastFailureReason);
         }
 
+        BoardCertificate = acceptedDer;
         _socket = socket;
     }
 
@@ -184,6 +203,11 @@ public sealed class ClientWebSocketTransport : IMessageTransport
         catch (WebSocketException)
         {
             // The peer may already be gone; the caller's release path does not depend on a clean close.
+        }
+        finally
+        {
+            if (socket.State is not (WebSocketState.Closed or WebSocketState.Aborted))
+                socket.Abort();
         }
     }
 

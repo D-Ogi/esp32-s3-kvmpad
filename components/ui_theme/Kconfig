@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+menu "KVMpad language resources"
+    config KVM_IME_KOREAN
+        bool "Include the Korean keyboard module in firmware flash"
+        default y
+        help
+            Embed the Hangul font in the application. With this option off,
+            Korean composition can use font_hangul_24.bin in the ime_data
+            partition. Both modes use the built-in two-set composer.
+endmenu

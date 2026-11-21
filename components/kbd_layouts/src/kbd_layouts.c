@@ -110,6 +110,34 @@ static uint32_t single_cp(const char *s)
     return p[n + 1u] == 0u ? cp : 0u;
 }
 
+/**
+ * Whether `shift` is just the upper case of `base`, which is what a real keycap prints as one legend instead of
+ * two. Only the cased scripts of the legend tables are mapped - Latin, Greek, Cyrillic; everywhere else a layout
+ * either repeats the Base level or puts something unrelated on Shift, and the cap then shows both levels.
+ */
+bool kbd_layouts_case_pair(const char *base, const char *shift)
+{
+    if (base == NULL || shift == NULL || base[0] == '\0' || shift[0] == '\0') {
+        return false;
+    }
+    const uint32_t b = single_cp(base);
+    const uint32_t s = single_cp(shift);
+    if (b == 0u || s == 0u) {
+        return false; // more than one code point: not a letter cap
+    }
+    if (b >= 'a' && b <= 'z') {
+        return s == b - 0x20u;
+    }
+    if ((b >= 0xE0u && b <= 0xFEu && b != 0xF7u) || (b >= 0x3B1u && b <= 0x3C9u) ||
+        (b >= 0x430u && b <= 0x44Fu)) {
+        return s == b - 0x20u; // Latin-1, Greek and basic Cyrillic all keep the 0x20 distance
+    }
+    if (b >= 0x450u && b <= 0x45Fu) {
+        return s == b - 0x50u; // Cyrillic ё and the other extras
+    }
+    return false;
+}
+
 bool kbd_layouts_keystroke(const kbd_layout_t *layout, uint32_t cp, kvm_keystroke_t *out)
 {
     if (!valid_layout(layout) || out == NULL || cp < 0x20u || cp == 0x7Fu) {

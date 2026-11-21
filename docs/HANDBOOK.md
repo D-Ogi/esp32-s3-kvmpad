@@ -116,7 +116,8 @@ except the person who owns the board session.
 build      pwsh -NoProfile -File ../.tools/build.ps1 <name>        (log in ../evidence/build/<name>.log)
 flash      pwsh -NoProfile -File ../.tools/flash.ps1 <name>        (COM3, one reset)
 console    ../.tools/venv/Scripts/python -I test/hil/kvm_serial.py --timeout 20 cmd --name <tag> "heap" "tasks"
-snapshot   ... cmd --name <tag> "ui snap 2"  then  python -I test/hil/ui_snapshot.py <log> <png>
+snapshot   ../.tools/venv/Scripts/python -I test/hil/kvm_serial.py --timeout 270 cmd --name <tag> "ui snap 1 compact"
+PNG        python -I test/hil/ui_snapshot.py <log> <png>
 state      "ui shell status"  "ui store"  "hid"  "usb"  "wifi"  "config"
 host test  cmake -S test/<suite> -B ../build-host-<suite> -G Ninja -DCMAKE_C_COMPILER=clang && cmake --build ... && ctest ...
 gates      python -I tools/verify_spec_manifest.py   (12/12)

@@ -4,12 +4,14 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using KVMpad.Client.Core.Protocol;
+using KVMpad.Client.Core.Storage;
 
 namespace KVMpad.Client.Core.Discovery;
 
@@ -31,6 +33,26 @@ public sealed class MdnsBrowser
 
     /// <summary>Datagrams received that could not be parsed. A diagnostic counter only.</summary>
     public int MalformedDatagramCount { get; private set; }
+
+    /// <summary>Refreshes the address of an existing pairing before a single connection attempt.</summary>
+    public static async Task<PairedDevice> ResolvePairedAsync(PairedDevice paired, CancellationToken cancellationToken,
+        Func<TimeSpan, CancellationToken, Task<IReadOnlyList<DiscoveredDevice>>>? browse = null)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        browse ??= new MdnsBrowser().BrowseAsync;
+        IReadOnlyList<DiscoveredDevice> seen;
+        try
+        {
+            seen = await browse(TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is SocketException or NetworkInformationException)
+        {
+            seen = [];
+        }
+        // BrowseAsync also returns a partial list when its caller cancels the listen window.
+        cancellationToken.ThrowIfCancellationRequested();
+        return DeviceListEntry.Merge(seen, [paired]).Single(row => row.Paired != null).PairedForConnection!;
+    }
 
     /// <summary>
     /// Sends a query and collects answers for <paramref name="listenFor"/>. Two queries go out, half a second

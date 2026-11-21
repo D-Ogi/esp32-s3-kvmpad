@@ -38,6 +38,7 @@ typedef struct {
     uint32_t phase_min_us;
     uint32_t phase_max_us;
     uint32_t phase_last_us;
+    uint8_t vsync_core_mask, frame_core_mask; // bit 0/1: callback ran on CPU0/1 since reset
 } board_lcd_stats_t;
 
 /** Nominal refresh in mHz from the pinned timing: pclk / (htotal * vtotal). */

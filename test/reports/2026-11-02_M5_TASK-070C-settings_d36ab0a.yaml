@@ -62,3 +62,23 @@ not_run_hw:
       covered on the host for the UI half.
   - id: AT-EXT-18-20-21-hw
     reason: "Policy behavior on hardware follows the owner's pairing session (M7)."
+
+display_brightness_20261120:
+  requirement: FR-505
+  local_control: "Settings > Input > Display brightness. Each tap changes the configured level by ten percentage points within 10 to 100."
+  software: "The LVGL settings suite passed 11024 checks and the simulator matched all 58 reference scenes."
+  board_1:
+    release_sha256: b886896599cd62cd4e4cfb9839710d371904783e59da4d5f11aa1b4c96c0dd82
+    boot: 392
+    persisted_percent: 80
+    enable_readback: 1
+    usb_interfaces: 4
+    paired_clients: 1
+    local_menu: "The 512x300 samples of the LCD scanout matched the pre-upgrade PNG byte for byte and matched the Day reference. The controller completed 1914 of 1914 refreshes."
+    visual_observation: "After this restart the owner confirmed all six Extensions tiles were visible on the physical LCD."
+    brightness_steps: "The optical change between settings is unmeasured. EXIO2 reports the digital enable. A screenshot or a register-0x04 read cannot measure panel luminance."
+  evidence:
+    - "ws:evidence/hardware/20261120-brightness-b886896599cd.release.json"
+    - "ws:evidence/hardware/20261120-brightness-b886896599cd.compare.json"
+    - "ws:evidence/build/settings-brightness/settings-unit.log"
+    - "ws:evidence/build/settings-brightness/all-fixtures.log"

@@ -15,6 +15,7 @@ extern "C" {
 #endif
 
 #define KVM_TOUCH_MAX_POINTS 5
+#define KVM_TOUCH_GAP_CANCEL_US 120000u // TECH-064: stale active contacts must be cancelled.
 
 typedef struct {
     uint8_t track_id;

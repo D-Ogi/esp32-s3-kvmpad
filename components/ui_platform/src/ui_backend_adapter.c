@@ -60,7 +60,7 @@ esp_err_t ui_backend_start(esp_lcd_panel_handle_t panel, uint16_t h_res, uint16_
     esp_lv_adapter_display_config_t dcfg =
         ESP_LV_ADAPTER_DISPLAY_RGB_DEFAULT_CONFIG(panel, NULL, h_res, v_res, ESP_LV_ADAPTER_ROTATE_0);
     dcfg.tear_avoid_mode = TEAR_MODE;
-    dcfg.profile.buffer_height = CONFIG_KVM_UI_DRAW_BUF_LINES;
+    dcfg.profile.buffer_height = UI_LCD_DRAW_LINES;
     s_disp = esp_lv_adapter_register_display(&dcfg);
     ESP_RETURN_ON_FALSE(s_disp != NULL, ESP_FAIL, TAG, "register display");
 
@@ -69,7 +69,7 @@ esp_err_t ui_backend_start(esp_lcd_panel_handle_t panel, uint16_t h_res, uint16_
     esp_lv_adapter_fps_stats_enable(s_disp, true);
 #endif
     ESP_LOGI(TAG, "%s: %s, draw buffer %d lines, task prio %d core %d", ui_backend_name(), TEAR_NAME,
-             CONFIG_KVM_UI_DRAW_BUF_LINES, CONFIG_KVM_UI_TASK_PRIORITY, CONFIG_KVM_UI_TASK_CORE);
+             UI_LCD_DRAW_LINES, CONFIG_KVM_UI_TASK_PRIORITY, CONFIG_KVM_UI_TASK_CORE);
     *out_disp = s_disp;
     return ESP_OK;
 }

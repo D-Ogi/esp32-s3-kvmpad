@@ -4,6 +4,7 @@
 //
 // Shell composition (07 §5); see ui_app.h.
 #include "ui_app.h"
+#include "kvm_control_icons.h"
 
 #include <string.h>
 
@@ -54,17 +55,18 @@ static const ui_status_desc_t s_client_desc = {
 
 static const ui_topbar_desc_t s_bar_desc = {
     .brand = "KVMpad",
+    .keep_awake_text = "Keep awake",
     .status = {[UI_TOPBAR_HOST] = &s_host_desc, [UI_TOPBAR_CLIENT] = &s_client_desc},
 };
 
 static const struct {
     ui_view_id_t id;
     const char *label;
-    const char *icon;
+    const lv_image_dsc_t *icon;
 } s_nav_names[] = {
-    {UI_VIEW_MOUSE, "Mouse", LV_SYMBOL_GPS},
-    {UI_VIEW_KEYBOARD, "Keyboard", LV_SYMBOL_KEYBOARD},
-    {UI_VIEW_SHORTCUTS, "Shortcuts", LV_SYMBOL_LIST},
+    {UI_VIEW_MOUSE, "Mouse", &kvm_icon_mouse},
+    {UI_VIEW_KEYBOARD, "Keyboard", &kvm_icon_keyboard},
+    {UI_VIEW_SHORTCUTS, "Shortcuts", &kvm_icon_shortcuts},
 };
 
 static uint64_t now_of(const ui_app_t *app)
@@ -263,11 +265,38 @@ static void build_settings_button(ui_app_t *app)
     ui_theme_apply(btn, UI_STYLE_FOCUS, LV_STATE_FOCUS_KEY);
     lv_obj_set_size(btn, UI_TOPBAR_BTN_W, UI_TOPBAR_BTN_W);
     lv_obj_set_scrollable(btn, false);
-    lv_obj_t *icon = lv_label_create(btn);
-    lv_label_set_text_static(icon, LV_SYMBOL_SETTINGS);
+    ui_theme_control_button(btn);
+    lv_obj_t *icon = ui_theme_control_mask(btn, &kvm_icon_settings);
     lv_obj_center(icon);
     lv_obj_add_event_cb(btn, settings_clicked, LV_EVENT_CLICKED, app);
     app->settings_btn = btn;
+}
+
+lv_obj_t *ui_app_add_extensions_button(ui_app_t *app, lv_event_cb_t clicked)
+{
+    if (!app || !app->ready || !clicked) return NULL;
+    lv_obj_t *slot = ui_topbar_brand_slot(app->bar);
+    if (!slot) return NULL;
+    lv_obj_t *existing = lv_obj_get_child(slot, 0);
+    if (existing && lv_obj_check_type(existing, &lv_button_class)) return existing;
+    lv_obj_clean(slot);
+    lv_obj_set_height(slot, UI_TOPBAR_BTN_W);
+    lv_obj_t *button = lv_button_create(slot);
+    lv_obj_remove_style_all(button);
+    ui_theme_apply_button(button, UI_BTN_SECONDARY);
+    ui_theme_control_button(button);
+    ui_theme_apply(button, UI_STYLE_FOCUS, LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_pad_all(button, 0, 0);
+    lv_obj_set_size(button, UI_TOPBAR_BRAND_W, UI_TOPBAR_BTN_W);
+    lv_obj_set_scrollable(button, false);
+    lv_obj_t *label = lv_label_create(button);
+    lv_obj_set_style_text_font(label, ui_theme_font(UI_FONT_BODY), 0);
+    lv_label_set_text_static(label, "Extensions");
+    lv_obj_align(label, LV_ALIGN_CENTER, 0, 12);
+    lv_obj_align(ui_theme_control_mask(button, &kvm_icon_extensions), LV_ALIGN_CENTER, 0, -11);
+    lv_obj_add_event_cb(button, clicked, LV_EVENT_CLICKED, app);
+    app->keyboard.extensions_entry = button;
+    return button;
 }
 
 bool ui_app_init(ui_app_t *app, ui_store_t *store, ui_actions_t *actions, const ui_app_hooks_t *hooks)
@@ -289,6 +318,8 @@ bool ui_app_init(ui_app_t *app, ui_store_t *store, ui_actions_t *actions, const 
     ui_view_mouse_bind_router(&app->mouse, &app->router); // the gesture card (UI_OVERLAY_GESTURE_HELP)
     add_view(app, &app->mouse.desc);
     ui_view_keyboard_init(&app->keyboard, store, actions, app->hooks.now_us);
+    app->keyboard.rail_status[0] = &s_host_desc;
+    app->keyboard.rail_status[1] = &s_client_desc;
     ui_view_keyboard_bind_router(&app->keyboard, &app->router); // the pickers (language, HOST layout)
     if (app->hooks.settings_change) {
         // Without the hook the strip offers nothing instead of a card that could not change anything.
@@ -385,6 +416,8 @@ void ui_app_show(ui_app_t *app)
     }
     if (ui_router_active(&app->router) < 0) {
         ui_router_show(&app->router, UI_VIEW_MOUSE);
+    } else if (ui_router_active(&app->router) == UI_VIEW_KEYBOARD) {
+        app->keyboard.desc.on_enter(&app->keyboard);
     }
     sync_nav(app);
     lv_obj_update_layout(app->screen);
@@ -422,6 +455,8 @@ void ui_app_set_settings(ui_app_t *app, const ui_settings_view_t *v)
         return;
     }
     ui_view_settings_set(&app->settings, v);
+    lv_obj_t *awake = ui_topbar_keep_awake(app->bar);
+    if (awake) lv_obj_set_hidden(awake, !v->seq || !v->keepawake_enabled);
     // FR-747: the KO layer composes on this device only when a Unicode delivery mode can carry its text;
     // an unpublished record (seq 0) keeps it off (fail closed).
     ui_view_keyboard_set_text_mode(&app->keyboard,
@@ -473,4 +508,15 @@ void ui_app_leave(ui_app_t *app)
             app->views[i].on_leave(app->views[i].ctx); // held buttons owe their UP before the screen goes
         }
     }
+    // Dismissing a blocking overlay can republish the Mouse area. After every leave callback,
+    // withdraw that capture so contacts on the next screen reach its LVGL controls.
+    if (app->hooks.pad_changed) app->hooks.pad_changed(app->hooks.ctx, NULL);
+}
+
+void ui_app_leave_for_extensions(ui_app_t *app)
+{
+    if (!app || !app->ready || app->router.busy) return;
+    ui_app_leave(app);
+    ui_view_keyboard_remember_layers(&app->keyboard);
+    ui_router_release_extension_memory(&app->router);
 }

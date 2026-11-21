@@ -10,5 +10,15 @@ cmake_minimum_required(VERSION 3.22)
 set(EXCLUDE_COMPONENTS
     diagnostics)
 
+include("${CMAKE_CURRENT_LIST_DIR}/tools/cmake/kvmpad_fatfs.cmake")
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(kvmpad)
+
+if(CONFIG_KVM_UI_ADAPTER_TEAR_DOUBLE_PARTIAL)
+    include("${CMAKE_CURRENT_LIST_DIR}/tools/cmake/kvmpad_portrait.cmake")
+endif()
+
+if(IDF_TARGET STREQUAL "esp32s3" AND KVM_MEDIA_FFMPEG AND TARGET zlibstatic)
+    include("${CMAKE_CURRENT_LIST_DIR}/tools/cmake/kvmpad_zlib.cmake")
+endif()

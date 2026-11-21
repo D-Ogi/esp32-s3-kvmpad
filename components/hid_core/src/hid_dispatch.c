@@ -15,6 +15,9 @@
 
 #include "esp_check.h"
 #include "esp_log.h"
+#if KVM_HID_HAS_HPE
+#include "esp_random.h"
+#endif
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -48,6 +51,7 @@ typedef enum {
 
 typedef struct {
     msg_kind_t kind;
+    uint32_t input_generation;
     uint8_t usage;
     bool flag;
     uint32_t value;   // keep-alive interval, lease epoch (MSG_REMOTE) or sync call number
@@ -62,9 +66,14 @@ static QueueHandle_t s_q;
 static esp_timer_handle_t s_tick;
 
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t s_input_generation; // invalidates producer events across release and USB epochs
 static uint32_t s_release_bits; // pending RELEASE_ALL reasons (bit = kvm_release_reason_t)
 static kvm_hid_snapshot_t s_snap;
 static kvm_hid_counters_t s_counters;
+#if KVM_HID_HAS_HPE
+static hpe_studio_status_t s_studio;
+static uint8_t s_profile;
+#endif
 static uint32_t s_snap_seq;
 static hid_dispatch_stats_t s_stats;
 
@@ -160,12 +169,20 @@ static void publish(void)
         s_snap = snap;
         s_snap_seq++;
     }
+#if KVM_HID_HAS_HPE
+    s_studio = s_core.studio.status;
+#endif
     s_counters = *kvm_hid_core_counters(&s_core);
     portEXIT_CRITICAL(&s_mux);
 }
 
 static void apply(const msg_t *m, uint64_t now)
 {
+    portENTER_CRITICAL(&s_mux);
+    bool stale = m->input_generation != s_input_generation;
+    portEXIT_CRITICAL(&s_mux);
+    if (stale && (m->kind == MSG_LOCAL || m->kind == MSG_REMOTE || m->kind == MSG_UI_TAP ||
+                  m->kind == MSG_UI_DOWN || m->kind == MSG_UI_UP)) return;
     switch (m->kind) {
     case MSG_LOCAL:
         (void)kvm_hid_core_local(&s_core, &m->intent, now); // rejections are counted by the core
@@ -193,7 +210,10 @@ static void apply(const msg_t *m, uint64_t now)
     case MSG_REMOTE_DISCONNECT_SYNC: {
         uint32_t epoch = 0;
         kvm_hid_err_t e = KVM_HID_OK;
-        if (m->kind == MSG_REMOTE_REQUEST) {
+        if (stale && m->kind != MSG_REMOTE_DISCONNECT_SYNC) {
+            // Answer approvals queued before a USB/ownership transition without granting a new lease.
+            e = KVM_HID_ERR_CONTROL_DENIED;
+        } else if (m->kind == MSG_REMOTE_REQUEST) {
             e = kvm_hid_core_remote_request(&s_core, m->session, now);
         } else if (m->kind == MSG_REMOTE_GRANT) {
             e = kvm_hid_core_remote_grant(&s_core, m->session, now, &epoch);
@@ -231,7 +251,7 @@ static void apply(const msg_t *m, uint64_t now)
             s_burst_slot.full = false;
         }
         portEXIT_CRITICAL(&s_mux);
-        if (full) {
+        if (full && !stale) {
             (void)kvm_hid_core_burst_start(&s_core, s_burst_steps, n, s_burst_cancel, nc, now); // refusals counted
         }
         break;
@@ -249,6 +269,10 @@ static void pump(void *ctx)
     const int64_t t0 = esp_timer_get_time();
     const uint64_t now = (uint64_t)t0;
     portENTER_CRITICAL(&s_mux);
+#if KVM_HID_HAS_HPE
+    s_core.now_us = now; // A pending release can emit a PTP report before the regular poll.
+    s_core.active_profile = s_profile;
+#endif
     uint32_t bits = s_release_bits;
     s_release_bits = 0;
     portEXIT_CRITICAL(&s_mux);
@@ -277,6 +301,20 @@ static void on_state(void *ctx, kvm_usb_state_t state, uint32_t usb_epoch)
 {
     (void)ctx;
     const uint64_t now = (uint64_t)esp_timer_get_time();
+    portENTER_CRITICAL(&s_mux);
+    s_input_generation++;
+    portEXIT_CRITICAL(&s_mux);
+#if KVM_HID_HAS_HPE
+    uint32_t nonce = 0;
+    if (state == KVM_USB_MOUNTED) {
+        nonce = esp_random();
+        if (!nonce) nonce = 1;
+    }
+    hpe_studio_start(&s_core.studio, nonce);
+#endif
+    if (state == KVM_USB_MOUNTED) {
+        s_core.interface_count = usb_hid_device_interface_count();
+    }
     kvm_hid_core_set_usb(&s_core, map_usb(state), usb_epoch, now);
     kvm_hid_core_poll(&s_core, now); // a mount sends the neutral start reports right away (TECH-035)
     publish();
@@ -290,6 +328,65 @@ static void on_complete(void *ctx, uint8_t itf)
     publish();
 }
 
+static void on_failed(void *ctx, uint8_t itf)
+{
+    (void)ctx;
+#if KVM_HID_HAS_HPE
+    s_core.now_us = (uint64_t)esp_timer_get_time();
+#endif
+    portENTER_CRITICAL(&s_mux);
+    s_input_generation++;
+    portEXIT_CRITICAL(&s_mux);
+    kvm_hid_core_on_report_failed(&s_core, itf);
+    publish();
+}
+
+#if KVM_HID_HAS_HPE
+void hid_dispatch_set_profile(uint8_t profile)
+{
+    if (profile > HPE_SETTINGS_PROFILE) return;
+    portENTER_CRITICAL(&s_mux);
+    const bool changed = profile != s_profile;
+    if (changed) {
+        s_profile = profile;
+        s_input_generation++;
+        s_release_bits |= 1u << KVM_RA_VIEW_CHANGE;
+    }
+    portEXIT_CRITICAL(&s_mux);
+    if (changed) usb_hid_device_request_pump();
+}
+
+void hid_dispatch_studio_status(hpe_studio_status_t *out)
+{
+    portENTER_CRITICAL(&s_mux);
+    *out = s_studio;
+    portEXIT_CRITICAL(&s_mux);
+}
+
+static uint8_t on_profile(void *ctx)
+{
+    (void)ctx;
+    return s_core.active_profile;
+}
+
+static bool on_studio(void *ctx, const hpe_packet_t *packet)
+{
+    (void)ctx;
+    return hpe_studio_receive(&s_core.studio, packet, (uint64_t)esp_timer_get_time());
+}
+
+static void on_ptp_route(void *ctx, bool native, bool surface_enabled, uint32_t generation)
+{
+    (void)ctx;
+    s_core.now_us = (uint64_t)esp_timer_get_time(); // SET_FEATURE can arrive between scheduler ticks.
+    portENTER_CRITICAL(&s_mux);
+    s_input_generation++;
+    portEXIT_CRITICAL(&s_mux);
+    kvm_hid_core_ptp_route(&s_core, native, surface_enabled, generation);
+    publish();
+}
+#endif
+
 static void tick_cb(void *arg)
 {
     (void)arg;
@@ -302,10 +399,15 @@ static esp_err_t post(const msg_t *m)
     if (s_q == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (xQueueSend(s_q, m, 0) != pdTRUE) {
+    msg_t entry = *m;
+    portENTER_CRITICAL(&s_mux);
+    entry.input_generation = s_input_generation;
+    portEXIT_CRITICAL(&s_mux);
+    if (xQueueSend(s_q, &entry, 0) != pdTRUE) {
         // TECH-005: never let a lost UP leave a key pressed; release everything instead.
         portENTER_CRITICAL(&s_mux);
         s_stats.producer_queue_full++;
+        s_input_generation++;
         s_release_bits |= 1u << KVM_RA_QUEUE_OVERFLOW;
         portEXIT_CRITICAL(&s_mux);
         usb_hid_device_request_pump();
@@ -399,6 +501,7 @@ void hid_dispatch_release_all(kvm_release_reason_t reason)
         reason = KVM_RA_REQUEST;
     }
     portENTER_CRITICAL(&s_mux);
+    s_input_generation++;
     s_release_bits |= 1u << reason;
     s_stats.release_requests++;
     portEXIT_CRITICAL(&s_mux);
@@ -547,7 +650,11 @@ esp_err_t hid_dispatch_start(void)
     s_sync_lock = xSemaphoreCreateMutexStatic(&s_sync_lock_mem);
     s_sync_done = xSemaphoreCreateBinaryStatic(&s_sync_done_mem);
     ESP_RETURN_ON_FALSE(s_sync_lock != NULL && s_sync_done != NULL, ESP_ERR_NO_MEM, TAG, "sync");
-    const usb_hid_transport_t tr = {.pump = pump, .on_state = on_state, .on_complete = on_complete, .ctx = NULL};
+    const usb_hid_transport_t tr = {.pump = pump, .on_state = on_state, .on_complete = on_complete,
+#if KVM_HID_HAS_HPE
+        .on_ptp_route = on_ptp_route, .on_studio_output = on_studio, .get_profile = on_profile,
+#endif
+        .on_failed = on_failed, .ctx = NULL};
     ESP_RETURN_ON_ERROR(usb_hid_device_set_transport(&tr), TAG, "transport");
     const esp_timer_create_args_t targs = {
         .callback = tick_cb, .dispatch_method = ESP_TIMER_TASK, .name = "hid_tick", .skip_unhandled_events = true};

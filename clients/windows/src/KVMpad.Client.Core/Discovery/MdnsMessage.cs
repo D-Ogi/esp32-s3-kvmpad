@@ -3,9 +3,11 @@
 // Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
 
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 
 namespace KVMpad.Client.Core.Discovery;
@@ -55,6 +57,11 @@ public sealed class MdnsResponse
     public Dictionary<string, Dictionary<string, string>> TextRecords { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public Dictionary<string, List<IPAddress>> Addresses { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    internal long ReceivedAtMs { get; set; } = Environment.TickCount64;
+    internal Dictionary<string, HashSet<AddressFamily>> AddressFlushes { get; } = new(StringComparer.OrdinalIgnoreCase);
+    internal List<(string Owner, IPAddress Address)> WithdrawnAddresses { get; } = [];
+    internal List<(string Owner, SrvData Service)> WithdrawnServices { get; } = [];
 }
 
 /// <summary>
@@ -103,6 +110,9 @@ public static class MdnsMessage
         int additionalCount = ReadUInt16(datagram, 10);
 
         var response = new MdnsResponse();
+        // Queries can carry known answers or proposed records. Only a response advertises an endpoint.
+        if ((datagram[2] & 0x80) == 0)
+            return response;
         int offset = 12;
 
         for (int i = 0; i < questionCount; i++)
@@ -124,12 +134,16 @@ public static class MdnsMessage
         string name = ReadName(datagram, ref offset);
         Require(datagram, offset, 10);
         var type = (DnsRecordType)ReadUInt16(datagram, offset);
+        ushort recordClass = ReadUInt16(datagram, offset + 2);
+        bool goodbye = BinaryPrimitives.ReadUInt32BigEndian(datagram[(offset + 4)..]) == 0;
         int length = ReadUInt16(datagram, offset + 8);
         offset += 10;
         Require(datagram, offset, length);
         int dataStart = offset;
         int dataEnd = offset + length;
         offset = dataEnd;
+        if ((recordClass & 0x7fff) != 1)
+            return;
 
         switch (type)
         {
@@ -153,7 +167,11 @@ public static class MdnsMessage
                 ushort port = ReadUInt16(datagram, dataStart + 4);
                 int cursor = dataStart + 6;
                 string target = ReadName(datagram, ref cursor);
-                response.Services[name] = new SrvData(priority, weight, port, target);
+                var service = new SrvData(priority, weight, port, target);
+                if (goodbye)
+                    response.WithdrawnServices.Add((name, service));
+                else
+                    response.Services[name] = service;
                 break;
             }
 
@@ -165,19 +183,22 @@ public static class MdnsMessage
             }
 
             case DnsRecordType.A:
-            {
-                if (length != 4)
-                    break;
-                var address = new IPAddress(datagram.Slice(dataStart, 4).ToArray());
-                AddAddress(response, name, address);
-                break;
-            }
-
             case DnsRecordType.Aaaa:
             {
-                if (length != 16)
+                if (length != (type == DnsRecordType.A ? 4 : 16))
                     break;
-                var address = new IPAddress(datagram.Slice(dataStart, 16).ToArray());
+                var address = new IPAddress(datagram.Slice(dataStart, length));
+                if (goodbye)
+                {
+                    response.WithdrawnAddresses.Add((name, address));
+                    break;
+                }
+                if ((recordClass & 0x8000) != 0)
+                {
+                    if (!response.AddressFlushes.TryGetValue(name, out var families))
+                        response.AddressFlushes[name] = families = [];
+                    families.Add(address.AddressFamily);
+                }
                 AddAddress(response, name, address);
                 break;
             }

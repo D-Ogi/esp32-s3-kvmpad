@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "orientation": "portrait",
+  "screens": ["console", "pointer"],
+  "root": {
+    "id": "usb_console", "type": "Column", "bounds": {"x": 0, "y": 0, "w": 600, "h": 944},
+    "children": [
+      {
+        "id": "console", "type": "Column", "bounds": {"x": 0, "y": 0, "w": 600, "h": 944},
+        "props": {"title": "Console"},
+        "children": [
+          {"id": "desktop", "type": "MonitorViewport", "bounds": {"x": 8, "y": 8, "w": 584, "h": 438}},
+          {"id": "touchpad", "type": "TouchpadSurface", "bounds": {"x": 8, "y": 454, "w": 584, "h": 186}},
+          {"id": "keyboard", "type": "KeyboardSurface", "bounds": {"x": 8, "y": 648, "w": 584, "h": 288}}
+        ]
+      },
+      {
+        "id": "pointer", "type": "Column", "bounds": {"x": 0, "y": 0, "w": 600, "h": 944},
+        "props": {"title": "Pointer"},
+        "children": [
+          {"id": "pointer_desktop", "type": "MonitorViewport", "bounds": {"x": 8, "y": 8, "w": 584, "h": 438}},
+          {"id": "large_touchpad", "type": "TouchpadSurface", "bounds": {"x": 8, "y": 454, "w": 584, "h": 482}}
+        ]
+      }
+    ]
+  }
+}

@@ -278,9 +278,10 @@ static void test_offline_notice_leaves_the_header_readable(void)
     CHECK(!lv_obj_is_hidden(s_mouse.offline));
     CHECK(lv_obj_is_hidden(s_mouse.idle_title));
     CHECK(lv_obj_is_hidden(s_mouse.idle_sub));
+    CHECK(lv_obj_is_hidden(s_mouse.idle_contact));
+    CHECK(lv_obj_is_hidden(s_mouse.live));
 
-    CHECK(!overlaps(s_mouse.offline, lv_obj_get_child(s_mouse.pad, 0))); // "TOUCH SURFACE"
-    CHECK(!overlaps(s_mouse.offline, s_mouse.live));
+    CHECK(!overlaps(s_mouse.offline, lv_obj_get_child(s_mouse.pad, 0))); // Touchpad heading
     // The notice is sized by its text, not by the pad: it leaves room above and below.
     lv_area_t notice, pad;
     lv_obj_get_coords(s_mouse.offline, &notice);
@@ -291,6 +292,8 @@ static void test_offline_notice_leaves_the_header_readable(void)
     CHECK(lv_obj_is_hidden(s_mouse.offline));
     CHECK(!lv_obj_is_hidden(s_mouse.idle_title));
     CHECK(!lv_obj_is_hidden(s_mouse.idle_sub));
+    CHECK(!lv_obj_is_hidden(s_mouse.idle_contact));
+    CHECK(!lv_obj_is_hidden(s_mouse.live));
     stop();
 }
 
@@ -376,6 +379,32 @@ static void test_drag_lock_follows_store(void)
     stop();
 }
 
+static void test_drag_lock_available_and_disabled_palettes(void)
+{
+    CHECK(start());
+    ui_theme_apply(s_scr, UI_STYLE_SCREEN, LV_PART_MAIN);
+    for (unsigned p = 0; p < UI_PALETTE_COUNT; ++p) {
+        ui_theme_set_control_palette((ui_control_palette_t)p);
+        publish(KVM_HOST_USB_MOUNTED, false);
+        const uint16_t available_ink = lv_color_to_u16(lv_obj_get_style_text_color_filtered(s_mouse.drag_label, 0));
+        const uint16_t available_fill = lv_color_to_u16(lv_obj_get_style_bg_color_filtered(s_mouse.btn_drag, 0));
+        click_obj(s_mouse.btn_drag);
+        CHECK_EQ(count(UI_ACT_DRAG_LOCK_REQUEST, 1), (int)p + 1);
+        CHECK(!lv_obj_has_state(s_mouse.btn_drag, LV_STATE_CHECKED));
+        publish(KVM_HOST_USB_MOUNTED, true);
+        CHECK(strcmp(lv_label_get_text(s_mouse.drag_label), "Release") == 0);
+        CHECK(available_fill != lv_color_to_u16(lv_obj_get_style_bg_color_filtered(s_mouse.btn_drag, 0)));
+        publish(KVM_HOST_USB_DETACHED, false);
+        CHECK(lv_obj_has_state(s_mouse.btn_drag, LV_STATE_DISABLED));
+        CHECK(available_ink != lv_color_to_u16(lv_obj_get_style_text_color_filtered(s_mouse.drag_label, 0)));
+        CHECK(available_fill != lv_color_to_u16(lv_obj_get_style_bg_color_filtered(s_mouse.btn_drag, 0)));
+        click_obj(s_mouse.btn_drag);
+        CHECK_EQ(count(UI_ACT_DRAG_LOCK_REQUEST, 1), (int)p + 1);
+    }
+    ui_theme_set_control_palette(UI_PALETTE_DAY);
+    stop();
+}
+
 static lv_obj_t *help_close_button(void)
 {
     // the card's last child is the footer; its only child is Close
@@ -425,7 +454,15 @@ static void test_gesture_help(void)
     CHECK(!ui_router_show(&s_r, UI_VIEW_KEYBOARD));
     CHECK_EQ(s_rec_n, 0);
 
-    click_obj(close);
+    press_obj(close);
+    lv_area_t pressed_card, pressed_button;
+    lv_obj_get_coords(s_mouse.help_card, &pressed_card);
+    lv_obj_get_coords(close, &pressed_button);
+    CHECK(pressed_card.x1 == card.x1 && pressed_card.y1 == card.y1 &&
+          pressed_card.x2 == card.x2 && pressed_card.y2 == card.y2);
+    CHECK_EQ(pressed_button.y1, cb.y1 + 1);
+    CHECK_EQ(lv_area_get_height(&pressed_button), lv_area_get_height(&cb));
+    release();
     CHECK(s_mouse.help_card == NULL);
     CHECK_EQ(s_mouse.c.help_closes, 1);
     CHECK_EQ(ui_overlay_top(&s_r), 0);
@@ -474,6 +511,23 @@ static void test_geometry(void)
     CHECK(lv_area_get_height(&bd) >= 56 && lv_area_get_width(&bd) >= 56);
     CHECK(br.y2 < SCR_H && bd.x2 < SCR_W);
     CHECK(lv_area_get_width(&pad) * lv_area_get_height(&pad) > SCR_W * SCR_H / 2); // the pad dominates
+    for (unsigned i = 0; i < UI_PALETTE_COUNT; ++i) {
+        ui_theme_set_control_palette((ui_control_palette_t)i);
+        lv_obj_update_layout(s_mouse.root);
+        lv_area_t current;
+        CHECK(ui_router_pad_area(&s_r, &current));
+        CHECK(current.x1 == pad.x1 && current.x2 == pad.x2 && current.y1 == pad.y1 && current.y2 == pad.y2);
+        CHECK(!lv_obj_is_clickable(s_mouse.idle_contact) && !lv_obj_is_clickable(s_mouse.pad));
+        CHECK(!overlaps(s_mouse.idle_contact, s_mouse.idle_title));
+        CHECK(!overlaps(s_mouse.idle_title, s_mouse.idle_sub));
+        CHECK_EQ(lv_obj_get_style_bg_opa(s_mouse.pad, 0), LV_OPA_COVER);
+        CHECK_EQ(lv_obj_get_style_bg_grad_dir(s_mouse.pad, 0), LV_GRAD_DIR_NONE);
+        if (i == UI_PALETTE_HIGH_CONTRAST) {
+            CHECK_EQ(lv_obj_get_style_border_side(s_mouse.pad, 0), LV_BORDER_SIDE_FULL);
+            CHECK_EQ(lv_obj_get_style_outline_width(s_mouse.pad, 0), 0);
+        }
+    }
+    ui_theme_set_control_palette(UI_PALETTE_DAY);
     stop();
 }
 
@@ -530,6 +584,7 @@ int main(void)
     RUN_MEM(test_left_click_and_both);
     RUN_MEM(test_refused_down);
     RUN_MEM(test_drag_lock_follows_store);
+    RUN_MEM(test_drag_lock_available_and_disabled_palettes);
     RUN_MEM(test_gesture_help);
     RUN_MEM(test_geometry);
     RUN_MEM(test_lifecycle);

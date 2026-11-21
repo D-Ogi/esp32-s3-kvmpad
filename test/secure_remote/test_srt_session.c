@@ -809,6 +809,278 @@ static void t_conn_bookkeeping(void)
     kvm_srt_shutdown(&h.srt, sh_now_us());
 }
 
+static uint64_t pack_offer_session;
+static uint64_t pack_lost_session;
+static char pack_pair_name[40];
+
+static bool pack_offer(void *ctx, uint64_t session, const char *client, const char *type,
+                       const kvm_json_doc_t *doc, int payload, const char **state, uint32_t *offset)
+{
+    (void)ctx;
+    (void)doc;
+    (void)payload;
+    if (strcmp(type, "pack.offer") != 0 || client == NULL) return false;
+    pack_offer_session = session;
+    snprintf(pack_pair_name, sizeof(pack_pair_name), "%s", client);
+    *state = "ready";
+    *offset = 0;
+    return true;
+}
+
+static void pack_lost(void *ctx, uint64_t session)
+{
+    (void)ctx;
+    pack_lost_session = session;
+}
+
+static void t_pack_sender_uses_pairing_identity_and_revocation(void)
+{
+    CHECK_EQ(sh_init(&h, 0x69u), KVM_PAIR_OK);
+    kvm_srt_hooks_t hooks = h.srt.hooks;
+    kvm_srt_shutdown(&h.srt, sh_now_us());
+    hooks.pack_request = pack_offer;
+    hooks.pack_disconnect = pack_lost;
+    CHECK_EQ(kvm_srt_init(&h.srt, &h.cfg, &hooks), KVM_PAIR_OK);
+    char token[80];
+    snprintf(token, sizeof(token), "%s", seed_client(&h, "Registered sender", 0x55u));
+    sh_online(&h);
+    sh_cli_t c;
+    CHECK(!sh_cli_open(&h, &c, NULL, 1u));
+    CHECK(sh_cli_open(&h, &c, token, 7u)); // hello identifies itself as "Desk1".
+    sh_cmd(&h, &c, "pack.offer", "'size':1,'sha256':'11111111111111111111111111111111"
+           "11111111111111111111111111111111'");
+    CHECK_EQ(pack_offer_session, 7u);
+    CHECK(strcmp(pack_pair_name, "Registered sender") == 0);
+    CHECK(sh_sent_contains(&h, "pack.status"));
+    sh_cmd(&h, &c, "control.request", "'reason':'remote_support'");
+    CHECK_EQ(h.napproval_begin, 0);
+    CHECK_EQ(h.nintents, 0);
+    CHECK(kvm_srt_clients_remove(&h.srt, 0, sh_now_us()));
+    CHECK_EQ(pack_lost_session, 7u);
+    kvm_srt_shutdown(&h.srt, sh_now_us());
+}
+
+static uint64_t attached_session;
+static uint16_t attached_port;
+static uint8_t attached_leaf;
+static unsigned attaches, detaches;
+static bool host_attach(uint64_t session, const char *address, uint16_t port, const uint8_t *leaf, size_t length)
+{
+    CHECK(!strcmp(address, "192.0.2.17"));
+    ++attaches;
+    if (length != 1 || (leaf[0] != 0xfb && leaf[0] != 0xfd)) return false;
+    if (attached_session && (attached_session != session || attached_port != port || attached_leaf != leaf[0]))
+        return false;
+    attached_session = session;
+    attached_port = port;
+    attached_leaf = leaf[0];
+    return true;
+}
+static void host_detach(uint64_t session)
+{
+    CHECK_EQ(session, attached_session);
+    attached_session = 0;
+    ++detaches;
+}
+static void setup_host_session(char token[80])
+{
+    attaches = detaches = 0;
+    CHECK_EQ(sh_init(&h, 0x6au), KVM_PAIR_OK);
+    kvm_srt_hooks_t hooks = h.srt.hooks;
+    kvm_srt_shutdown(&h.srt, sh_now_us());
+    hooks.host_attach = host_attach;
+    hooks.host_detach = host_detach;
+    CHECK_EQ(kvm_srt_init(&h.srt, &h.cfg, &hooks), KVM_PAIR_OK);
+    snprintf(token, 80, "%s", seed_client(&h, "Board owner", 0x58u));
+    sh_online(&h);
+}
+
+static unsigned display_requests;
+static bool request_display(uint64_t session, const char *serial, bool native)
+{
+    CHECK_EQ(session, 12);
+    if (strcmp(serial, "441BF6C9229C") || !native) return false;
+    ++display_requests;
+    return true;
+}
+
+static void t_display_profile_needs_one_paired_operator_and_matching_serial(void)
+{
+    const char *valid = "'usb_serial':'441BF6C9229C','mode':'1024x600'";
+    CHECK_EQ(sh_init(&h, 0x6au), KVM_PAIR_OK);
+    kvm_srt_hooks_t hooks = h.srt.hooks;
+    kvm_srt_shutdown(&h.srt, sh_now_us());
+    hooks.display_profile = request_display;
+    CHECK_EQ(kvm_srt_init(&h.srt, &h.cfg, &hooks), KVM_PAIR_OK);
+    char token[80];
+    snprintf(token, sizeof(token), "%s", seed_client(&h, "Operator", 0x58u));
+    sh_online(&h);
+    sh_cli_t c, other;
+    CHECK(sh_cli_open(&h, &c, token, 12));
+    CHECK(sh_cli_open(&h, &other, token, 13));
+    sh_clear_wire(&h);
+    sh_cmd(&h, &c, "display.profile.request", valid);
+    CHECK(sh_sent_contains(&h, "ERR_CONTROL_DENIED"));
+    kvm_srt_conn_close(&h.srt, 13, KVM_SRT_LOSS_SOCKET, sh_now_us());
+    sh_clear_wire(&h);
+    sh_cmd(&h, &c, "display.profile.request", "'usb_serial':'441BF6C92290','mode':'1024x600'");
+    CHECK(sh_sent_contains(&h, "ERR_CONTROL_DENIED"));
+    sh_clear_wire(&h);
+    sh_cmd(&h, &c, "display.profile.request", "'usb_serial':'441BF6C9229C','mode':'1600x900'");
+    CHECK(sh_sent_contains(&h, "ERR_BAD_FRAME"));
+    CHECK_EQ(display_requests, 0);
+    sh_clear_wire(&h);
+    sh_cmd(&h, &c, "display.profile.request", valid);
+    CHECK(sh_sent_contains(&h, "display.profile.queued"));
+    CHECK_EQ(display_requests, 1);
+    kvm_srt_shutdown(&h.srt, sh_now_us());
+}
+
+static void t_host_attach_uses_current_authenticated_connection(void)
+{
+    char token[80];
+    setup_host_session(token);
+    const char *offer = "'port':8765,'leaf':'\\u002bw=='";
+    sh_cli_t c;
+    CHECK(!sh_cli_open(&h, &c, NULL, 10));
+    CHECK_EQ(sh_open_control(&h, token, 11), 11);
+    sh_frame(&h, 11, sh_jf("{'v':1,'type':'host.attach','seq':1,'payload':{%s}}", offer));
+    CHECK(sh_sent_contains(&h, "ERR_SESSION"));
+    kvm_srt_conn_close(&h.srt, 11, KVM_SRT_LOSS_SOCKET, sh_now_us());
+    CHECK_EQ(attaches, 0);
+    CHECK(sh_cli_open(&h, &c, token, 12));
+    const char *bad[] = {"'port':8765,'leaf':'+w==','address':'192.0.2.99'",
+                         "'port':65536,'leaf':'+w=='", "'port':8765,'leaf':'+w=A'",
+                         "'port':8765,'leaf':'+x=='", "'port':8765,'leaf':'+w==\\u0000x'"};
+    for (unsigned i = 0; i < sizeof(bad)/sizeof(bad[0]); ++i) {
+        sh_clear_wire(&h);
+        sh_cmd(&h, &c, "host.attach", bad[i]);
+        CHECK(sh_sent_contains(&h, "ERR_BAD_FRAME"));
+    }
+    CHECK_EQ(attaches, 0);
+    sh_cmd(&h, &c, "host.attach", offer);
+    CHECK_EQ(attached_session, c.id);
+    CHECK(sh_sent_contains(&h, "\"host.attached\""));
+    CHECK(sh_sent_contains(&h, "\"ack_seq\":7"));
+    CHECK_EQ(h.nintents, 0);
+    CHECK_EQ(h.napproval_begin, 0);
+    sh_clear_wire(&h);
+    sh_cmd(&h, &c, "host.attach", "'port':8888,'leaf':'+w=='");
+    CHECK(sh_sent_contains(&h, "ERR_CONTROL_DENIED"));
+    CHECK_EQ(detaches, 0);
+    sh_cmd(&h, &c, "status.get", "");
+    CHECK(sh_sent_contains(&h, "status.snapshot"));
+    h.approval_answer = KVM_SRT_APPROVAL_PENDING;
+    sh_cmd(&h, &c, "control.request", "'reason':'remote_support'");
+    CHECK_EQ(h.napproval_begin, 1); // existing CLIENT permission survives attaching
+    CHECK_EQ(h.nintents, 0);
+    kvm_srt_approval_result(&h.srt, c.id, true, sh_now_us());
+    kvm_srt_set_owner(&h.srt, OWNER_REMOTE, c.id, h.epoch, sh_now_us());
+    sh_cmd(&h, &c, "host.attach", offer);
+    CHECK(sh_sent_contains(&h, "host.attached"));
+    CHECK_EQ(h.srt.owner_session, c.id);
+    kvm_srt_set_remote_enabled(&h.srt, false, sh_now_us());
+    CHECK_EQ(detaches, 1);
+    CHECK_EQ(attached_session, 0);
+    sh_online(&h);
+    CHECK(sh_cli_open(&h, &c, token, 13));
+    sh_cmd(&h, &c, "host.attach", offer);
+    kvm_srt_conn_close(&h.srt, 12, KVM_SRT_LOSS_SOCKET, sh_now_us()); // delayed close of older socket
+    CHECK_EQ(detaches, 1);
+    CHECK_EQ(attached_session, 13);
+    det_clock_advance(2999);
+    sh_cmd(&h, &c, "ping", "'nonce':1");
+    det_clock_advance(2999);
+    kvm_srt_tick(&h.srt, sh_now_us());
+    CHECK_EQ(attached_session, 13); // ordinary CLIENT heartbeats keep the role alive
+    det_clock_advance(1);
+    kvm_srt_tick(&h.srt, sh_now_us());
+    CHECK_EQ(detaches, 2); // a dead PC may never deliver a TCP close
+    sh_cmd(&h, &c, "host.attach", offer);
+    CHECK_EQ(attached_session, 13);
+    kvm_srt_set_host(&h.srt, KVM_HOST_USB_MOUNTED, false, false, sh_now_us());
+    CHECK_EQ(detaches, 3);
+    sh_cmd(&h, &c, "host.attach", offer);
+    CHECK_EQ(attached_session, 0);
+    kvm_srt_set_host(&h.srt, KVM_HOST_USB_DETACHED, false, true, sh_now_us());
+    sh_cmd(&h, &c, "host.attach", offer);
+    CHECK_EQ(attached_session, 13); // the USB HID cable and LAN trust have independent lifetimes
+    CHECK(kvm_srt_clients_remove(&h.srt, 0, sh_now_us()));
+    CHECK_EQ(detaches, 4);
+    CHECK_EQ(attached_session, 0);
+    kvm_srt_shutdown(&h.srt, sh_now_us());
+}
+
+static void t_host_restart_on_existing_client_lease(void)
+{
+    char token[80];
+    setup_host_session(token);
+    sh_cli_t owner, other;
+    CHECK(sh_cli_open(&h, &owner, token, 27));
+    CHECK(sh_cli_open(&h, &other, token, 28));
+    h.approval_answer = KVM_SRT_APPROVAL_PENDING;
+    sh_cmd(&h, &owner, "control.request", "'reason':'remote_support'");
+    kvm_srt_approval_result(&h.srt, owner.id, true, sh_now_us());
+    CHECK(sh_sent_contains(&h, "control.granted"));
+    const uint32_t epoch = h.epoch;
+    kvm_srt_set_owner(&h.srt, OWNER_REMOTE, owner.id, epoch, sh_now_us());
+    const int releases = h.nreleases;
+    sh_cmd(&h, &owner, "host.attach", "'port':8765,'leaf':'+w=='");
+    CHECK_EQ(attached_session, owner.id);
+    const char *replacement = "'port':8766,'leaf':'/Q=='";
+    sh_clear_wire(&h);
+    sh_cmd(&h, &owner, "host.attach", replacement);
+    CHECK(sh_sent_contains(&h, "ERR_CONTROL_DENIED"));
+    sh_clear_wire(&h);
+    sh_cmd(&h, &other, "host.detach", "");
+    CHECK(sh_sent_contains(&h, "ERR_CONTROL_DENIED"));
+    sh_clear_wire(&h);
+    sh_cmd(&h, &owner, "host.detach", "'session':27");
+    CHECK(sh_sent_contains(&h, "ERR_BAD_FRAME"));
+    sh_clear_wire(&h);
+    sh_frame(&h, owner.id, sh_jf("{'v':1,'type':'host.detach','seq':%llu,'session_id':'%s'}",
+                                 (unsigned long long)++owner.q, owner.label));
+    CHECK(sh_sent_contains(&h, "ERR_BAD_FRAME"));
+    sh_clear_wire(&h);
+    sh_cmd(&h, &owner, "host.detach\\u0000suffix", "");
+    CHECK(sh_sent_contains(&h, "ERR_BAD_FRAME"));
+    CHECK_EQ(detaches, 0);
+    CHECK_EQ(attached_leaf, 0xfb);
+
+    sh_clear_wire(&h);
+    sh_cmd(&h, &owner, "host.detach", "");
+    const uint64_t detach_seq = owner.q;
+    char ack[40];
+    snprintf(ack, sizeof(ack), "\"ack_seq\":%llu", (unsigned long long)detach_seq);
+    CHECK(sh_sent_contains(&h, "\"host.detached\""));
+    CHECK(sh_sent_contains(&h, ack));
+    CHECK_EQ(detaches, 1);
+    CHECK_EQ(attached_session, 0);
+    CHECK_EQ(h.srt.owner_session, owner.id);
+    CHECK_EQ(h.srt.owner_epoch, epoch);
+
+    sh_clear_wire(&h);
+    sh_cmd(&h, &owner, "host.attach", replacement);
+    CHECK(sh_sent_contains(&h, "\"host.attached\""));
+    CHECK_EQ(attached_session, owner.id);
+    CHECK_EQ(attached_leaf, 0xfd);
+    CHECK_EQ(attached_port, 8766);
+    sh_clear_wire(&h);
+    sh_frame(&h, owner.id, sh_jf("{'v':1,'type':'host.detach','seq':%llu,'session_id':'%s','payload':{}}",
+                                 (unsigned long long)detach_seq, owner.label));
+    CHECK(sh_sent_contains(&h, "ERR_REPLAY"));
+    CHECK_EQ(detaches, 1);
+    CHECK_EQ(h.nreleases, releases);
+    CHECK_EQ(h.napproval_begin, 1);
+    CHECK_EQ(h.nintents, 0);
+    sh_input_ep(&h, &owner, epoch, "'kind':'mouse.move','dx':1,'dy':2");
+    CHECK_EQ(h.nintents, 1);
+    CHECK_EQ(h.intent_session[0], owner.id);
+    CHECK_EQ(h.intent_epoch[0], epoch);
+    kvm_srt_shutdown(&h.srt, sh_now_us());
+    CHECK_EQ(detaches, 2);
+}
+
 static void t_no_secrets_on_the_wire(void)
 {
     // SEC-105 / TECH-046 / AT-SEC-08: a full pairing run plus a control session, then a sweep of
@@ -885,6 +1157,10 @@ int main(void)
     RUN(t_client_removal_revokes);
     RUN(t_approval_policies);
     RUN(t_conn_bookkeeping);
+    RUN(t_pack_sender_uses_pairing_identity_and_revocation);
+    RUN(t_host_attach_uses_current_authenticated_connection);
+    RUN(t_display_profile_needs_one_paired_operator_and_matching_serial);
+    RUN(t_host_restart_on_existing_client_lease);
     RUN(t_no_secrets_on_the_wire);
     RUN(t_init_fails_closed);
     TEST_MAIN_END("test_srt_session");

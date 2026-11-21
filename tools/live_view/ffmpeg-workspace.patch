@@ -1,0 +1,157 @@
+--- a/libavcodec/h264dec.h
++++ b/libavcodec/h264dec.h
+@@ -335,7 +335,7 @@
+     H264DSPContext h264dsp;
+     H264ChromaContext h264chroma;
+     H264QpelContext h264qpel;
+-    H274FilmGrainDatabase h274db;
++    H274FilmGrainDatabase *h274db;
+ 
+     H264Picture DPB[H264_MAX_PICTURE_COUNT];
+     H264Picture *cur_pic_ptr;
+--- a/libavcodec/h264dec.c
++++ b/libavcodec/h264dec.c
+@@ -363,6 +363,7 @@
+     av_buffer_pool_uninit(&h->decode_error_flags_pool);
+ 
+     av_freep(&h->slice_ctx);
++    av_freep(&h->h274db);
+     h->nb_slice_ctx = 0;
+ 
+     ff_h264_sei_uninit(&h->sei);
+--- a/libavcodec/h264_picture.c
++++ b/libavcodec/h264_picture.c
+@@ -246,9 +246,14 @@
+         const AVFrameSideData *sd = av_frame_get_side_data(cur->f, AV_FRAME_DATA_FILM_GRAIN_PARAMS);
+ 
+         err = AVERROR_INVALIDDATA;
+-        if (sd) // a decoding error may have happened before the side data could be allocated
+-            err = ff_h274_apply_film_grain(cur->f_grain, cur->f, &h->h274db,
++        if (sd) {
++            if (!h->h274db)
++                h->h274db = av_mallocz(sizeof(*h->h274db));
++            if (!h->h274db)
++                return AVERROR(ENOMEM);
++            err = ff_h274_apply_film_grain(cur->f_grain, cur->f, h->h274db,
+                                            (AVFilmGrainParams *) sd->data);
++        }
+         if (err < 0) {
+             av_log(h->avctx, AV_LOG_WARNING, "Failed synthesizing film "
+                    "grain, ignoring: %s\n", av_err2str(err));
+--- a/libavcodec/h264_ps.h
++++ b/libavcodec/h264_ps.h
+@@ -133,8 +133,8 @@
+     uint8_t data[4096];
+     size_t data_size;
+ 
+-    uint32_t dequant4_buffer[6][QP_MAX_NUM + 1][16];
+-    uint32_t dequant8_buffer[6][QP_MAX_NUM + 1][64];
++    uint32_t (*dequant4_buffer[6])[16];
++    uint32_t (*dequant8_buffer[6])[64];
+     uint32_t(*dequant4_coeff[6])[16];
+     uint32_t(*dequant8_coeff[6])[64];
+ 
+--- a/libavcodec/h264_ps.c
++++ b/libavcodec/h264_ps.c
+@@ -690,6 +690,10 @@
+ {
+     PPS *pps = obj;
+ 
++    for (int i = 0; i < 6; ++i) {
++        av_free(pps->dequant4_buffer[i]);
++        av_free(pps->dequant8_buffer[i]);
++    }
+     ff_refstruct_unref(&pps->sps);
+ }
+ 
+@@ -814,6 +818,24 @@
+     build_qp_table(pps, 1, pps->chroma_qp_index_offset[1],
+                    sps->bit_depth_luma);
+ 
++    /* The coefficient setup aliases identical scaling matrices to their first
++     * occurrence. Only those first occurrences need backing storage. */
++    for (int i = 0; i < 6; ++i) {
++        int same4 = 0, same8 = 0;
++        for (int j = 0; j < i; ++j) {
++            same4 |= !memcmp(pps->scaling_matrix4[i], pps->scaling_matrix4[j], 16);
++            same8 |= !memcmp(pps->scaling_matrix8[i], pps->scaling_matrix8[j], 64);
++        }
++        if (!same4)
++            pps->dequant4_buffer[i] = av_calloc(QP_MAX_NUM + 1, sizeof(*pps->dequant4_buffer[i]));
++        if (pps->transform_8x8_mode && !same8)
++            pps->dequant8_buffer[i] = av_calloc(QP_MAX_NUM + 1, sizeof(*pps->dequant8_buffer[i]));
++        if ((!same4 && !pps->dequant4_buffer[i]) ||
++            (pps->transform_8x8_mode && !same8 && !pps->dequant8_buffer[i])) {
++            ret = AVERROR(ENOMEM);
++            goto fail;
++        }
++    }
+     init_dequant_tables(pps, sps);
+ 
+     if (pps->chroma_qp_index_offset[0] != pps->chroma_qp_index_offset[1])
+--- a/libavcodec/h264_slice.c
++++ b/libavcodec/h264_slice.c
+@@ -246,13 +246,22 @@
+     pic->qscale_table = pic->qscale_table_buf->data + 2 * h->mb_stride + 1;
+ 
+     for (i = 0; i < 2; i++) {
+-        pic->motion_val_buf[i] = av_buffer_pool_get(h->motion_val_pool);
++        /* Progressive Baseline uses list zero only. Keep a full-size aligned
++         * view for generic colocated lookups, with independent unused indices.
++         * A nonconforming mixed picture can detach list one before a B slice. */
++        int single_list = i == 1 && h->ps.sps->profile_idc == AV_PROFILE_H264_BASELINE &&
++                          h->ps.sps->frame_mbs_only_flag && !h->avctx->active_thread_type &&
++                          h->slice_ctx[0].slice_type_nos != AV_PICTURE_TYPE_B;
++        pic->motion_val_buf[i] = single_list ? av_buffer_ref(pic->motion_val_buf[0])
++                                             : av_buffer_pool_get(h->motion_val_pool);
+         pic->ref_index_buf[i]  = av_buffer_pool_get(h->ref_index_pool);
+         if (!pic->motion_val_buf[i] || !pic->ref_index_buf[i])
+             goto fail;
+ 
+         pic->motion_val[i] = (int16_t (*)[2])pic->motion_val_buf[i]->data + 4;
+         pic->ref_index[i]  = pic->ref_index_buf[i]->data;
++        if (single_list)
++            memset(pic->ref_index[i], LIST_NOT_USED, pic->ref_index_buf[i]->size);
+     }
+ 
+     pic->pps = ff_refstruct_ref_c(h->ps.pps);
+@@ -2056,6 +2065,25 @@
+     return 0;
+ }
+ 
++/* Only a mixed picture opening a second prediction list reaches this path. */
++static av_cold av_noinline int kvm_h264_detach_second_mv_list(H264Context *h)
++{
++    int ret;
++    H264Picture *pic = h->cur_pic_ptr;
++    AVBufferRef *vectors = av_buffer_allocz(pic->motion_val_buf[0]->size);
++    if (!vectors)
++        return AVERROR(ENOMEM);
++    ret = av_buffer_replace(&h->cur_pic.motion_val_buf[1], vectors);
++    if (ret < 0) {
++        av_buffer_unref(&vectors);
++        return ret;
++    }
++    av_buffer_unref(&pic->motion_val_buf[1]);
++    pic->motion_val_buf[1] = vectors;
++    pic->motion_val[1] = h->cur_pic.motion_val[1] = (int16_t (*)[2])vectors->data + 4;
++    return 0;
++}
++
+ int ff_h264_queue_decode_slice(H264Context *h, const H2645NAL *nal)
+ {
+     H264SliceContext *sl = h->slice_ctx + h->nb_slice_ctx_queued;
+@@ -2170,6 +2198,13 @@
+                    h->current_slice + 1);
+             return AVERROR_INVALIDDATA;
+         }
++    }
++
++    if (sl->slice_type_nos == AV_PICTURE_TYPE_B &&
++        h->cur_pic.motion_val[0] == h->cur_pic.motion_val[1]) {
++        ret = kvm_h264_detach_second_mv_list(h);
++        if (ret < 0)
++            return ret;
+     }
+ 
+     ret = h264_slice_init(h, sl, nal);

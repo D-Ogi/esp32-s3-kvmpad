@@ -64,12 +64,19 @@
 // short - a note that wraps past two lines at UI_FONT_LABEL would push the control out of its row.
 
 static const char *const k_section_name[UI_SETTINGS_SEC_COUNT] = {
-    "Remote", "Paired clients", "Shortcuts", "Input", "Keyboard", "About",
+    "Remote", "Paired clients", "Shortcuts", "Input", "Keyboard", "About", "Appearance",
 };
 
 static const char *const k_section_icon[UI_SETTINGS_SEC_COUNT] = {
-    LV_SYMBOL_WIFI, LV_SYMBOL_USB, LV_SYMBOL_LIST, LV_SYMBOL_GPS, LV_SYMBOL_KEYBOARD, LV_SYMBOL_SETTINGS,
+    LV_SYMBOL_WIFI, LV_SYMBOL_USB, LV_SYMBOL_LIST, LV_SYMBOL_GPS, LV_SYMBOL_KEYBOARD, LV_SYMBOL_SETTINGS, LV_SYMBOL_EYE_OPEN,
 };
+
+// Keep the public section/control IDs stable while arranging the physical buttons.
+static const ui_settings_section_t k_section_order[] = {
+    UI_SETTINGS_SEC_APPEARANCE, UI_SETTINGS_SEC_INPUT, UI_SETTINGS_SEC_KEYBOARD, UI_SETTINGS_SEC_SHORTCUTS,
+    UI_SETTINGS_SEC_REMOTE, UI_SETTINGS_SEC_CLIENTS, UI_SETTINGS_SEC_ABOUT,
+};
+_Static_assert(sizeof(k_section_order)/sizeof(*k_section_order)==UI_SETTINGS_SEC_COUNT, "Settings navigation");
 
 static const char *const k_approval_label[UI_CONTROL_APPROVAL_COUNT] = {"Auto", "Trusted", "Always"};
 
@@ -154,7 +161,8 @@ static const char *const k_setting_key[UI_SETTING_COUNT] = {
     "remote.enabled",      "pair.require_accept",      "control.approval", "shortcuts.confirm_alt_f4",
     "keepawake.enabled",   "keepawake.interval_s",     "client.trusted",   "client.forget",
     "kbd.unicode_mode",    "kbd.lang_ko",              "kbd.lang_zh",      "kbd.lang_ja",
-    "kbd.host_layout",
+    "kbd.host_layout", [UI_SETTING_BRIGHTNESS] = "display.brightness",
+    [UI_SETTING_PALETTE] = "display.palette",
 };
 
 const char *ui_setting_key(ui_setting_id_t id)
@@ -564,6 +572,35 @@ static void interval_clicked(lv_event_t *e)
     refresh(s);
 }
 
+static void palette_clicked(lv_event_t *e)
+{
+    ui_view_settings_t *s = lv_event_get_user_data(e);
+    if (!controls_live(s)) return;
+    lv_obj_t *button = lv_event_get_current_target_obj(e);
+    for (unsigned i = 0; i < UI_PALETTE_COUNT; i++) {
+        if (button == s->palette[i] && i != s->v.palette) {
+            report(s, UI_SETTING_PALETTE, (int32_t)i, 0);
+            return;
+        }
+    }
+}
+
+static void brightness_clicked(lv_event_t *e)
+{
+    ui_view_settings_t *s = lv_event_get_user_data(e);
+    int32_t current = s->v.brightness;
+    if (!controls_live(s) || current < (int32_t)UI_SETTINGS_BRIGHTNESS_MIN ||
+        current > (int32_t)UI_SETTINGS_BRIGHTNESS_MAX) {
+        return;
+    }
+    bool up = lv_event_get_current_target(e) == s->brightness_up;
+    int32_t next = up ? LV_MIN(current + 10, (int32_t)UI_SETTINGS_BRIGHTNESS_MAX)
+                      : LV_MAX(current - 10, (int32_t)UI_SETTINGS_BRIGHTNESS_MIN);
+    if (next != current) {
+        report(s, UI_SETTING_BRIGHTNESS, next, 0u);
+    }
+}
+
 static void unicode_clicked(lv_event_t *e)
 {
     ui_view_settings_t *s = lv_event_get_user_data(e);
@@ -737,6 +774,24 @@ static void refresh(ui_view_settings_t *s)
         set_enabled(s->interval_up, controls_live(s) && s->v.keepawake_interval_s <
                                                             UI_SETTINGS_INTERVAL_MAX);
     }
+
+    for (unsigned i = 0; i < UI_PALETTE_COUNT; i++) {
+        lv_obj_t *option = s->palette[i];
+        bool selected = known && i == s->v.palette;
+        set_checked(option, selected);
+        lv_obj_set_hidden(lv_obj_get_child(option, 1), !selected);
+        lv_obj_set_disabled(option, !controls_live(s));
+    }
+
+    bool brightness_known = known && s->v.brightness >= UI_SETTINGS_BRIGHTNESS_MIN &&
+                            s->v.brightness <= UI_SETTINGS_BRIGHTNESS_MAX;
+    if (brightness_known) {
+        lv_label_set_text_fmt(s->brightness_value, "%u%%", (unsigned)s->v.brightness);
+    } else {
+        lv_label_set_text_static(s->brightness_value, UNKNOWN_TEXT);
+    }
+    set_enabled(s->brightness_down, controls_live(s) && brightness_known && s->v.brightness > UI_SETTINGS_BRIGHTNESS_MIN);
+    set_enabled(s->brightness_up, controls_live(s) && brightness_known && s->v.brightness < UI_SETTINGS_BRIGHTNESS_MAX);
 
     refresh_clients(s);
 
@@ -918,25 +973,55 @@ static void build_shortcuts_pane(ui_view_settings_t *s, lv_obj_t *holder)
     add_toggle_row(s, pane, UI_SETTING_CONFIRM_ALT_F4);
 }
 
-static void build_input_pane(ui_view_settings_t *s, lv_obj_t *holder)
+static void add_stepper(lv_obj_t *row, lv_event_cb_t clicked, ui_view_settings_t *s,
+                        lv_obj_t **down, lv_obj_t **value, lv_obj_t **up)
 {
-    lv_obj_t *pane = new_pane(s, holder, UI_SETTINGS_SEC_INPUT, UI_SPACE_S);
-    add_toggle_row(s, pane, UI_SETTING_KEEPAWAKE_ENABLED);
-
-    lv_obj_t *left = NULL;
-    lv_obj_t *row = setting_row(pane, "Idle interval",
-                                "How long the host must be idle before a keep-awake report. 10 to 300 s.",
-                                &left);
     lv_obj_t *stepper = plain(row);
     lv_obj_set_size(stepper, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(stepper, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(stepper, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(stepper, UI_SPACE_S, LV_PART_MAIN);
-    s->interval_down = button(stepper, LV_SYMBOL_MINUS, STEP_W, STEP_W, UI_BTN_SECONDARY, interval_clicked, s);
-    s->interval_value = text(stepper, UNKNOWN_TEXT, UI_STYLE_TEXT_BODY);
-    lv_obj_set_width(s->interval_value, 72);
-    lv_obj_set_style_text_align(s->interval_value, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    s->interval_up = button(stepper, LV_SYMBOL_PLUS, STEP_W, STEP_W, UI_BTN_SECONDARY, interval_clicked, s);
+    *down = button(stepper, LV_SYMBOL_MINUS, STEP_W, STEP_W, UI_BTN_SECONDARY, clicked, s);
+    *value = text(stepper, UNKNOWN_TEXT, UI_STYLE_TEXT_BODY);
+    lv_obj_set_width(*value, 72);
+    lv_obj_set_style_text_align(*value, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    *up = button(stepper, LV_SYMBOL_PLUS, STEP_W, STEP_W, UI_BTN_SECONDARY, clicked, s);
+}
+
+static void build_input_pane(ui_view_settings_t *s, lv_obj_t *holder)
+{
+    lv_obj_t *pane = new_pane(s, holder, UI_SETTINGS_SEC_INPUT, UI_SPACE_S);
+    add_toggle_row(s, pane, UI_SETTING_KEEPAWAKE_ENABLED);
+    lv_obj_t *left = NULL;
+    lv_obj_t *row = setting_row(pane, "Idle interval",
+                                "How long the host must be idle before a keep-awake report. 10 to 300 s.",
+                                &left);
+    add_stepper(row, interval_clicked, s, &s->interval_down, &s->interval_value, &s->interval_up);
+}
+
+static void build_appearance_pane(ui_view_settings_t *s, lv_obj_t *holder)
+{
+    static const char *const names[UI_PALETTE_COUNT] = {"Day", "Night", "High contrast"};
+    lv_obj_t *pane = new_pane(s, holder, UI_SETTINGS_SEC_APPEARANCE, UI_SPACE_S);
+    (void)wrapped(pane, "Color theme", UI_STYLE_TEXT_HEADING);
+    lv_obj_t *options = plain(pane);
+    lv_obj_set_size(options, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(options, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(options, UI_SPACE_S, 0);
+    for (unsigned i = 0; i < UI_PALETTE_COUNT; i++) {
+        lv_obj_t *option = button(options, names[i], 174, TOGGLE_H, UI_BTN_SECONDARY, palette_clicked, s);
+        ui_theme_control_button(option);
+        lv_obj_t *label = lv_obj_get_child(option, 0);
+        lv_obj_remove_style_all(label);
+        lv_obj_align(label, LV_ALIGN_CENTER, -9, 0);
+        lv_obj_t *mark = lv_label_create(option);
+        lv_label_set_text_static(mark, LV_SYMBOL_OK);
+        lv_obj_align(mark, LV_ALIGN_RIGHT_MID, -2, 0);
+        s->palette[i] = option;
+    }
+    lv_obj_t *left = NULL;
+    lv_obj_t *row = setting_row(pane, "Display brightness", "Panel backlight, 10% to 100%.", &left);
+    add_stepper(row, brightness_clicked, s, &s->brightness_down, &s->brightness_value, &s->brightness_up);
 }
 
 // ---- HOST layout picker (FR-741, ADR-039) ---------------------------------------------------
@@ -2109,7 +2194,8 @@ static bool build(void *ctx, lv_obj_t *card)
     lv_obj_set_size(list, TAB_W, BODY_H);
     lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(list, UI_SPACE_XS, LV_PART_MAIN);
-    for (uint8_t i = 0; i < UI_SETTINGS_SEC_COUNT; i++) {
+    for (unsigned pos = 0; pos < UI_SETTINGS_SEC_COUNT; pos++) {
+        const ui_settings_section_t i = k_section_order[pos];
         char legend[48];
         (void)snprintf(legend, sizeof(legend), "%s  %s", k_section_icon[i], k_section_name[i]);
         s->tab[i] = button(list, "", TAB_W, TAB_H, UI_BTN_QUIET, section_clicked, s);
@@ -2127,6 +2213,7 @@ static bool build(void *ctx, lv_obj_t *card)
     build_shortcuts_pane(s, holder);
     build_input_pane(s, holder);
     build_keyboard_pane(s, holder);
+    build_appearance_pane(s, holder);
     build_about_pane(s, holder);
 
     s->card = card;
@@ -2152,6 +2239,10 @@ static void on_close(void *ctx)
     s->interval_value = NULL;
     s->interval_down = NULL;
     s->interval_up = NULL;
+    memset(s->palette, 0, sizeof(s->palette));
+    s->brightness_value = NULL;
+    s->brightness_down = NULL;
+    s->brightness_up = NULL;
     s->clients_heading = NULL;
     s->clients_empty = NULL;
     s->layout_value = NULL;
@@ -2226,7 +2317,7 @@ void ui_view_settings_init(ui_view_settings_t *s, ui_actions_t *actions, ui_rout
     s->now_us = now_us;
     s->sink = sink;
     s->sink_ctx = sink_ctx;
-    s->section = UI_SETTINGS_SEC_REMOTE;
+    s->section = UI_SETTINGS_SEC_APPEARANCE;
     s->ov[0] = (ui_overlay_descriptor_t){
         .id = UI_OVERLAY_SETTINGS, .create = build, .on_close = on_close, .blocking = true, .ctx = s};
     s->ov[1] = (ui_overlay_descriptor_t){.id = UI_OVERLAY_SETTINGS_CONFIRM,

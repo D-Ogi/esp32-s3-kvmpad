@@ -4,8 +4,8 @@
 //
 // Router and root shell (TASK-060C, 07 §5): one activity at a time. The shell always exists (top bar slot,
 // content slot, overlay layer, toast layer); primary views are created lazily on their first show and stay
-// cached (at most UI_VIEW_COUNT, 07 §5 "at most three main views"), so navigation allocates nothing after
-// the first visit. Every function runs in the LVGL owner context (AGENTS-UI §3) and never blocks.
+// cached during primary navigation (at most three main views, 07 §5). On entry to extensions,
+// Keyboard and Shortcuts can give their widget storage back. All calls run in the LVGL owner context.
 //
 // Atomic mode switch (07 §5, AGENTS-UI §6): cancel_input (touch cancel + HID release request) -> old view
 // on_leave -> hide old -> create/show new -> on_enter -> publish active_view -> input_area_changed. The router
@@ -36,7 +36,7 @@ typedef enum {
 /** Primary view (MOUSE / KEYBOARD / SHORTCUTS). Callbacks run in the LVGL owner context. */
 typedef struct {
     ui_view_id_t id;
-    /** Build the view into `slot` and return its root object (a child of `slot`); NULL = failed. Called once. */
+    /** Build the view into `slot` and return its root object. Called on first use and after eviction. */
     lv_obj_t *(*create)(void *ctx, lv_obj_t *slot);
     void (*on_enter)(void *ctx);
     /** Cancel local gesture/press state; the router has already requested the domain release. */
@@ -95,6 +95,7 @@ typedef struct {
     lv_obj_t *root;            // the shell screen (or the parent given to init)
     lv_obj_t *topbar_slot;
     lv_obj_t *content_slot;
+    int32_t height, topbar_height;
     lv_obj_t *overlay_layer;   // hidden while the overlay stack is empty, so it never catches input
     lv_obj_t *toast_layer;     // never clickable: toasts do not block the pad
     ui_store_t *store;         // may be NULL (tests); receives active_view / overlay
@@ -131,6 +132,9 @@ void ui_router_deinit(ui_router_t *r);
 /** Switch the primary view (atomic sequence above). True when `target` is active afterwards. */
 bool ui_router_show(ui_router_t *r, ui_view_id_t target);
 
+/** After the shell has left and overlays are closed, free cached views except Mouse. */
+void ui_router_release_extension_memory(ui_router_t *r);
+
 /** Active view id, or -1 before the first show. */
 int ui_router_active(const ui_router_t *r);
 
@@ -139,6 +143,9 @@ int ui_router_active(const ui_router_t *r);
  * blocking overlay is open. False otherwise (the touch router then routes nothing to the pad).
  */
 bool ui_router_pad_area(ui_router_t *r, lv_area_t *out);
+
+/** Reclaim the top bar for a view that supplies its own navigation. Call during a guarded transition. */
+void ui_router_set_full_height(ui_router_t *r, bool full_height);
 
 /** Overlay functions: ui_overlay.h. */
 

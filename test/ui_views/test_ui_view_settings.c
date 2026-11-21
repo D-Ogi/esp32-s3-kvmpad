@@ -179,6 +179,7 @@ static ui_settings_view_t defaults(uint32_t seq)
     v.confirm_alt_f4 = false;                       // FR-734 default OFF
     v.keepawake_enabled = false;                    // FR-711 default OFF
     v.keepawake_interval_s = 30u;                   // ADR-020 default
+    v.brightness = 80u;                             // FR-505 default
     v.unicode_mode = UI_UNICODE_MODE_HOST_IME;
     (void)snprintf(v.host_layout, sizeof(v.host_layout), "us");
     (void)snprintf(v.firmware_version, sizeof(v.firmware_version), "1.0.0+43a49f0");
@@ -205,6 +206,8 @@ static void test_unknown_until_published(void)
 {
     CHECK(start());
     CHECK(open_card());
+    click_obj(s_set.tab[UI_SETTINGS_SEC_REMOTE]);
+    CHECK_EQ(ui_view_settings_section(&s_set), UI_SETTINGS_SEC_REMOTE);
     CHECK_EQ(s_set.c.opens, 1u);
 
     CHECK(contains(ui_view_settings_toggle_text(&s_set, UI_SETTING_REMOTE_ENABLED), "Unknown"));
@@ -277,6 +280,8 @@ static void test_no_optimistic_toggle(void)
 {
     CHECK(start());
     CHECK(open_card());
+    click_obj(s_set.tab[UI_SETTINGS_SEC_REMOTE]);
+    CHECK_EQ(ui_view_settings_section(&s_set), UI_SETTINGS_SEC_REMOTE);
     ui_settings_view_t v = defaults(1u);
     ui_view_settings_set(&s_set, &v);
     lv_test_wait(10);
@@ -321,6 +326,8 @@ static void test_relax_require_accept_needs_confirmation(void)
 {
     CHECK(start());
     CHECK(open_card());
+    click_obj(s_set.tab[UI_SETTINGS_SEC_REMOTE]);
+    CHECK_EQ(ui_view_settings_section(&s_set), UI_SETTINGS_SEC_REMOTE);
     ui_settings_view_t v = defaults(1u);
     ui_view_settings_set(&s_set, &v);
     lv_test_wait(10);
@@ -364,6 +371,8 @@ static void test_relax_control_approval(void)
 {
     CHECK(start());
     CHECK(open_card());
+    click_obj(s_set.tab[UI_SETTINGS_SEC_REMOTE]);
+    CHECK_EQ(ui_view_settings_section(&s_set), UI_SETTINGS_SEC_REMOTE);
     ui_settings_view_t v = defaults(1u);
     ui_view_settings_set(&s_set, &v); // ALWAYS
     lv_test_wait(10);
@@ -517,6 +526,92 @@ static void test_keepawake_interval(void)
     CHECK(lv_obj_has_state(ui_view_settings_interval_button(&s_set, false), LV_STATE_DISABLED));
     click_obj(ui_view_settings_interval_button(&s_set, false));
     CHECK_EQ(s_change_n, 2);
+    stop();
+}
+
+static void test_appearance_palette(void)
+{
+    CHECK(start());
+    CHECK(open_card());
+    click_obj(s_set.tab[UI_SETTINGS_SEC_APPEARANCE]);
+    CHECK_EQ(ui_view_settings_section(&s_set), UI_SETTINGS_SEC_APPEARANCE);
+    for (unsigned i = 0; i < UI_PALETTE_COUNT; i++) {
+        CHECK(lv_obj_has_state(s_set.palette[i], LV_STATE_DISABLED));
+        CHECK(lv_obj_is_hidden(lv_obj_get_child(s_set.palette[i], 1)));
+    }
+    ui_settings_view_t v = defaults(1u);
+    v.palette = UI_PALETTE_NIGHT;
+    ui_view_settings_set(&s_set, &v);
+    uint8_t choices[] = {UI_PALETTE_HIGH_CONTRAST, UI_PALETTE_DAY, UI_PALETTE_NIGHT};
+    for (unsigned n = 0; n < UI_PALETTE_COUNT; n++) {
+        uint8_t chosen = choices[n];
+        click_obj(s_set.palette[v.palette]);
+        CHECK_EQ(s_change_n, n);
+        click_obj(s_set.palette[chosen]);
+        CHECK_EQ(s_change_n, n + 1);
+        CHECK_EQ(s_changes[n].id, UI_SETTING_PALETTE);
+        CHECK_EQ(s_changes[n].value, chosen);
+        CHECK(lv_obj_has_state(s_set.palette[v.palette], LV_STATE_CHECKED));
+        v.palette = chosen;
+        ui_view_settings_set(&s_set, &v);
+        for (unsigned i = 0; i < UI_PALETTE_COUNT; i++) {
+            CHECK(lv_obj_has_state(s_set.palette[i], LV_STATE_CHECKED) == (i == chosen));
+            CHECK(lv_obj_is_hidden(lv_obj_get_child(s_set.palette[i], 1)) == (i != chosen));
+        }
+    }
+    ui_overlay_dismiss(&s_r);
+    CHECK(open_card());
+    click_obj(s_set.tab[UI_SETTINGS_SEC_APPEARANCE]);
+    CHECK(lv_obj_has_state(s_set.palette[UI_PALETTE_NIGHT], LV_STATE_CHECKED));
+    stop();
+}
+
+static void test_display_brightness(void)
+{
+    CHECK(start());
+    CHECK(open_card());
+    click_obj(s_set.tab[UI_SETTINGS_SEC_APPEARANCE]);
+    CHECK(contains(lv_label_get_text(s_set.brightness_value), "Unknown"));
+    CHECK(lv_obj_has_state(s_set.brightness_down, LV_STATE_DISABLED));
+    CHECK(lv_obj_has_state(s_set.brightness_up, LV_STATE_DISABLED));
+    ui_settings_view_t v = defaults(1u);
+    ui_view_settings_set(&s_set, &v);
+    CHECK_EQ(lv_obj_get_width(s_set.brightness_down), UI_TOUCH_PREFERRED);
+    CHECK_EQ(lv_obj_get_height(s_set.brightness_up), UI_TOUCH_PREFERRED);
+    click_obj(s_set.brightness_down);
+    CHECK_EQ(s_change_n, 1);
+    CHECK_EQ(s_changes[0].id, UI_SETTING_BRIGHTNESS);
+    CHECK_EQ(s_changes[0].value, 70);
+    CHECK(contains(lv_label_get_text(s_set.brightness_value), "80%"));
+    v.brightness = 13;
+    v.seq++;
+    ui_view_settings_set(&s_set, &v);
+    click_obj(s_set.brightness_down);
+    CHECK_EQ(s_change_n, 2);
+    CHECK_EQ(s_changes[1].value, 10);
+    v.brightness = 10;
+    v.seq++;
+    ui_view_settings_set(&s_set, &v);
+    click_obj(s_set.brightness_down);
+    CHECK_EQ(s_change_n, 2);
+    v.brightness = 97;
+    v.seq++;
+    ui_view_settings_set(&s_set, &v);
+    click_obj(s_set.brightness_up);
+    CHECK_EQ(s_change_n, 3);
+    CHECK_EQ(s_changes[2].value, 100);
+    v.brightness = 100;
+    v.seq++;
+    ui_view_settings_set(&s_set, &v);
+    click_obj(s_set.brightness_up);
+    CHECK_EQ(s_change_n, 3);
+    ui_overlay_dismiss(&s_r);
+    CHECK(s_set.brightness_value == NULL && s_set.brightness_up == NULL && s_set.brightness_down == NULL);
+    CHECK(open_card());
+    click_obj(s_set.tab[UI_SETTINGS_SEC_APPEARANCE]);
+    CHECK(contains(lv_label_get_text(s_set.brightness_value), "100%"));
+    CHECK(lv_obj_has_state(s_set.brightness_up, LV_STATE_DISABLED));
+    CHECK(contains(ui_setting_key(UI_SETTING_BRIGHTNESS), "display.brightness"));
     stop();
 }
 
@@ -1155,6 +1250,8 @@ static void test_pair_entry_point(void)
 {
     CHECK(start());
     CHECK(open_card());
+    click_obj(s_set.tab[UI_SETTINGS_SEC_REMOTE]);
+    CHECK_EQ(ui_view_settings_section(&s_set), UI_SETTINGS_SEC_REMOTE);
     ui_settings_view_t v = defaults(1u);
     ui_view_settings_set(&s_set, &v); // remote off
     lv_test_wait(10);
@@ -1237,10 +1334,23 @@ static void test_navigation_and_close(void)
     ui_view_settings_set(&s_set, &v);
     lv_test_wait(10);
 
-    for (uint8_t i = 0; i < UI_SETTINGS_SEC_COUNT; i++) {
-        click_obj(s_set.tab[i]);
-        CHECK_EQ(ui_view_settings_section(&s_set), (ui_settings_section_t)i);
-        CHECK(lv_obj_has_state(s_set.tab[i], LV_STATE_CHECKED));
+    static const ui_settings_section_t expected[] = {
+        UI_SETTINGS_SEC_APPEARANCE, UI_SETTINGS_SEC_INPUT, UI_SETTINGS_SEC_KEYBOARD, UI_SETTINGS_SEC_SHORTCUTS,
+        UI_SETTINGS_SEC_REMOTE, UI_SETTINGS_SEC_CLIENTS, UI_SETTINGS_SEC_ABOUT,
+    };
+    CHECK_EQ(ui_view_settings_section(&s_set), UI_SETTINGS_SEC_APPEARANCE);
+    int32_t previous_bottom = -1;
+    for (unsigned pos = 0; pos < UI_SETTINGS_SEC_COUNT; pos++) {
+        ui_settings_section_t id = expected[pos];
+        lv_obj_t *tab = s_set.tab[id];
+        lv_area_t rect;
+        lv_obj_get_coords(tab, &rect);
+        CHECK(rect.y1 > previous_bottom);
+        previous_bottom = rect.y2;
+        CHECK(lv_obj_get_child(lv_obj_get_parent(tab), (int32_t)pos) == tab);
+        click_obj(tab);
+        CHECK_EQ(ui_view_settings_section(&s_set), id);
+        CHECK(lv_obj_has_state(tab, LV_STATE_CHECKED));
     }
     CHECK_EQ(s_set.c.section_taps, UI_SETTINGS_SEC_COUNT);
     CHECK(!ui_view_settings_show_section(&s_set, (ui_settings_section_t)UI_SETTINGS_SEC_COUNT));
@@ -1503,6 +1613,8 @@ int main(void)
     RUN_MEM(test_relax_control_approval);
     RUN_MEM(test_paired_clients);
     RUN_MEM(test_keepawake_interval);
+    RUN_MEM(test_appearance_palette);
+    RUN_MEM(test_display_brightness);
     RUN_MEM(test_unicode_mode_stepper);
     RUN_MEM(test_input_languages);
     RUN_MEM(test_layout_row_is_read_only_without_tables);

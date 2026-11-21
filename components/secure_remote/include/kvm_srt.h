@@ -120,6 +120,7 @@ typedef struct {
     bool operator_role; // true for a paired client; observers (FR-404) are a later role
     int16_t client_index;   // index in the paired register, -1 on the pairing endpoint
     uint32_t label_entropy; // randomness for the non-secret wire label
+    char peer_ipv4[16];     // socket peer observed by the HTTPS server; empty for an unsupported address
 } kvm_srt_admission_t;
 
 // ---- physical approval (ADR-023 FR-733) ----------------------------------------------------
@@ -199,6 +200,12 @@ typedef struct {
      * no LVGL call happens here.
      */
     void (*pair_event)(void *ctx, const kvm_pair_event_t *event);
+    bool (*pack_request)(void *ctx, uint64_t session, const char *client, const char *type,
+                         const kvm_json_doc_t *doc, int payload, const char **state, uint32_t *offset);
+    void (*pack_disconnect)(void *ctx, uint64_t session);
+    bool (*host_attach)(uint64_t session, const char *address, uint16_t port, const uint8_t *leaf, size_t length);
+    void (*host_detach)(uint64_t session);
+    bool (*display_profile)(uint64_t session, const char *serial, bool native);
 
     void *ctx;
 } kvm_srt_hooks_t;
@@ -267,6 +274,9 @@ typedef struct {
     uint8_t state; // 0 = free, 1 = open
     uint8_t kind;  // kvm_srt_conn_kind_t
     bool pair_hello_seen;
+    bool host_attached;
+    uint64_t host_last_frame_us;
+    char peer_ipv4[16];
     uint64_t id;
     int16_t client_index;
     uint64_t opened_us;

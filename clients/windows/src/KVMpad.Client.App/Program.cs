@@ -14,8 +14,10 @@ internal static class Program
     private const string SingleInstanceMutex = "Global\\KVMpad.Client.SingleInstance";
 
     [STAThread]
-    private static int Main()
+    private static int Main(string[] args)
     {
+        if (args.Length != 0)
+            return PackCommand.RunAsync(args).GetAwaiter().GetResult();
         // Two instances would install two keyboard hooks and fight over the same credential entries, so only
         // one runs at a time.
         using var single = new Mutex(initiallyOwned: true, SingleInstanceMutex, out bool first);
@@ -31,6 +33,9 @@ internal static class Program
 
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
+#pragma warning disable WFO5001 // WinForms 9 exposes the native system color mode as an experimental API.
+        Application.SetColorMode(SystemColorMode.System);
+#pragma warning restore WFO5001
         Application.SetCompatibleTextRenderingDefault(false);
 
         AppSettings settings = AppSettings.Load();

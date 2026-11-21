@@ -29,6 +29,8 @@ bool ui_shell_active(void);
 /** If the shell is on screen, hand its pad rectangle to the touch bridge and return true. */
 bool ui_shell_refresh_pad(void);
 
+esp_err_t ui_shell_keyboard_workspace(ui_kbd_workspace_t workspace);
+
 typedef struct {
     ui_router_counters_t router;
     ui_app_counters_t app;
@@ -46,6 +48,21 @@ typedef struct {
  * never becomes HID. ESP_ERR_INVALID_STATE while the shell is not on screen; ESP_FAIL when the shell refused it.
  */
 esp_err_t ui_shell_local_action(ui_action_type_t type, uint16_t value);
+/** Open the read-only card browser. Installation and grants still require a physical selection. */
+esp_err_t ui_shell_browse_card(void);
+#ifdef KVM_MEDIA_SYNTHETIC_DIAG
+#include "live_message.h"
+esp_err_t ui_shell_help_touch(bool open);
+esp_err_t ui_shell_help_completion(uint32_t *hold_us);
+bool ui_shell_help_state(bool open);
+esp_err_t ui_shell_card_reference(void);
+esp_err_t ui_shell_card_run(const char *file, const char *mode, const char *source, bool pixel_size);
+esp_err_t ui_shell_card_action(const char *action);
+esp_err_t ui_shell_card_home(void);
+esp_err_t ui_shell_synthetic_media(unsigned fps, unsigned frames, kvm_live_codec_t codec, bool paced);
+esp_err_t ui_shell_pixel_pattern(bool scan);
+void ui_shell_stop_synthetic_media(void);
+#endif
 
 /** Diagnostics: shell, router and view counters (zeroed before the shell exists). */
 void ui_shell_status(ui_shell_counters_t *out);

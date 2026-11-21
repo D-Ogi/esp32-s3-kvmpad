@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "root": {
+    "id": "cursor_magnifier",
+    "type": "Row",
+    "bounds": {
+      "x": 0,
+      "y": 0,
+      "w": 1024,
+      "h": 568
+    },
+    "props": {
+      "layout": "absolute"
+    },
+    "children": [
+      {
+        "id": "live_preview",
+        "type": "StreamViewport",
+        "bounds": {
+          "x": 24,
+          "y": 28,
+          "w": 512,
+          "h": 512
+        },
+        "props": {
+          "stream": "cursor_region",
+          "fit": "native",
+          "source_size": [
+            512,
+            512
+          ],
+          "mode": "PIXEL_1X"
+        }
+      },
+      {
+        "id": "mode_overview",
+        "type": "Button",
+        "bounds": {
+          "x": 568,
+          "y": 54,
+          "w": 132,
+          "h": 60
+        },
+        "props": {
+          "label": "Overview"
+        },
+        "events": {
+          "tap": "set_mode_overview"
+        }
+      },
+      {
+        "id": "mode_zoom",
+        "type": "Button",
+        "bounds": {
+          "x": 854,
+          "y": 54,
+          "w": 132,
+          "h": 60
+        },
+        "props": {
+          "label": "2× Zoom"
+        },
+        "events": {
+          "tap": "set_mode_zoom"
+        }
+      },
+      {
+        "id": "mode_1x",
+        "type": "Button",
+        "bounds": {
+          "x": 711,
+          "y": 54,
+          "w": 132,
+          "h": 60
+        },
+        "props": {
+          "label": "1:1 native"
+        },
+        "events": {
+          "tap": "set_mode_1x"
+        }
+      },
+      {
+        "id": "capture_status",
+        "type": "StatusChip",
+        "bounds": {
+          "x": 568,
+          "y": 156,
+          "w": 418,
+          "h": 64
+        },
+        "props": {
+          "label": "No capture session",
+          "status": "permission"
+        }
+      },
+      {
+        "id": "start",
+        "type": "Button",
+        "bounds": {
+          "x": 568,
+          "y": 268,
+          "w": 418,
+          "h": 72
+        },
+        "props": {
+          "label": "Start live view"
+        },
+        "events": {
+          "tap": "start_stream"
+        }
+      },
+      {
+        "id": "stop",
+        "type": "Button",
+        "bounds": {
+          "x": 568,
+          "y": 366,
+          "w": 418,
+          "h": 72
+        },
+        "props": {
+          "label": "Stop sharing"
+        },
+        "events": {
+          "tap": "stop_stream"
+        }
+      }
+    ]
+  }
+}

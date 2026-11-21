@@ -38,6 +38,11 @@ static lv_obj_t *child(lv_obj_t *bar, int index)
     return lv_obj_get_child(bar, index);
 }
 
+lv_obj_t *ui_topbar_brand_slot(lv_obj_t *bar)
+{
+    return child(bar, CHILD_BRAND);
+}
+
 lv_obj_t *ui_topbar_nav_slot(lv_obj_t *bar)
 {
     return child(bar, CHILD_NAV);

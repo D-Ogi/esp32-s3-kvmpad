@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+CONFIG_APP_BUILD_TYPE_RAM=y
+CONFIG_APP_BUILD_TYPE_PURE_RAM_APP=y
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT=y

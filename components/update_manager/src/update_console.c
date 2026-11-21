@@ -29,19 +29,25 @@ static void print_status(void)
 {
     kvm_ota_status_t st;
     update_manager_slots_t sl;
-    update_manager_get_status(&st);
+    bool available = update_manager_get_status(&st);
     update_manager_get_slots(&sl);
 
-    printf("state       %s\n", kvm_ota_state_name(st.state));
-    printf("last reason %s\n", kvm_ota_reason_name(st.reason));
-    printf("input       %s\n", st.input_blocked ? "BLOCKED (maintenance)" : "allowed");
-    printf("running     %s state=%s %s\n", sl.running_label, img_state_name(sl.running_state),
-           st.confirmed ? "confirmed" : "UNCONFIRMED");
+    printf("state       %s\n", available ? kvm_ota_state_name(st.state) : "update manager not started");
+    if (available) {
+        printf("last reason %s\n", kvm_ota_reason_name(st.reason));
+        printf("input       %s\n", st.input_blocked ? "BLOCKED (maintenance)" : "allowed");
+    }
+    printf("running     %s state=%s", sl.running_label, img_state_name(sl.running_state));
+    if (available) printf(" %s", st.confirmed ? "confirmed" : "UNCONFIRMED");
+    putchar('\n');
     printf("next slot   %s (%u KiB)\n", sl.next_label, (unsigned)(sl.next_size / 1024u));
     printf("signed ota  %s\n", sl.signature_checked_on_update ? "yes" : "NO - bring-up build only");
     printf("rollback    %s\n", sl.rollback_enabled ? "enabled" : "DISABLED in sdkconfig");
-    printf("app         %s %s (idf %s) secure_version %u\n", st.running.project_name,
-           st.running.version, st.running.idf_ver, (unsigned)st.running.secure_version);
+    if (st.running.desc_ok) {
+        printf("app         %s %s (idf %s) secure_version %u\n", st.running.project_name,
+               st.running.version, st.running.idf_ver, (unsigned)st.running.secure_version);
+    }
+    if (!available) return;
     if (st.candidate.desc_ok) {
         printf("candidate   %s %s secure_version %u\n", st.candidate.project_name,
                st.candidate.version, (unsigned)st.candidate.secure_version);

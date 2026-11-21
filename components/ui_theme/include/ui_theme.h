@@ -54,6 +54,23 @@ typedef enum {
 
     UI_STYLE_SCRIM,         // full-screen input blocker behind a modal
     UI_STYLE_TOAST,         // inverse pill, not clickable
+    UI_STYLE_CONTROL_PAGE,
+    UI_STYLE_CONTROL_BUTTON,
+    UI_STYLE_CONTROL_SELECTED,
+    UI_STYLE_CONTROL_MASK,
+    UI_STYLE_CONTROL_MASK_SELECTED,
+    UI_STYLE_NAV_TAB,
+    UI_STYLE_TOUCH_SURFACE,
+    UI_STYLE_TOUCH_CONTACT,
+    UI_STYLE_TOUCH_STATUS,
+    UI_STYLE_MOUSE_KEY,
+    UI_STYLE_LIBRARY_TILE,
+    UI_STYLE_LIBRARY_ICON,
+    UI_STYLE_DRAWER_SHELL,
+    UI_STYLE_DRAWER_TILE,
+    UI_STYLE_DRAWER_STATUS,
+    UI_STYLE_DRAWER_MASK,
+    UI_STYLE_DRAWER_GRIP,
 
     UI_STYLE_COUNT,
 } ui_style_id_t;
@@ -64,6 +81,15 @@ typedef enum {
  * Returns false only if LVGL is not initialized.
  */
 bool ui_theme_init(void);
+
+typedef enum { UI_PALETTE_DAY, UI_PALETTE_NIGHT, UI_PALETTE_HIGH_CONTRAST, UI_PALETTE_COUNT } ui_control_palette_t;
+ui_control_palette_t ui_theme_control_palette(void);
+void ui_theme_set_control_palette(ui_control_palette_t palette);
+void ui_theme_control_button(lv_obj_t *button);
+/** Opaque touch surface and its static edge reflections. Leaves input and layout on the existing pad. */
+void ui_theme_touch_surface(lv_obj_t *pad);
+/** Decorative mask. The parent retains the label, hit target and events. */
+lv_obj_t *ui_theme_control_mask(lv_obj_t *button, const lv_image_dsc_t *mask);
 
 /**
  * Reset every shared style. Call it only after the widget tree that used the styles is deleted;
@@ -116,6 +142,10 @@ void ui_theme_set_hanzi_font(const lv_font_t *font);
 
 /** The same for UI_FONT_KANJI (the Japanese candidate bar, Noto Sans JP). */
 void ui_theme_set_kanji_font(const lv_font_t *font);
+
+/** Hangul composition font, linked with the app or supplied by a verified language module. LVGL owner only. */
+bool ui_theme_has_hangul_font(void);
+void ui_theme_set_hangul_font(const lv_font_t *font);
 
 /** Text-grade color of a severity (legible on UI_COLOR_BG and UI_COLOR_SURFACE). */
 lv_color_t ui_theme_severity_color(ui_severity_t severity);

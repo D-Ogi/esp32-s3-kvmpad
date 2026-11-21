@@ -47,6 +47,13 @@ The specification is frozen — **new decisions and status changes** go here as 
 | ADR-037 | One language key on the KEYBOARD view instead of the `KO` / `ZH` / `JA` caps: tap cycles, long press opens a picker; the active input languages are toggles in `Settings → Keyboard` (record schema 3, default English only; amends ADR-024, adds FR-752) | **ACCEPTED** 2026-11-02 | [ADR-037-input-language-key.md](ADR-037-input-language-key.md) |
 | ADR-039 | Choosing one of 581 HOST layouts (FR-741): the picker gets a current-layout card with a home-row preview, up to 8 favorites, the last 5 recents, a search field with its own on-screen keyboard, and the two-level list with a nine-bucket index strip and six recycled rows; a long press on the KEYBOARD layout strip opens a quick-switch overlay; favorites and recents are stored as ids (record schema 4) and the shell, not the UI, owns their ordering (amends ADR-024) | PROPOSED 2026-11-03 | [ADR-039-host-layout-picker.md](ADR-039-host-layout-picker.md) |
 | ADR-038 | RGB pixel clock 25 MHz (27.3 Hz scan-out): the 30 MHz vendor value starved the bounce-buffer refill while a finger was on the screen (25 → 2 missed frames in 70 s); rejected by the owner for a constant flicker of the scrim under modals; 30 MHz stays, the touch-time jumps are open | **REJECTED** 2026-11-03 | [ADR-038-pixel-clock-25mhz.md](ADR-038-pixel-clock-25mhz.md) |
+| ADR-040 | Extension platform, 7B board, USB migration, microSD storage and recovery gates | PROPOSED 2026-11-19 | [ADR-040-extension-platform.md](ADR-040-extension-platform.md) |
+| ADR-041 | H.264 playback and live magnifier profiles, including Cinepak 960×540 | PROPOSED 2026-11-19 | [ADR-041-live-media.md](ADR-041-live-media.md) |
+| ADR-042 | Optional keyboard language modules and on-demand dictionaries | PROPOSED 2026-11-19 | [ADR-042-optional-languages.md](ADR-042-optional-languages.md) |
+| ADR-043 | USB-C extended desktop with the existing Windows driver | PROPOSED 2026-11-20 | [ADR-043-usb-extended-display.md](ADR-043-usb-extended-display.md) |
+| ADR-044 | Bottom-edge screen switcher and system exit in multi-screen extensions | ACCEPTED 2026-11-20 | [ADR-044-local-navigation-gestures.md](ADR-044-local-navigation-gestures.md) |
+| ADR-045 | Top-edge touchpad and mirrored keyboard workspaces | ACCEPTED 2026-11-20 | [ADR-045-hybrid-keyboard-navigation.md](ADR-045-hybrid-keyboard-navigation.md) |
+| ADR-046 | Portrait monitor console as a composable extension | IMPLEMENTED, PENDING-HW UX 2026-11-20 | [ADR-046-portrait-monitor-console.md](ADR-046-portrait-monitor-console.md) |
 
 New requirements from ADR-017 onwards (ID, task, component, tests): [`../EXTENSIONS.md`](../EXTENSIONS.md).
 The ADR-015 gap is described in [`../REPO-LAYOUT.md`](../REPO-LAYOUT.md).
@@ -56,7 +63,7 @@ ADR-001/002/004/012 **are not changed** without the owner's approval (spec/06 §
 
 ## Decisions awaiting the owner
 
-_None — as of 2026-11-02._ ADR-009 resolved by a measurement of board unit #1 (`hardware/boards.md`); ADR-024 accepted 2026-11-01, ADR-025, ADR-026, ADR-015, ADR-016 and ADR-027..037 2026-11-02.
+ADR-039 covers the HOST layout picker. ADR-040..042 record the owner's choices of microSD storage with firmware Home recovery, H.264 live video, a Cinepak 960×540 magnifier option and optional keyboard language modules. Protocol details, the USB migration and release qualification remain under review.
 
 ## Template — `ADR-<num>-<slug>.md`
 

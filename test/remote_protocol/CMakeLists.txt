@@ -30,7 +30,7 @@ set(RP_SRC
     ${REPO}/components/remote_protocol/src/remote_protocol.c
     ${REPO}/components/hid_core/src/hid_keymap.c)
 
-foreach(suite test_remote_json test_remote_validate test_remote_session test_remote_vectors)
+foreach(suite test_remote_json test_remote_validate test_remote_session test_remote_vectors test_pack_receive)
     add_executable(${suite} ${suite}.c ${RP_SRC})
     target_include_directories(${suite} PRIVATE
         ${REPO}/components/remote_protocol/include
@@ -40,6 +40,8 @@ foreach(suite test_remote_json test_remote_validate test_remote_session test_rem
         ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME ${suite} COMMAND ${suite})
 endforeach()
+target_sources(test_pack_receive PRIVATE ${REPO}/main/pack_receive.c)
+target_include_directories(test_pack_receive PRIVATE ${REPO}/main)
 
 # Seeded mutation fuzzer over the frame parser and validator (03 §9 item 3). The default run is
 # 200000 inputs; pass a seed and a count to reproduce: fuzz_remote_frame <seed> <iterations>.

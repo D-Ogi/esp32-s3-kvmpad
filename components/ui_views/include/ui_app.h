@@ -126,8 +126,14 @@ void ui_app_deinit(ui_app_t *app);
 /** First view (MOUSE) if none is active yet, sync the mode switcher, report the pad rectangle. */
 void ui_app_show(ui_app_t *app);
 
+/** Install the local Extensions entry in the left top-bar slot after ui_app_init(). */
+lv_obj_t *ui_app_add_extensions_button(ui_app_t *app, lv_event_cb_t clicked);
+
 /** Before another screen takes over: dismiss every overlay and let the active view drop its press state. */
 void ui_app_leave(ui_app_t *app);
+
+/** Leave the shell and return the secondary views' storage to extensions. Home reopens on Mouse. */
+void ui_app_leave_for_extensions(ui_app_t *app);
 
 /** Report the current pad rectangle through hooks.pad_changed. */
 void ui_app_refresh_pad(ui_app_t *app);

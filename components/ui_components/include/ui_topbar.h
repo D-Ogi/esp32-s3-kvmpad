@@ -55,6 +55,9 @@ typedef struct {
 lv_obj_t *ui_topbar_create(lv_obj_t *parent, const ui_topbar_desc_t *desc,
                            const ui_topbar_bind_t *bind);
 
+/** Fixed left slot. The product shell can replace the static brand with local navigation. */
+lv_obj_t *ui_topbar_brand_slot(lv_obj_t *bar);
+
 /** Empty fixed-width container for the navigation control (UI_TOPBAR_NAV_W x UI_SEGMENTED_H). */
 lv_obj_t *ui_topbar_nav_slot(lv_obj_t *bar);
 

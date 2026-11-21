@@ -24,6 +24,7 @@
 #define LV_DEF_REFR_PERIOD 16
 
 #define LV_USE_OBSERVER 1
+#define LV_USE_COLOR_FILTER 1
 #define LV_USE_SNAPSHOT 1
 #define LV_OBJ_STYLE_CACHE 1
 

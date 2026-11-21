@@ -464,6 +464,20 @@ static void test_action_key_edges(void)
     CHECK_EQ(log.balance, 0);
     CHECK_EQ(log.downs, downs + 1);
 
+    // A controller reset is not a click. LVGL sends INDEV_RESET directly to the held widget.
+    lv_test_mouse_move_to(x, y);
+    lv_test_mouse_press();
+    lv_test_wait(60);
+    lv_indev_reset(lv_test_indev_get_indev(LV_INDEV_TYPE_POINTER), NULL);
+    lv_indev_reset(lv_test_indev_get_indev(LV_INDEV_TYPE_POINTER), NULL);
+    CHECK(!ui_action_key_is_down(keys[0]));
+    CHECK_EQ(log.balance, 0);
+    lv_test_mouse_release();
+    lv_test_wait(60);
+    lv_test_mouse_click_at(x, y);
+    CHECK_EQ(log.downs, downs + 3);
+    CHECK_EQ(log.ups, ups + 3);
+
     lv_obj_delete(root);
     ui_theme_deinit();
 }

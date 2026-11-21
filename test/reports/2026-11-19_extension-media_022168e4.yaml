@@ -1,0 +1,478 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+common:
+  build_sha: "022168e4a1ed9938892dab2223aa015f29dcbfc7 plus local extension/media changes"
+  hardware: "Waveshare ESP32-S3-Touch-LCD-7B, unit 1, rev v0.2, UART COM3"
+  flash_psram: "16777216 / 8388608 bytes"
+  usb_host_os: "Windows 10.0.26300"
+  idf: "6.1"
+  components_lock_sha256: "37d89184bbf0c983ce872d00ec98831d876e812bdd9370109f2c44985522b91d"
+  installed_app: "kvmpad ba5164a-dirty, as reported by info. The installed image digest was not read."
+  evidence_root: "../evidence, relative to the repository root"
+  when_utc: "2026-11-19"
+
+reports:
+  - test_id: MAG-13/native-viewport and MAG-05/USB-service-under-local-media
+    result: PARTIAL_VERIFIED_HW
+    firmware_sha256: "ccc6a04b2eb89d06ff1a580cdebf601c7066c8184133607a8bd9c7f9cd3d3d3e"
+    observed: >-
+      At boot 388 the submitted 1024x600 RGB565 frame matched all 262144 native viewport
+      pixels at (24,60), all 2052 guard pixels and the header controls. Each of six
+      codec runs checked two fixture CRCs and completed all 20 measured pictures.
+      For requests of 5 then 10 fps, JPEG 512x512 displayed 4.093 and 4.093 fps,
+      H.264 512x512 displayed 3.257 and 3.275 fps, and Cinepak 960x540 displayed
+      4.786 and 5.100 fps. No chart reported a missed scanout. Over the six windows
+      the longest USB service gap was 13.901 ms and the maximum time from a queued
+      service request to its callback was 3.937 ms. At idle these values were 10.168
+      and 0.078 ms. No USB link change or accepted input was recorded. Idle USB
+      completed three background reports in six seconds.
+    method: >-
+      Local two-phase charts exercised the device decoder and LCD. JPEG and H.264
+      reserved 131072 bytes of modeled transport memory. Service windows include
+      startup and both validation pictures. The host supplied no desktop pixels.
+    open: "Wireless throughput, input-to-host latency with actual input, optical output and sustained operation."
+    evidence:
+      - "hardware/20261120-magnifier-cadence-ccc6a04b2eb8.png"
+      - "hardware/20261120-magnifier-cadence-ccc6a04b2eb8.cadence.json"
+      - "hardware/20261120-magnifier-cadence-ccc6a04b2eb8.pattern.log"
+
+  - test_id: MEDIA-04/Windows-HOST-confirmed-display-rate
+    result: PASS_SW
+    observed: >-
+      The Windows HOST reports the display rate from positive frame acknowledgments.
+      After twenty confirmations it also shows the 95th percentile of request-to-acknowledgment
+      duration over the newest 32 confirmations. Freeze and Resume clear the window.
+      The desktop test suite passed all 51 cases, including sliding-window, unsuccessful
+      and retired-frame cases. The Release CLIENT build includes the tested broker.
+    evidence: ["build/magnifier-picker-feedback/confirmed-timing-suite.log"]
+    open: "Measure an approved Windows monitor session with wireless transport and optical output."
+
+  - test_id: KEP-FR-006/007 and PACK-015 simultaneous telemetry and magnifier
+    status: PASS_SW
+    observation: >-
+      The COMPOSITE profile may open two independently approved scopes for the same enrolled
+      board and profile. The real C workers and Python HOST were linked over local mutual TLS
+      using simulated ESP transport, capture and data providers. Samples continued while the
+      image waited for LCD credit, after a display-only stop and during a second capture.
+      A wrong profile or epoch could not stop the display. Home stopped both workers.
+      The same tests pressed Start before the first HELLO. An old HOST policy close
+      selected exclusive operation; early navigation skipped the redundant telemetry prompt.
+    host: >-
+      All 37 HOST tests passed. The real Windows capture and JPEG encoder used a synthetic
+      D3D11 surface while six simulated X-Plane topics published values. The ninth JPEG
+      arrived after stopping telemetry. Physical USB latency during streaming remains open.
+    scope: >-
+      The real LVGL pack renderer checked local capture permissions on handoff and continued
+      to release USB controls. Physical touch, Wi-Fi, simulator feeds and LCD latency are pending.
+    evidence: [build/composite-device/loopback.log, build/composite-device/views.log, build/composite-device/views-build.log, build/composite-host/host-tests.log]
+  - test_id: KEP-FR-002/006/007 and EXT-050/060 authored profiles with scoped HOST sessions
+    status: PASS_SW
+    implementation: >-
+      The firmware carries the installed manifest ID to the foreground HOST approval and requests
+      only the profile's declared simulator topics, deduplicated by name. A custom capture or
+      telemetry session requires the matching echoed scope. Existing instruments, magnifier and
+      physical Studio handshakes retain their original identities and operation limits. Measurement
+      age includes the HOST age and elapsed receiver time. Repeated timestamps retain their age.
+    installer: >-
+      A custom COMPOSITE package declared a pitch gauge, local controls and a magnifier. The real
+      LVGL installer staged the archive from the simulated card and from the paired receive window.
+      Each route exercised five openings with optional capture denied, granted, retained, revoked
+      and denied again. The telemetry boundary saw only pitch. Every allowed magnifier handoff
+      retained the package ID and stopped its exclusive telemetry session on leaving the controls.
+      On the separate production media panel all three crop modes requested the originating ID.
+    wire: >-
+      The native build of the production C bridge generated every nonempty subset of the six
+      simulator channels. All 63 went through the Windows HOST over loopback mutual TLS. The C
+      client parsed the actual session and subscription replies, generated BIND with the HOST's
+      token, and processed 384 telemetry messages. Consent used the same custom ID in all 63
+      sessions. C fixtures checked unrequested topics, source age, wrap, a legacy repeated
+      timestamp, STOP and missing or wrong scope echoes. The 25 Windows HOST tests included
+      separate authored capture and telemetry sessions, denial, reserved IDs and wrong operations.
+    scope: >-
+      Windows ran the broker with temporary identities and synthetic data. ESP32 network transport,
+      card, touch input and consent decisions were simulated. A paired physical board and simulator
+      remain necessary for on-device acceptance.
+    evidence: [build/pack-host-scopes/card-panel.log, build/pack-host-scopes/views-test.log, build/pack-host-scopes/panel-status.log, build/pack-host-scopes/wire.log, build/pack-host-scopes/c-wire-loopback.log, build/pack-host-scopes/host-with-native.log]
+  - test_id: MAG-03/MAG-04 on-panel display of the completed frame's crop
+    result: PASS_SW
+    platform: Production LVGL presenter on a simulated 1024x600 panel, actual host H.264 and Cinepak decoders
+    observed: >-
+      The presenter copied the borrowed region with its KVS slot. The caller then changed its
+      coordinate variable. The rendered 512x512 H.264 picture retained the original negative
+      cursor coordinates and source origin, actual size and padding. The top bar marked the
+      edge on both H.264 and 960x540 Cinepak. The native image CRC remained unchanged.
+      A repeated KVS sequence did not update the metadata. Monitor change cleared the old
+      geometry, and a new session with a legacy frame presented the image without any edge label.
+      The three independent LVGL runs also exercised Stop, Freeze, stale media and card playback.
+    evidence: [build/magnifier-region/display-1.log, build/magnifier-region/display-2.log, build/magnifier-region/display-3.log]
+    open: Physical Windows picker, display topology and observation of the resulting LCD picture.
+  - test_id: MAG-13/lossless-panel-fixture
+    result: PASS_SW
+    platform: Desktop LVGL 1024x600 under AddressSanitizer, plus ESP32-S3 Xtensa compilation
+    steps: >-
+      Open the engineering command ui media-pattern from Home. The presenter publishes one
+      local 512x512 RGB565 surface, hides the sharing controls and shows CAPTURE OFF, Test pattern,
+      Stop and Home. The command ui media-pattern-scan compares the known rectangle with each
+      available LCD framebuffer after the LVGL refresh and reports bitmasks and VSYNC/bounce deltas.
+      The HIL runner requests ui media-pattern-snap. The LVGL task checks the active chart,
+      framebuffer match and scanout counters immediately before rendering the native snapshot.
+      The runner verifies the ordered rows, RGB565 hash, pixels and text, closes the chart
+      and checks that the product shell is active before saving a PNG.
+    observed: >-
+      All 262144 viewport pixels matched the independent RGB565 reference at (24,60) through
+      (535,571). The surrounding 2052 pixels were black. Separate glyph-mask references matched
+      the status and both buttons. The checker rejected a one-pixel shift, resampling, one damaged
+      pixel, paint beyond the right edge and each of three obscured header regions. Both buttons
+      returned to the prior screen. Memory refusal left it usable. The scan test distinguished a
+      stalled scanout, no matching buffer, and a match only in the second buffer.
+      The guarded snapshot refused a different view before allocating pixels or emitting rows.
+      A serial replay of the desktop output reproduced all 614400 pixels and hash 1E89584A.
+      Six incomplete, corrupted or unverified replay variants were rejected.
+    budget: One immutable 524288-byte PSRAM surface in the engineering image. No decoder or stream queue.
+    limits: >-
+      The PNG is a desktop LVGL render. The ESP32-S3 compilation covered media_panel.c, ui_shell.c and
+      kvm_console.c with and without the diagnostic flag. The chart start, scan and snapshot
+      commands are compiled only in the engineering configuration. Physical framebuffer and
+      optical evidence require a board run.
+    evidence: [build/mag13-pattern/desktop-lvgl.png, build/mag13-pattern/desktop.log, build/mag13-pattern/checker.log, build/mag13-pattern/snapshot-guard.log, build/mag13-pattern/runner-replay.log, build/mag13-xtensa/build.log]
+  - test_id: EXT-063/MAG-01/MAG-07 magnifier settings and display freshness
+    result: PASS_SW
+    scope: Real LVGL 9.6, host H.264 and Cinepak decoders, synthetic fixture, simulated transport callbacks and display.
+    observed: >-
+      All three package crop modes reached the capture settings and the requested mode matched
+      the selected state. Opening settings did not start a stream. The panel allowed eight
+      simulated seconds for review without starting the six-second picture deadline. After
+      the data channel bound it expired a stream with no first picture. A completed image
+      reported receiver-to-display time. Further pictures produced an observed frame rate.
+      A 1.6-second pause marked the last picture stale and a new valid picture restored the display.
+      Freeze held the picture for eight simulated seconds. Resume restarted the measurement.
+      A stream carrying CRC-valid but undecodable image payloads lost its last visible image.
+      Monitor cleared a previously decoded H.264 image before another session could start.
+      A fresh request reused the stream ID in a new epoch and a delayed close on the old
+      epoch left the new pixels intact. Stop and Home remained available.
+    evidence: [build/magnifier-mode/installed.log, build/magnifier-freshness/monitor-1.log, build/magnifier-freshness/monitor-3.log]
+    open: Physical pairing, Windows picker approval, capture-to-panel latency and monitor switching on unit 1.
+  - test_id: MAG-05/mixed-input-software
+    result: PASS_SW
+    platform: Windows x64, AddressSanitizer, LVGL 1024x600, simulated three-interface USB sink and file-backed synthetic H.264
+    source: >-
+      The production panel runs live decode at FreeRTOS priority 2 and releases its media queue
+      mutex before decoding. The firmware selects the TinyUSB default task priority of 5. Its
+      completion callback polls the HID scheduler immediately. The host test runs the actual
+      panel worker, message receiver, queue, decoder, HID dispatcher and HID core. Its USB sink
+      and clock model one host poll per millisecond. It replaces the firmware task and queue primitives.
+    steps: >-
+      Build test/live_view/build_checks.py with --hid-load and --lvgl. Invoke panel_test --hid-load
+      with the synthetic idr-message.bin from check_live_worker.py. Compare the same input sequence
+      before opening the media panel and while holding the first decoded picture before publication.
+      Submit ten CRC-checked 96 KiB access units at 100 ms model intervals. Nine more units reach the
+      pending slot while the decoder retains its first frame. Press the LVGL Stop button with one
+      keyboard report in flight and 64 queued input intents.
+    observed: >-
+      Ten independent runs matched the baseline for all 207 completion offsets, report lengths,
+      interfaces and bytes. Each of 200 ordinary keyboard and mouse reports completed one model
+      poll after posting. Queue overflow and explicit release neutralized the keyboard within two
+      polls of Stop with no stale queued presses. The late decoded picture did not reopen the panel.
+      A fresh message with the same negotiated stream ID was rejected under the closed epoch and
+      accepted under the next epoch.
+    open: >-
+      Measure actual input-to-USB latency and frame delivery under Wi-Fi capture on the physical
+      board. The modeled poll offsets supply no measurement of ESP32 scheduling delays.
+    evidence: [build/mag05-hid/run-1.log, build/mag05-hid/run-10.log, build/mag05-hid/panel-regression.log]
+  - test_id: EXT-000/input-integrity
+    result: PASS
+    steps: "Verify every SHA-256 line and exact file coverage in MANIFEST-SHA256.md and SHA256SUMS.txt inside the original ZIPs."
+    observed: "43/43 extension files and 8332/8332 H.264 handoff files, excluding the manifests themselves."
+    evidence: ["Source archive digests in ADR-040 and ADR-041. Original ZIPs retained in ../spec-source/."]
+
+  - test_id: EXT-000/7B-baseline
+    result: PASS
+    steps: "kvm_serial.py --port COM3 cmd info exio 'lcd stats' 'touch info' usb, then cmd 'ime status'. pnputil /enum-devices /connected /deviceids on Windows."
+    observed: >-
+      CH32V003 shadow/readback 0x5E, USB_SEL=0, GT911 at 0x5D configured 1024x600 and five touch points.
+      Two LCD buffers, 32.746 Hz, missed=0 in 2664 frames at the initial reading. Both language engines ready.
+      Free PSRAM was 207664 bytes initially, 103144 in a later snapshot and 207724 after the final boot.
+      Free internal memory at the final reading was 41799 bytes, minimum 7852.
+      Windows reported Started for the composite parent, three USB interfaces and three HID collections
+      (Keyboard, Mouse, Consumer). The board reported USB_MOUNTED, mounts=1, failed=0.
+    evidence:
+      - "hardware/20261119-093731-extension-media-baseline.log sha256=e589783d4de515ab7c623cd494ef1a5ae88edbe9147bf9cfba6b7d299a45dde9"
+      - "hardware/20261119-093744-extension-media-peripherals.log sha256=fa919a64f3f33bab4b6c91c6e4f801eb5069d0ded2b07cd9b92cca773aa3eccc"
+      - "hardware/20261119-094136-extension-media-ime.log sha256=ededfd2d517f7846bf577b18a982f1efe97639e480ae1840bec42b84b4f98ffb"
+      - "hardware/20261119-094511-extension-media-usb-connected.log sha256=5857326559830475f1fe91b019b8725ffd4efaf2a16eb2dabb1dae0ad81d4aaf"
+      - "hardware/20261119-095023-extension-media-usb-final.log sha256=39ed9fae450e5d489e7afcb7d3966eecedabf1e5a4c328ffe26526f01afd9ef7"
+      - "hardware/20261119-extension-media-windows-hid.log sha256=98d62df5a9428bd0d4f76999d076cba9493b646e748dc824bcf889bafc011dc0"
+    issues: ["The first host query using Get-PnpDevice was denied. PnPUtil and the device-side mount both succeeded on the subsequent check. No physical five-finger gesture or HPE four-interface enumeration was tested."]
+
+  - test_id: EXT-010/011/020-desktop
+    result: PASS
+    steps: "python -B test/kvmpack/test_kvmpack.py -v. Run kvmpack.py build and validate for each source under tools/kvmpack/examples/."
+    observed: >-
+      14 tests passed. Three examples round-tripped with deterministic output. Tests covered schema/size and
+      permission errors, references, cyclic bindings, tampered archives, missing storage, retries, competing
+      writers, partial writes to each inactive-slot file and recovery with a damaged latest payload.
+    evidence:
+      - "build/20261119-kvmpack.log sha256=cac5ec453baaf428964e9244593d1641232d6a5c4f6a722df2ee3115d53a6cf6"
+      - "extension-v1.3.1/cursor-magnifier.kvmpack sha256=56aad11aaec4ea9c83b014ad13ccd29c8d4c7093d587c747fc801c82365ab518"
+      - "extension-v1.3.1/flight-instruments.kvmpack sha256=9002ebddd0f2f573738f167f6de900a35f3f7e1ef24128dac1e082fc6eef42db"
+      - "extension-v1.3.1/flight-yoke.kvmpack sha256=ab164ad82559fd5f25b25fcb28717ae1dba69dfcc4a958ba2e7332b3b91e4db7"
+    issues: ["Storage tests used a temporary host directory. The owner confirmed no microSD card was inserted."]
+
+  - test_id: EXT-012/offline-preview
+    result: PASS
+    steps: "Run kvmpack.py preview for each example. Open the generated HTML at 1024x600 in Chromium. Exercise the local controls, Home and the magnifier Start/Stop."
+    observed: "Each content area measured (0,32,1024,568). The magnifier measured (24,60,512,512) in panel coordinates."
+    evidence:
+      - "extension-v1.3.1/cursor-magnifier.png sha256=3b5e2863c951e0cc42c590ed48d1e3f015d4b36347fc9cdd2a7e67f8ca17103d"
+      - "extension-v1.3.1/flight-instruments.png sha256=a12bcfe0ec5a4eb67692d02fa302aeba436daacb7979c38de0fe638235d614c3"
+      - "extension-v1.3.1/flight-yoke.png sha256=a8154746bd83645317b35ccf0d0a01f4fc6b9f7f8d1c1b7050cfe6a11d98ea29"
+
+  - test_id: TECH-078/081/language-images
+    result: PASS
+    korean_data_image:
+      flash_format: KVMIMEDT v1
+      solo_bytes: 331776
+      solo_sha256: 32c654bf3487e2a656be245ff432117a19de1d75b30d717e737d817230305f13
+      combined_zh_ja_ko_bytes: 6922240
+      combined_sha256: dcead55528466a4baa617460447e4e53683944a10ea75735aa028533f9bb40d6
+      capacity_bytes: 8060928
+      font_bytes: 319344
+      font_sha256: 23cf80b15e3f8e5118ca45c38cc179c0dcf6a67de793eabd31ab27bbbf141e65
+      observed: >-
+        The firmware worker, flash VFS and streamed font loader ran on a 32-bit desktop ABI.
+        All 2401 Hangul glyphs matched every rendered alpha pixel and glyph metric of the
+        built-in font. Korean retained 31700 tracked bytes across 20 settings cycles. Turning
+        Korean off before publication kept the picker disabled. The built-in variant issued
+        zero partition reads. A corrupt or absent Hangul entry left no retained allocation.
+        The combined image produced the expected nihao and nihongo candidates.
+        A media-build keyboard with LVGL accepted the newly available language in an open
+        picker, drew its preedit from flash-backed data and delivered U+C548 and U+B155 to
+        the test sink. The unit-1 data partition was not provisioned during this test.
+      evidence: [../evidence/build/ime-hangul-data/modules.log, ../evidence/build/ime-hangul-data/typing.log]
+    steps: "Build KVMIMEDT v1 with --no-openwnn --hanzi-font and, separately, --no-pinyin --kanji-font. Verify entry bounds, alignment and SHA-256 against the combined image ime_data4b.bin."
+    observed: "Each image has three entries: dictionary, font and OFL notice. Chinese is 4415488 bytes and Japanese is 2199552 bytes. Host suites ime, pinyin, wnn32 and views-kbd passed 4/4, 2/2, 2/2 and 7/7."
+    evidence:
+      - "ime/20261119-zh.bin sha256=e172c411cb1cb8c4afb3b31e3455933ff568ac336039dd6bd135cdedae624012"
+      - "ime/20261119-ja.bin sha256=ba3cfc07c778533504999f38d3dcc08eeaa0514a3da3d649532fae77d0431a39"
+
+  - test_id: TECH-078/081/optional-flash-runtime-host
+    result: PASS
+    steps: >-
+      Run six fresh 32-bit Windows processes with the firmware language worker, partition parser,
+      read-only VFS, streamed font loader, LVGL 9.6 and both AOSP decoders. Supply the two single-language
+      flash images above, the existing combined ime_data4b.bin, and a run without a partition.
+      In two processes flip one dictionary byte in memory before mount.
+    observed:
+      - "With both languages disabled, 15 sync calls produced zero workers, partition lookups, reads and tracked allocations."
+      - >-
+        All three entries verified in each single-language image. Requesting both languages attached only
+        the available engine. The combined image verified five entries and converted both languages.
+        Pinyin converted nihao to 你好, and OpenWnn converted nihongo to 日本語. LVGL streamed each
+        candidate glyph from its own font. The rasterized glyphs had 241, 220 and 171, 204, 315 nonzero
+        pixels respectively, with the same pixel hashes on the single-language and combined images.
+      - >-
+        Disable during a pending load was reconciled on the next owner poll. Three enable, search
+        and disable cycles closed the decoder each time. The previously published font still drew a
+        glyph after each detach. Tracked allocations returned to the cached font tables, 156404 bytes
+        for Chinese and 68140 bytes for Japanese. Each corrupted image verified two entries out of
+        three and the loader refused to attach the affected decoder.
+    scope: >-
+      Host adapters supplied partition bytes, Windows SHA-256, deterministic worker scheduling and
+      UI attachment callbacks. Pinyin read a temporary stdio file copied through the registered VFS.
+      Widget interaction, physical flash timings and ESP32-S3 free or low-water heap with media remain
+      outside this measurement.
+    evidence:
+      - "build/adr042-flash-host/src/run.py"
+      - "build/adr042-flash-host/run.log sha256=20b33e8d0f14a6e958132236f86f963d300017b5e18c122e9021b6068c14a211"
+
+  - test_id: TECH-078/081/optional-flash-retry
+    result: PASS
+    steps: >-
+      Run build/ime-retry/run.py both on the three-language image. Compare eight cases on the
+      previous and revised VFS using the production language worker and decoders in a 32-bit
+      Windows process. Inject one failure per case at the verifier buffer allocation, directory
+      read, Japanese dictionary read or VFS registration. Also exercise a healthy image, a missing
+      Japanese dictionary, a mismatched digest and a retry through the language settings handler.
+    observed:
+      - >-
+        All four temporary faults recovered on the next mount. A failed registration took two
+        registration attempts and one success, with six SHA-256 checks and 1690 flash reads total.
+        A third mount did not register, hash or read again.
+      - >-
+        Toggling Japanese off and on restored 日本語 after a temporary dictionary read error. With
+        a missing or corrupt Japanese dictionary, Chinese still produced 你好 and the streamed
+        Korean 한 glyph matched the reference bitmap. The corrupt file stayed inaccessible.
+    scope: >-
+      Host fault injection, without a microSD backend. The signed ESP32-S3 application also built
+      and passed the four-interface descriptor check. These fault cases were not run on hardware.
+    evidence:
+      - "build/ime-retry/run.py"
+      - "build/ime-retry/after/ja-toggle.log"
+      - "build/ime-retry/after/register.log"
+      - "build/ime-retry/after/bad-ja.log"
+
+  - test_id: TECH-081/language-memory-baseline
+    result: OBSERVED
+    observed: "Installed app ba5164a-dirty, host IME, ja=1, zh=0, ko=0. Both local dictionary engines were installed and info reported 207744 bytes of free PSRAM."
+    evidence: ["hardware/20261119-101446-extension-media-language-baseline.log sha256=07c7cf191775b6a687b0192ff6bfb2df55767cb92835a4143d3e84b8195f1c4d"]
+
+  - test_id: TECH-078/language-builds
+    result: PASS
+    steps: "Build the complete ESP32-S3 application with IDF 6.1 for CONFIG_KVM_IME_KOREAN=y and with the option disabled. Inspect the ELF symbols and run espsecure on each signed image."
+    observed: "Default signed image 3346432 bytes. Omitting Korean saved 589824 bytes of signed application flash space and removed the kvm_font_hangul_24 symbol. Each signed image fits the 4194304-byte slot."
+    evidence:
+      - "ota-images/20261119-optional-languages.bin sha256=0303063dec76862a475c6090ed92e54a16c19953e5777d9172e6e9dbcf37f6d4"
+      - "ota-images/20261119-optional-languages-no-ko.bin sha256=05f2cb0a2f22fbed4db13925f61cd477d1e1df9185aede78405a75193aab81a8"
+
+  - test_id: HPE-000/existing-host-core
+    result: PASS
+    steps: "Add the workspace llvm-mingw bin directory to PATH. Run ctest --test-dir ../build-host --output-on-failure."
+    observed: "11/11 existing host executables passed. These are the baseline USB, HID, board, touch and gesture tests."
+    evidence: ["build/20261119-extension-core.log sha256=f8ef75c0b915d8f7cfe805b5df433ec700df8dc80d569a9adef0edabc1558155"]
+
+  - test_id: MEDIA-01/exact
+    result: PASS
+    steps: "python -B test/live_view/check_h264_reference.py ../spec-source/KVMpad_H264_Sources_Data_Models.zip --work ../.tools/tmp"
+    observed: "789/789 exact frames across all eight MP4/Annex B samples matched full-frame and individual Y/U/V SHA-256 after the reference 2x2 reduction. FFmpeg git-c6498178bb, independent host decoder."
+    evidence: ["build/20261119-h264-exact.log sha256=e400f74c66ce7c821ee4a78d80010a3325a360cf2153b54cddc33c16e43fd50f"]
+
+  - test_id: MEDIA-02/bank
+    result: PASS
+    when_utc: "2026-11-19T08:42:15Z"
+    firmware_sha256: "15b8c0d28fb1f0487461d52743d42a28dc223d55b241e592aa81a0c47d51bb3e"
+    steps: >-
+      Compile portable/rr_bank.c and portable/test_bank.c from the archive with clang -std=c99 -O3 -Wall -Wextra -Werror.
+      Build the same two C files with ESP-IDF 6.1, esp_timer, target esp32s3, COMPONENTS main and
+      CONFIG_APP_BUILD_TYPE_RAM / CONFIG_APP_BUILD_TYPE_PURE_RAM_APP enabled. Delay four seconds in app_main
+      before kv_run_bank_test(). Load the resulting bank_ram.bin with esptool --chip esp32s3 -p COM3
+      --baud 460800 --no-stub --after no-reset load-ram. Monitor UART at 115200 and return to flash boot by reset.
+    observed: "vectors=8192 errors=0 on both host and board. UART reported bank conformance: PASS, elapsed_us=23079 including checks and output."
+    evidence:
+      - "hardware/20261119-094215-bank-ram-result.log sha256=15e6bdc4ac29f04d5249b5c502a99ef1cedb55d242e2d4894bc6b7de8e364ea2"
+      - "hardware/20261119-094233-bank-ram-restored.log sha256=5b7d8e4e5d851c8c470effd89f8ff1b14a8788d1f2277651178f4908bca3b493"
+    issues: ["Covers the extracted v2 interpolation bank. H.264 syntax, reference management and full-frame reconstruction were outside this board test."]
+
+  - test_id: EXT-060/061/loopback-tls-to-pixels
+    result: PASS_SW
+    scope: >-
+      A child process ran the production Windows host.main, mutual TLS credentials, broker, 5 Hz
+      image producer, native staging read, scaling and all three normal encoders. TCP bound only to
+      127.0.0.1 on an ephemeral port. Fresh self-signed test leaves were verified at both endpoints.
+      Fixture stdin supplied explicit foreground decisions; a process-created D3D WARP texture
+      supplied the image. A software client stood in for the board, with the product C parser for CROP1
+      and FFmpeg as an independent pixel decoder. No physical picker, HID, board or LAN was used.
+    observed: >-
+      In six sessions, original and negotiated clients decoded two JPEG PIXEL_1X, H.264 ZOOM_2X
+      and Cinepak OVERVIEW frames apiece. The two protocol variants produced matching SHA-256
+      hashes of the entire encoded payload and decoded gray raster for each corresponding frame.
+      Physical coordinates, actual extent, padding, clamp and both CRCs matched at the C receiver
+      for all six negotiated images. Freeze quiescence and acknowledged Resume passed for all
+      sessions. Board STOP, the HOST's local revoke callback and loss of the image socket closed both
+      channels. No image or metadata followed closure, each stale bind was rejected and a fresh connection
+      waited for an explicit new decision. The final denial emitted neither a frame nor metadata.
+      All ten previous synthetic TLS broker regression tests also passed.
+    evidence:
+      - build/cursor-crop-metadata/loopback-pixels.log
+      - build/cursor-crop-metadata/loopback-pixels.json
+      - build/cursor-crop-metadata/loopback-broker-regression.log
+      - build/cursor-crop-metadata/loopback-sha256.json
+
+  - test_id: EXT-060/061/negotiated-cursor-metadata
+    result: PASS_SW
+    spec: "v1.3.1 sections 14, 16 and 17.3. Nominal source size and mode are control parameters."
+    scope: >-
+      Process-owned Direct3D hardware textures, normal native crop and encoders, in-memory Windows broker
+      control and image messages, portable production C metadata and KVS receivers, ESP32-S3 compilation.
+    observed: >-
+      The native fixture sent 81 complete metadata and image pairs spanning JPEG, H.264 and Cinepak in
+      all three modes, with negative monitor origins, a portrait display and odd-sized padded regions.
+      The C parser's nine geometry and clamp fields matched the independent physical-coordinate oracle on every image.
+      The C receiver refused 24 malformed, replayed or mismatched pairs, including independently valid images
+      with the same stream ID and frame sequence but different image CRCs. Sequence wrap passed.
+      The in-memory broker emitted a byte-identical original KVS message for an older client and a bounded
+      CROP1 text record followed by that same KVS message after explicit negotiation.
+      Freeze acknowledged the last transmitted sequence. Invalid size requests and denied consent never opened the picker.
+      Three independent offline broker checks also passed. No interactive selection, network connection or board was used.
+    golden_text_and_kvs_sha256: "7e220acb090539871135d2e281bfda979f9319bd16e34dcd2e46f5c87fe61d4e"
+    evidence:
+      - build/cursor-crop-metadata/native-encoder-wire.log
+      - build/cursor-crop-metadata/negotiation-corruption.log
+      - build/cursor-crop-metadata/legacy-offline.log
+      - build/cursor-crop-metadata/xtensa.log
+      - build/cursor-crop-metadata/sha256.json
+
+  - test_id: EXT-060/061/offscreen-hardware-crop
+    result: PASS_SW
+    platform: Windows native Direct3D 11 hardware adapter 10DE:2684 and independent WARP, test-owned textures
+    steps: >-
+      Build hosts/windows/build-capture.ps1 with -TestGeometry. Run hosts/windows/test_capture_surface.py
+      with --driver hardware, the test surface executable and FFmpeg. Run the native fixture separately
+      with --coordinate-proof warp.
+    previous: >-
+      The earlier WARP encoder matrix used 64-pixel grayscale fields, three cursor positions and
+      landscape, portrait and undersized monitors. It checked 27 images per codec.
+    observed: >-
+      Both rendering backends checked 226893824 BGRA values across 584 crops apiece. All matched the
+      address-coded inverse rotation oracle for 0, 90, 180 and 270 degrees. Each backend checked 506
+      clamped crops, 246 padded crops and 48 refusals for mismatched extents or cursor exit. Source crops
+      256/512/1024 square produced 512x512 and 480x270, 960x540 and 1920x1080 produced 960x540.
+      An additional hardware encoder matrix decoded 27 complete KVS messages per codec independently with FFmpeg.
+      Production rejects a stale or swapped staging source even when the requested rectangle fits.
+    limits: >-
+      D3D11 performed the bounded copy. Nearest-neighbor sampling ran on the HOST CPU. Synthetic test
+      textures model upright WGC output. Interactive selection, actual rotated monitor delivery,
+      mixed-DPI OS cursor reporting and end-to-end latency require separate qualification.
+    evidence:
+      - extension-v1.3.1/ext-060-061-host-hardware-coordinates.log
+      - extension-v1.3.1/ext-060-061-host-warp-coordinates.log
+      - extension-v1.3.1/ext-060-061-host-summary.json
+
+  - test_id: EXT-061/MEDIA-04/host-framing
+    result: PASS
+    steps: "python -B test/live_view/check_codecs.py --cc <host-clang> --out <workspace-fixtures>"
+    observed: >-
+      Encoded and decoded three synthetic frames per profile. JPEG 512x512, H.264 512x512 Annex B/IDR, Cinepak
+      960x540 independent frames. Reference pixels matched after framing, including skipped and wrapped sequences.
+      Rejected damaged frames, replay, another stream ID and delivery after Stop. All nine payloads fit 96 KiB.
+    evidence: ["build/20261119-live-codecs.log sha256=5010ba25772ed0b24c37f2642d82784750b73baeb93b109401ac4ac96eda9cd0"]
+
+  - test_id: MEDIA-05/Cinepak-960x540
+    result: PASS
+    when_utc: "2026-11-19T08:48:46Z"
+    firmware_sha256: "ed8c395f769ca450b00019cc1805d429aafa66364048721666ea08f3c161782c"
+    steps: >-
+      Generate cinepak-frame.bin with check_codecs.py. Build test/live_view/ram for ESP32-S3 using
+      its sdkconfig.defaults and -DKVM_CVID_FIXTURE=<absolute fixture path>. Load cinepak_ram.bin with the
+      load-ram command above. Compare UART rows and CRC with the host's cinepak-crc.txt. Reset to the installed app.
+    observed: >-
+      43833-byte input SHA-256 5d4e394b0b0552888d3fc824ef2d185dd26ed3318974c2eafd7e2a514a8b4a0b.
+      CVID ok=1 rows=540 crc32=5552606e workspace=11776 input=43833 decode_crc_us=171504.
+      CRC matches the host's decoded RGB565 pixels. Restored installed app ba5164a-dirty. No flash write.
+    evidence:
+      - "hardware/20261119-094846-cinepak-ram-result.log sha256=c3295cdc3e51fb6456da17ca25b4e694e0acbb755b5812afd711c8530caa5e62"
+      - "hardware/20261119-094850-cinepak-ram-restored.log sha256=3de5606ab81a21944529c24c0606d8f4ca9eeda8f7048e5c40351ae0859d383d"
+    issues: ["Single standalone RAM decode plus CRC. No LCD transfer, capture, Wi-Fi or concurrent HID in this measurement."]
+
+  - test_id: EXT-061/MEDIA-04/device-message
+    result: PASS
+    firmware_sha256: "e91b86dac746309605ba740185f18f7787089be9da92d898b518db59d9d0a95f"
+    steps: "Run check_codecs.py against the C receiver for all nine host frames. Bind cinepak-message.bin as KVM_CVID_FIXTURE in the RAM diagnostic, load-ram, capture the UART result, then reset to the installed app."
+    observed: "Unit 1 accepted KVS2 and decoded 540 RGB565 rows, CRC32 5552606e. Replay and delivery after Stop were rejected. The installed app booted again and native USB mounted."
+    evidence:
+      - "build/20261119-live-message.log sha256=5010ba25772ed0b24c37f2642d82784750b73baeb93b109401ac4ac96eda9cd0"
+      - "hardware/20261119-102622-extension-live-message-ram.log sha256=5830068534f01ee1545ae981568376cc198671ec6f8b2fced298715b450032f7"
+      - "hardware/20261119-102627-extension-live-message-restored.log sha256=b06ed91e052db884a7b3217139c477986d29985af9aa89e7141e95d5454e80dd"
+
+  - test_id: EXT-020/063/MEDIA-03..06-product
+    result: PARTIAL_VERIFIED_HW
+    observed: >-
+      After the initial RAM trials the owner inserted the 2601 exFAT card. Unit 1 mounted and
+      wrote the card, returned to Home on physical removal and completed all 73 frames of the
+      original 1080p movie with its prepared companion. The signed player displayed 960x540
+      at 2.00 fps. Local synthetic live frames reached the LCD for H.264 and Cinepak.
+    open: >-
+      Physical installation and interaction, optical confirmation of steady high-resolution
+      playback, approved Windows desktop capture through WSS to LCD, HID latency under media
+      load and sustained mixed-load hardware tests.
+    related: [2026-11-19_offline-packages_022168e4.yaml, 2026-11-19_device-media_022168e4.yaml]

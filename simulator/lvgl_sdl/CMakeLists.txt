@@ -2,7 +2,7 @@
 # Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
 # Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
 #
-# Desktop simulator of the KVMpad UI (TASK-070D, 07 §10 level L1): the real product shell composition on the real
+# Desktop simulator of the KVMpad UI (TASK-070D, 07 Â§10 level L1): the real product shell composition on the real
 # LVGL 9.6 pinned by dependencies.lock, with a fake platform (recorder instead of the domain, fixture files
 # instead of the producers). The renderer is headless, so the suite needs no display server and no SDL package;
 # see simulator/README.md for the interactive-window status.
@@ -65,6 +65,7 @@ add_library(ui_stack STATIC
     ${UI_THEME}/src/ui_theme.c
     ${UI_THEME}/src/ui_font_blob.c
     ${UI_THEME}/src/ui_icon_star.c
+    ${UI_THEME}/src/kvm_control_icons.c
     ${UI_COMP}/src/ui_status_item.c ${UI_COMP}/src/ui_topbar.c ${UI_COMP}/src/ui_action_key.c
     ${UI_COMP}/src/ui_segmented.c ${UI_COMP}/src/ui_modal.c ${UI_COMP}/src/ui_toast.c
     ${UI_VIEWS}/src/ui_app.c ${UI_VIEWS}/src/ui_view_mouse.c ${UI_VIEWS}/src/ui_view_keyboard.c
@@ -138,3 +139,79 @@ file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/rendered)
 enable_testing()
 add_test(NAME kvm_sim COMMAND kvm_sim)
 set_tests_properties(kvm_sim PROPERTIES TIMEOUT 1800)
+
+# HPE and extension screens use the same LVGL renderer and test pointer as the shell.
+set(PACK_TEST ${REPO}/test/kvmpack/host)
+set(PACK_RADIO_SOURCES ${REPO}/main/pack_radio_view.c ${REPO}/main/pack_radio_font.c)
+set(PACK_KEYBOARD ${REPO}/main/pack_keyboard_surface.c)
+set(PACK_KEYBOARD_INCLUDES ${REPO}/components/config_store/include ${REPO}/components/net_status/include
+    ${REPO}/components/secure_remote/pairing/include)
+set(PACK_PROFILE_VIEW_SOURCES ${PACK_TEST}/profile_views.c sim_platform.c sim_image.c
+    ${PACK_KEYBOARD} ${PACK_TEST}/keyboard_layout.c
+    ${REPO}/main/pack_view.c ${REPO}/main/pack_chart_view.c ${REPO}/main/pack_autopilot_view.c ${PACK_RADIO_SOURCES} ${REPO}/main/hpe_panel.c ${REPO}/components/pack_runtime/pack_scene.c
+    ${REPO}/components/remote_protocol/src/remote_json.c)
+set(PACK_PROFILE_VIEW_INCLUDES ${PACK_TEST}/view_shims ${REPO}/main ${PACK_KEYBOARD_INCLUDES}
+    ${REPO}/components/pack_runtime/include ${REPO}/components/kvmbridge/include
+    ${REPO}/components/live_view/include ${REPO}/components/remote_protocol/include)
+set(PACK_PROFILE_VIEW_DEFINITIONS CONFIG_TINYUSB_HID_COUNT=4 CONFIG_KVM_HPE_JOYSTICK_QUALIFIED=1
+    KVM_EXAMPLES="${REPO}/tools/kvmpack/examples" KVM_SCREENSHOTS="${CMAKE_CURRENT_BINARY_DIR}/rendered")
+add_executable(test_hpe_views ${PACK_PROFILE_VIEW_SOURCES})
+target_include_directories(test_hpe_views PRIVATE ${PACK_PROFILE_VIEW_INCLUDES})
+target_compile_definitions(test_hpe_views PRIVATE ${PACK_PROFILE_VIEW_DEFINITIONS})
+target_compile_options(test_hpe_views PRIVATE -UNDEBUG -Wall -Wextra)
+target_link_libraries(test_hpe_views PRIVATE ui_stack)
+add_test(NAME test_hpe_views COMMAND test_hpe_views)
+add_test(NAME test_pack_chart_view COMMAND test_hpe_views --charts)
+add_executable(test_pack_usb_console ${PACK_PROFILE_VIEW_SOURCES} ${REPO}/main/pack_desktop_view.c ${REPO}/main/pack_touchpad_drawer.c
+    ${PACK_TEST}/console_damage.c
+    ${REPO}/components/usb_monitor/monitor_viewport.c ${REPO}/components/gesture_engine/src/gesture_engine.c)
+target_include_directories(test_pack_usb_console PRIVATE ${PACK_PROFILE_VIEW_INCLUDES} ${PACK_TEST}/monitor_shims
+    ${REPO}/components/usb_monitor ${REPO}/components/usb_monitor/include
+    ${REPO}/components/gesture_engine/include ${REPO}/components/touch_input/include)
+target_compile_definitions(test_pack_usb_console PRIVATE ${PACK_PROFILE_VIEW_DEFINITIONS}
+    CONFIG_KVM_USB_MONITOR_EVAL=1 CONFIG_KVM_UI_ADAPTER_TEAR_DOUBLE_PARTIAL=1)
+target_compile_options(test_pack_usb_console PRIVATE -UNDEBUG -Wall -Wextra)
+target_link_libraries(test_pack_usb_console PRIVATE ui_stack)
+add_test(NAME test_pack_usb_console COMMAND test_pack_usb_console --usb-console ${REPO}/extensions/usb-monitor-console ${CMAKE_CURRENT_BINARY_DIR}/rendered)
+add_executable(test_pack_radio ${REPO}/test/ui_views/test_pack_radio.c ${PACK_RADIO_SOURCES})
+target_include_directories(test_pack_radio PRIVATE ${REPO}/main)
+target_compile_options(test_pack_radio PRIVATE -UNDEBUG ${STRICT})
+target_link_libraries(test_pack_radio PRIVATE ui_stack)
+add_test(NAME test_pack_radio COMMAND test_pack_radio)
+add_executable(test_pack_keyboard ${REPO}/test/ui_views/test_pack_keyboard.c ${PACK_KEYBOARD} sim_image.c)
+target_include_directories(test_pack_keyboard PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${REPO}/main ${PACK_TEST}/view_shims ${PACK_KEYBOARD_INCLUDES})
+target_compile_options(test_pack_keyboard PRIVATE -UNDEBUG ${STRICT})
+target_link_libraries(test_pack_keyboard PRIVATE ui_stack)
+add_test(NAME test_pack_keyboard COMMAND test_pack_keyboard)
+
+set(HPE_SCHEDULER
+    ${REPO}/components/hid_core/src/hid_core.c ${REPO}/components/hid_core/src/hid_keymap.c
+    ${REPO}/components/hid_core/src/kbd_fsm.c ${REPO}/components/usb_hid_device/src/usb_hid_reports.c
+    ${REPO}/components/usb_hid_device/src/hpe_studio.c ${REPO}/components/usb_hid_device/src/hpe_reports.c)
+add_executable(test_hpe_input ${PACK_TEST}/hpe_input.c sim_platform.c ${REPO}/main/hpe_panel.c ${HPE_SCHEDULER})
+target_include_directories(test_hpe_input PRIVATE ${PACK_TEST}/view_shims ${REPO}/main)
+target_compile_definitions(test_hpe_input PRIVATE CONFIG_TINYUSB_HID_COUNT=4)
+target_compile_options(test_hpe_input PRIVATE -UNDEBUG -Wall -Wextra)
+if(KVM_SANITIZE)
+    target_compile_options(test_hpe_input PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all
+                           -fno-omit-frame-pointer)
+endif()
+target_link_libraries(test_hpe_input PRIVATE ui_stack)
+add_test(NAME test_hpe_input COMMAND test_hpe_input)
+
+add_executable(test_yoke_input ${PACK_TEST}/yoke_input.c sim_platform.c ${HPE_SCHEDULER}
+    ${PACK_KEYBOARD} ${PACK_TEST}/keyboard_layout.c
+    ${REPO}/main/pack_view.c ${REPO}/main/pack_chart_view.c ${REPO}/main/pack_autopilot_view.c ${PACK_RADIO_SOURCES} ${REPO}/components/pack_runtime/pack_scene.c
+    ${REPO}/components/remote_protocol/src/remote_json.c)
+target_include_directories(test_yoke_input PRIVATE ${PACK_TEST}/view_shims ${REPO}/main ${PACK_KEYBOARD_INCLUDES}
+    ${REPO}/components/pack_runtime/include ${REPO}/components/kvmbridge/include
+    ${REPO}/components/live_view/include ${REPO}/components/remote_protocol/include)
+target_compile_definitions(test_yoke_input PRIVATE CONFIG_TINYUSB_HID_COUNT=4 CONFIG_KVM_HPE_JOYSTICK_QUALIFIED=1
+    KVM_EXAMPLES="${REPO}/tools/kvmpack/examples")
+target_compile_options(test_yoke_input PRIVATE -UNDEBUG -Wall -Wextra)
+if(KVM_SANITIZE)
+    target_compile_options(test_yoke_input PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all
+                           -fno-omit-frame-pointer)
+endif()
+target_link_libraries(test_yoke_input PRIVATE ui_stack)
+add_test(NAME test_yoke_input COMMAND test_yoke_input)

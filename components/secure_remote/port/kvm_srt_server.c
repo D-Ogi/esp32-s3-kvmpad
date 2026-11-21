@@ -32,6 +32,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include "lwip/sockets.h"
+#include "lwip/inet.h"
 
 #include "esp_https_server.h"
 #include "esp_log.h"
@@ -341,7 +343,21 @@ static esp_err_t post_handshake(httpd_req_t *req)
         ESP_LOGW(TAG, "handshake without admission on fd %d", fd);
         return ESP_FAIL;
     }
-    const kvm_srt_admission_t adm = s_pending;
+    kvm_srt_admission_t adm = s_pending;
+    struct sockaddr_storage peer;
+    socklen_t len = sizeof(peer);
+    if (adm.kind == KVM_SRT_CONN_CONTROL && getpeername(fd, (struct sockaddr *)&peer, &len) == 0) {
+        const void *addr = NULL;
+        if (peer.ss_family == AF_INET)
+            addr = &((const struct sockaddr_in *)&peer)->sin_addr;
+#if LWIP_IPV6
+        if (peer.ss_family == AF_INET6) {
+            const struct in6_addr *v6 = &((const struct sockaddr_in6 *)&peer)->sin6_addr;
+            if (IN6_IS_ADDR_V4MAPPED(v6)) addr = v6->s6_addr + 12;
+        }
+#endif
+        if (addr) inet_ntop(AF_INET, addr, adm.peer_ipv4, sizeof(adm.peer_ipv4));
+    }
     s_pending_fd = -1;
     memset(&s_pending, 0, sizeof(s_pending));
 

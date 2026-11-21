@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "sources": [],
+  "state": [
+    {
+      "id": "capture_mode",
+      "type": "string",
+      "initial": "OVERVIEW"
+    }
+  ],
+  "connections": [],
+  "actions": [
+    {
+      "id": "set_mode_overview",
+      "trigger": "mode_overview.tap",
+      "type": "state.set",
+      "capability": "ui.basic",
+      "args": {
+        "name": "capture_mode",
+        "value": "OVERVIEW"
+      }
+    },
+    {
+      "id": "set_mode_zoom",
+      "trigger": "mode_zoom.tap",
+      "type": "state.set",
+      "capability": "ui.basic",
+      "args": {
+        "name": "capture_mode",
+        "value": "ZOOM_2X"
+      }
+    },
+    {
+      "id": "set_mode_1x",
+      "trigger": "mode_1x.tap",
+      "type": "state.set",
+      "capability": "ui.basic",
+      "args": {
+        "name": "capture_mode",
+        "value": "PIXEL_1X"
+      }
+    },
+    {
+      "id": "start_stream",
+      "trigger": "start.tap",
+      "type": "stream.start",
+      "capability": "host.screen.region",
+      "args": {
+        "stream": "cursor_region",
+        "mode": "$state.capture_mode",
+        "requires_foreground_consent": true
+      }
+    },
+    {
+      "id": "stop_stream",
+      "trigger": "stop.tap",
+      "type": "stream.stop",
+      "capability": "host.screen.region",
+      "args": {
+        "stream": "cursor_region"
+      }
+    }
+  ]
+}

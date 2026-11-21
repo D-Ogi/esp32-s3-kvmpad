@@ -4,8 +4,17 @@
 //
 // UART diagnostics console (TECH-060). Read-only towards the HOST: no command emits HID.
 #include "kvm_console.h"
+#ifdef KVM_USB_MOTION_CHECK
+#include "trial.h"
+#endif
 
 #include "app_config.h"
+#if CONFIG_KVM_USB_MONITOR_EVAL
+#include "usb_monitor.h"
+#include "monitor_viewport.h"
+#include "usb_hid_device.h"
+#include "pack_panel.h"
+#endif
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -45,11 +54,16 @@
 #include "ui_glue.h"
 #include "ui_actions.h"
 #include "ui_shell.h"
+#include "pack_panel.h"
+#include "kvmbridge.h"
+#include "media_panel.h"
 #include "ui_platform.h"
 #include "ui_present.h"
 #include "ui_touch_bridge.h"
 #endif
 #if CONFIG_KVM_UI_BENCH
+#include "chart_bench.h"
+#include "pack_chart_view.h"
 #include "ui_bench.h"
 #endif
 
@@ -66,11 +80,12 @@ static int cmd_info(int argc, char **argv)
            ci.cores, ci.features);
     printf("INFO flash=%" PRIu32 " B psram=%u B idf=%s app=%s ver=%s\n", flash, (unsigned)esp_psram_get_size(),
            esp_get_idf_version(), app->project_name, app->version);
-    printf("INFO heap internal free=%u min=%u | psram free=%u min=%u\n",
+    printf("INFO heap internal free=%u min=%u | psram free=%u min=%u largest=%u\n",
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
            (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
-           (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM));
+           (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
+           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     printf("INFO reset_reason=%d boot_count=%" PRIu32 "\n", (int)esp_reset_reason(), kvm_boot_count());
     printf("INFO %s\n", kvm_notice());
     return 0;
@@ -273,9 +288,9 @@ static int cmd_usb(int argc, char **argv)
     printf("USB state=%s epoch=%" PRIu32 " mounts=%" PRIu32 " umounts=%" PRIu32 " suspends=%" PRIu32
            " resumes=%" PRIu32 "\n",
            usb_hid_state_name(u.state), u.usb_epoch, u.mounts, u.umounts, u.suspends, u.resumes);
-    printf("USB protocol kbd=%s mouse=%s consumer=%s set_protocol=%" PRIu32 " led=0x%02X led_reports=%" PRIu32 "\n",
+    printf("USB protocol kbd=%s mouse=%s consumer=%s set_protocol=%" PRIu32 " led=0x%02X led_reports=%" PRIu32 " led_known=%u\n",
            u.protocol[0] ? "REPORT" : "BOOT", u.protocol[1] ? "REPORT" : "BOOT", u.protocol[2] ? "REPORT" : "BOOT",
-           u.set_protocol_count, u.led_state, u.led_reports);
+           u.set_protocol_count, u.led_state, u.led_reports, (unsigned)u.led_known);
     printf("USB neutral_sent=%" PRIu32 " neutral_failed=%" PRIu32 " complete=%" PRIu32 " failed=%" PRIu32
            " get_report=%" PRIu32 " remote_wakeup_enabled=%d\n",
            u.neutral_sent, u.neutral_failed, u.report_complete, u.report_failed, u.get_report_requests,
@@ -438,34 +453,293 @@ static void print_ui_metrics(const char *scene, uint32_t seconds, const diag_cpu
            m.lvgl_task_stack_hwm);
 }
 
+typedef struct {
+    uint32_t hash;
+    bool compact;
+} snap_output_t;
+
+static char *snap_hex(char *out, uint16_t word)
+{
+    static const char digits[] = "0123456789ABCDEF";
+    for (int shift = 12; shift >= 0; shift -= 4)
+        *out++ = digits[(word >> shift) & 15];
+    return out;
+}
+
 static void snap_row(const uint16_t *row, uint16_t w, uint16_t y, void *ctx)
 {
-    uint32_t *crc = ctx;
-    EXT_RAM_BSS_ATTR static char line[1024 * 4 + 1]; // snapshot text row, PSRAM
-    size_t n = 0;
-    for (uint16_t x = 0; x < w && n + 4 < sizeof(line); x++) {
-        uint16_t px = row[x];
-        *crc = (*crc * 16777619u) ^ px; // FNV-1a style running hash, checked by test/hil/ui_snapshot.py
-        n += (size_t)snprintf(line + n, sizeof(line) - n, "%04X", px);
+    snap_output_t *output = ctx;
+    EXT_RAM_BSS_ATTR static char line[BOARD_LCD_H_RES * 4 + 1];
+    char *out = line;
+    bool packed = false;
+    for (unsigned x = 0; x < w;) {
+        const uint16_t color = row[x];
+        unsigned end = x + 1;
+        if (output->compact)
+            while (end < w && row[end] == color) ++end;
+        unsigned count = end - x;
+        // A repeat is nine characters. Three or more literal words take at least twelve.
+        if (count >= 3) {
+            packed = true;
+            *out++ = '*';
+            out = snap_hex(out, count);
+            out = snap_hex(out, color);
+        } else {
+            for (unsigned i = 0; i < count; ++i) out = snap_hex(out, color);
+        }
+        for (; x < end; ++x) output->hash = (output->hash * 16777619u) ^ color;
     }
-    printf("SNAP_ROW %u %s\n", y, line);
+    *out = '\0';
+    printf("%s %u %s\n", packed ? "SNAP_RLE" : "SNAP_ROW", y, line);
+}
+
+#ifdef KVM_MEDIA_SYNTHETIC_DIAG
+static bool help_vsync_snapshot(board_lcd_stats_t *out)
+{
+    board_lcd_get_stats(out);
+    uint32_t first = out->vsync_count;
+    int64_t deadline = esp_timer_get_time() + 150000;
+    do {
+        vTaskDelay(1);
+        board_lcd_get_stats(out);
+        if (out->vsync_count != first) return true;
+    } while (esp_timer_get_time() < deadline);
+    return false;
+}
+
+static int help_cycle(unsigned count)
+{
+    if (!count || count > 20 || !ui_shell_help_state(false)) return 1;
+    bool clean = true;
+    for (unsigned i = 0; i < count; ++i) {
+        for (unsigned stage = 0; stage < 3; ++stage) {
+            board_lcd_stats_t before, after;
+            if (!help_vsync_snapshot(&before)) return 1;
+            bool open = stage == 1;
+            const char *edge = stage == 0 ? "idle" : open ? "open" : "close";
+            uint32_t hold_us = 0;
+            if (stage) {
+                esp_err_t err = ui_shell_help_touch(open);
+                if (err == ESP_OK) {
+                    int64_t deadline = esp_timer_get_time() + 2500000;
+                    do {
+                        vTaskDelay(pdMS_TO_TICKS(25));
+                        err = ui_shell_help_completion(&hold_us);
+                    } while ((err == ESP_ERR_NOT_FINISHED || err == ESP_ERR_TIMEOUT) && esp_timer_get_time() < deadline);
+                }
+                if (err != ESP_OK) {
+                    printf("UI_HELP cycle=%u edge=%s error=%s\n", i + 1, edge, esp_err_to_name(err));
+                    return 1;
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(850));
+            if (!help_vsync_snapshot(&after)) return 1;
+            bool reached = ui_shell_help_state(open);
+            uint32_t vsync = after.vsync_count - before.vsync_count;
+            uint32_t frames = after.bounce_frames - before.bounce_frames;
+            int32_t missed = (int32_t)vsync - (int32_t)frames;
+            printf("UI_HELP cycle=%u edge=%s reached=%u vsync=%" PRIu32 " frames=%" PRIu32
+                   " missed=%" PRId32 " bounce=%u hold_us=%" PRIu32 " internal_free=%u\n",
+                   i + 1, edge, reached, vsync, frames, missed, (unsigned)after.cfg.bounce_lines,
+                   hold_us, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+            if (!reached) return 1;
+            if (missed) clean = false;
+        }
+    }
+    printf("UI_HELP result=%s cycles=%u\n", clean ? "PASS" : "MISSED", count);
+    return clean ? 0 : 1;
+}
+#endif
+
+static void repaint_visible(lv_timer_t *timer)
+{
+    lv_obj_t *screen = lv_screen_active();
+    if (screen == lv_timer_get_user_data(timer)) lv_obj_invalidate(screen);
 }
 
 static int cmd_ui(int argc, char **argv)
 {
+#ifdef KVM_USB_MOTION_CHECK
+    if (argc >= 2 && !strcmp(argv[1], "usb-motion"))
+        return usb_motion_command(argc - 2, argv + 2);
+#endif
+#if CONFIG_KVM_USB_MONITOR_EVAL
+    if (argc == 3 && !strcmp(argv[1], "usb-monitor-status") && !strcmp(argv[2], "input")) {
+        usb_monitor_port_bytes_t port = usb_hid_device_monitor_bytes();
+        usb_monitor_input_stats_t rx = usb_monitor_input_stats();
+        printf("USB_MONITOR_INPUT passed_bytes=%" PRIu32 " filtered_bytes=%" PRIu32
+               " wire_bytes=%" PRIu64 " headers=%" PRIu32 " rejected=%" PRIu32
+               " header_bytes=%u payload_left=%u\n", port.passed_bytes, port.filtered_bytes,
+               rx.bytes, rx.headers, rx.rejected, rx.header_bytes, rx.payload_left);
+        return 0;
+    }
+    if (argc == 3 && !strcmp(argv[1], "usb-monitor-status") && !strcmp(argv[2], "picture")) {
+        if (!ui_platform_lock(500)) {
+            puts("USB_MONITOR_PICTURE error=ui_busy");
+            return 1;
+        }
+#ifdef KVM_USB_PICTURE_CHECK
+        usb_monitor_picture_t picture = usb_monitor_view_picture_check();
+        ui_platform_unlock();
+        printf("USB_MONITOR_PICTURE decoded=%s reference=%s sequence=%u\n",
+               picture.decoded, picture.reference, picture.sequence);
+#else
+        const char *decoded = usb_monitor_view_decoded_picture();
+        ui_platform_unlock();
+        printf("USB_MONITOR_PICTURE decoded=%s\n", decoded);
+#endif
+        return 0;
+    }
+    if (argc == 3 && !strcmp(argv[1], "usb-monitor-status") && !strcmp(argv[2], "latency")) {
+        usb_monitor_latency_t t = usb_monitor_latency();
+        printf("USB_MONITOR_LATENCY unit=us samples=%u sequence=%u peak_total=%" PRId64 "\n",
+               t.samples, t.sequence, t.peak_total);
+        const usb_monitor_stages_t stages[] = {t.last, t.mean};
+        for (unsigned i = 0; i < 2; ++i) {
+            usb_monitor_stages_t s = stages[i];
+            printf("USB_MONITOR_%s receive=%" PRId64 " queue=%" PRId64 " decode=%" PRId64
+                   " ready=%" PRId64 " refresh=%" PRId64 "\n", i ? "MEAN" : "LAST",
+                   s.receive, s.queue, s.decode, s.ready, s.refresh);
+        }
+        return 0;
+    }
+    if (argc == 3 && !strcmp(argv[1], "usb-monitor-status") && !strcmp(argv[2], "redraw")) {
+        if (!ui_platform_lock(500)) return 1;
+        usb_monitor_redraw_t r;
+        if (!monitor_viewport_redraw(&r)) r = usb_monitor_view_redraw();
+        ui_platform_unlock();
+        printf("USB_MONITOR_REDRAW full=%u partial=%u unchanged=%u last_pixels=%u full_ms=%" PRIu64
+               " partial_ms=%" PRIu64 " partial_pixels=%" PRIu64 " split=%u\n",
+               r.full, r.partial, r.unchanged, r.last_pixels, r.full_ms, r.partial_ms, r.partial_pixels, r.split);
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "usb-monitor-status")) {
+        usb_monitor_stats_t s = usb_monitor_stats();
+        kvm_usb_state_t link = usb_hid_device_monitor_state();
+        printf("USB_MONITOR mounted=%u queued=%u decoded=%u busy_drops=%u decode_errors=%u presented=%u superseded=%u input_slots=%u suspended=%u accelerated=%u duplicate_jpegs=%u\n",
+               (unsigned)(link == KVM_USB_MOUNTED), s.queued, s.decoded, s.busy_drops, s.decode_errors,
+               s.presented, s.superseded, s.input_slots, (unsigned)(link == KVM_USB_SUSPENDED), s.accelerated, s.duplicate_jpegs);
+        return 0;
+    }
+#ifdef KVM_MEDIA_SYNTHETIC_DIAG
+    if (argc == 2 && (!strcmp(argv[1], "usb-monitor-test") || !strcmp(argv[1], "usb-monitor-link-test") ||
+                      !strcmp(argv[1], "usb-monitor-desktop-test"))) {
+        usb_monitor_trial_t trial = USB_MONITOR_TRIAL_CHART;
+        if (!strcmp(argv[1], "usb-monitor-link-test")) trial = USB_MONITOR_TRIAL_LINK;
+        if (!strcmp(argv[1], "usb-monitor-desktop-test")) trial = USB_MONITOR_TRIAL_DESKTOP;
+        if (!ui_platform_lock(500)) return 1;
+        bool started = pack_panel_usb_monitor_test(trial);
+        ui_platform_unlock();
+        if (!started) puts("USB_MONITOR_TEST started=0 (open Extensions first)");
+        return started ? 0 : 1;
+    }
+#endif
+#endif
+    if (argc == 2 && !strcmp(argv[1], "host-status")) {
+        unsigned frames, rate, delay;
+        if (!ui_platform_lock(500))
+            return 1;
+        bool live = media_panel_live_stats(&frames, &rate, &delay);
+        ui_platform_unlock();
+        char endpoint[24];
+        bool attached = kvmbridge_host_endpoint(endpoint);
+        kvmbridge_activity_t activity = kvmbridge_activity();
+        printf("UI_HOST attached=%d link=%d sharing=%d live_panel=%d lcd_frames=%u fps_x10=%u rx_to_lcd_ms=%u capture=%s\n",
+               attached, activity.link, activity.sharing, live, frames, rate, delay, activity.capture_code);
+        return 0;
+    }
+#ifdef KVM_MEDIA_SYNTHETIC_DIAG
+    if (argc == 3 && !strcmp(argv[1], "help-cycle")) {
+        char *end;
+        unsigned long count = strtoul(argv[2], &end, 10);
+        return *end || count > 20 ? 1 : help_cycle((unsigned)count);
+    }
+    if (argc >= 2 && !strcmp(argv[1], "media-card-run")) {
+        if (argc != 5 && (argc != 6 || strcmp(argv[5], "1:1"))) {
+            puts("usage: ui media-card-run <fixture filename> <exact|reduced|large|blend|smart> <auto|native|timed> [1:1]");
+            return 1;
+        }
+        esp_err_t err = ui_shell_card_run(argv[2], argv[3], argv[4], argc == 6);
+        printf("UI_MEDIA_CARD_RUN start=%s\n", esp_err_to_name(err));
+        return err != ESP_OK;
+    }
+    if (argc == 3 && !strcmp(argv[1], "media-card-action")) {
+        esp_err_t err = ui_shell_card_action(argv[2]);
+        printf("UI_MEDIA_CARD_ACTION status=%s\n", esp_err_to_name(err));
+        return err != ESP_OK;
+    }
+    if (argc == 2 && !strcmp(argv[1], "media-card-home")) {
+        esp_err_t err = ui_shell_card_home();
+        printf("UI_MEDIA_CARD_HOME status=%s\n", esp_err_to_name(err));
+        return err != ESP_OK;
+    }
+    if (argc == 2 && !strcmp(argv[1], "media-card-reference")) {
+        esp_err_t err = ui_shell_card_reference();
+        printf("UI_MEDIA_CARD_REFERENCE start=%s\n", esp_err_to_name(err));
+        return err == ESP_OK ? 0 : 1;
+    }
+    if (argc == 2 && (!strcmp(argv[1], "media-pattern") || !strcmp(argv[1], "media-pattern-scan"))) {
+        esp_err_t err = ui_shell_pixel_pattern(!strcmp(argv[1], "media-pattern-scan"));
+        printf("UI_MEDIA_PATTERN status=%s\n", esp_err_to_name(err));
+        return err != ESP_OK;
+    }
+    bool paced_h264 = argc >= 2 && !strcmp(argv[1], "media-h264-paced-synthetic");
+    bool jpeg = argc >= 2 && !strcmp(argv[1], "media-jpeg-synthetic");
+    if (argc >= 2 && (jpeg || paced_h264 || !strcmp(argv[1], "media-synthetic") || !strcmp(argv[1], "media-h264-synthetic"))) {
+        char *fps_end, *frames_end;
+        if (argc != 4)
+            return 1;
+        unsigned long fps = strtoul(argv[2], &fps_end, 10);
+        unsigned long frames = strtoul(argv[3], &frames_end, 10);
+        if (*fps_end || *frames_end || fps < 1 || fps > 30 || frames < 2 || frames > 900)
+            return 1;
+        bool h264 = paced_h264 || !strcmp(argv[1], "media-h264-synthetic");
+        kvm_live_codec_t codec = jpeg ? KVM_LIVE_JPEG : h264 ? KVM_LIVE_H264_INTRA : KVM_LIVE_CINEPAK_INTRA;
+        esp_err_t err = ui_shell_synthetic_media((unsigned)fps, (unsigned)frames, codec, jpeg || paced_h264);
+        printf("UI_MEDIA_SYNTHETIC start=%s codec=%s\n", esp_err_to_name(err), jpeg ? "JPEG" : h264 ? "H264" : "Cinepak");
+        return err != ESP_OK;
+    }
+    if (argc==2 && !strcmp(argv[1],"media-stop")) {
+        ui_shell_stop_synthetic_media();
+        return 0;
+    }
+#endif
     if (!ui_platform_is_running()) {
         printf("ui_platform not running\n");
         return 1;
     }
     if (argc >= 3 && strcmp(argv[1], "bench") == 0) {
-        ui_bench_scene_t sc;
-        if (!ui_bench_scene_from_name(argv[2], &sc)) {
-            printf("usage: ui bench <idle|small|full|scroll> [s]\n");
-            return 1;
+        if (!strcmp(argv[2],"chart") || !strcmp(argv[2],"pages")) {
+            bool pages=!strcmp(argv[2],"pages");
+            char *end=NULL;
+            unsigned long option=argc==5 ? strtoul(argv[4],&end,10) : 0;
+            bool valid=argc==4 || (argc==5 && argv[4][0]>='0' && argv[4][0]<='9' && !*end &&
+                       (pages ? option>=1 && option<=9 : option>=32 && option<=1024));
+            esp_err_t err=valid ? chart_bench_run(argv[3],pages,pages && option ? (unsigned)option : 1,
+                                                  pages ? 0 : (unsigned)option) : ESP_ERR_INVALID_ARG;
+            printf("UI_CHART_BENCH result=%s\n",esp_err_to_name(err));
+            return err!=ESP_OK;
         }
         uint32_t s = argc >= 4 ? (uint32_t)atoi(argv[3]) : 10;
-        if (s < 1 || s > 120) {
-            s = 10;
+        if (s < 1 || s > 120) s = 10;
+        if (!strcmp(argv[2], "current")) {
+            if (!ui_platform_lock(2000)) return 1;
+            // Run each repaint on the normal LVGL task, including its normal scanout wait.
+            lv_timer_t *timer = lv_timer_create(repaint_visible, 16, lv_screen_active());
+            ui_platform_metrics_reset();
+            ui_platform_unlock();
+            if (!timer) return 1;
+            vTaskDelay(pdMS_TO_TICKS(s * 1000));
+            ui_platform_lock(-1);
+            lv_timer_delete(timer);
+            ui_platform_unlock();
+            print_ui_metrics("current", s, NULL);
+            return 0;
+        }
+        ui_bench_scene_t sc;
+        if (!ui_bench_scene_from_name(argv[2], &sc)) {
+            printf("usage: ui bench <current|idle|small|full|scroll> [s] | ui bench <chart|pages> <file.kvmpack>\n");
+            return 1;
         }
         ui_shell_suspend();
         esp_err_t err = ui_bench_start(sc);
@@ -493,6 +767,10 @@ static int cmd_ui(int argc, char **argv)
         return 0;
     }
     if (argc >= 2 && strcmp(argv[1], "demo") == 0) {
+#if !CONFIG_LV_USE_DEMO_BENCHMARK
+        puts("LVGL demo unavailable in this build. Use ui bench <idle|small|full|scroll> [s].");
+        return 1;
+#else
         ui_shell_suspend();
         ui_touch_bridge_set_pad(NULL, false); // the LVGL demo has no pad
         esp_err_t err = ui_bench_demo_start();
@@ -522,6 +800,7 @@ static int cmd_ui(int argc, char **argv)
             printf("ui_shell_show: %s\n", esp_err_to_name(rerr));
         }
         return 0;
+#endif
     }
     if (argc >= 2 && (strcmp(argv[1], "nav") == 0 || strcmp(argv[1], "open") == 0 || strcmp(argv[1], "close") == 0)) {
         // Local shell actions only (navigation, details cards): the same gateway the touch chrome uses, never HID.
@@ -531,18 +810,53 @@ static int cmd_ui(int argc, char **argv)
         if (strcmp(argv[1], "nav") == 0) {
             t = UI_ACT_NAVIGATE;
             const char *n = argc >= 3 ? argv[2] : "";
+            if (strcmp(n, "keyboard") == 0 && argc > 3) {
+                static const char *const names[UI_KBD_WORKSPACE_COUNT] = {
+                    [UI_KBD_FULL] = "full", [UI_KBD_PAD_ABOVE] = "above", [UI_KBD_PAD_LEFT] = "left",
+                    [UI_KBD_PAD_RIGHT] = "right", [UI_KBD_PAD_ABOVE_BUTTONS_LEFT] = "above-left"
+                };
+                for (unsigned i = 0; argc == 4 && i < UI_KBD_WORKSPACE_COUNT; ++i) {
+                    if (strcmp(argv[3], names[i]) == 0) {
+                        esp_err_t err = ui_shell_keyboard_workspace((ui_kbd_workspace_t)i);
+                        printf("UI_KEYBOARD workspace=%s -> %s\n", names[i], esp_err_to_name(err));
+                        return err == ESP_OK ? 0 : 1;
+                    }
+                }
+                printf("usage: ui nav keyboard [full|above|above-left|left|right]\n");
+                return 1;
+            }
             ok = strcmp(n, "mouse") == 0 || strcmp(n, "keyboard") == 0 || strcmp(n, "shortcuts") == 0;
             v = strcmp(n, "keyboard") == 0 ? UI_VIEW_KEYBOARD : strcmp(n, "shortcuts") == 0 ? UI_VIEW_SHORTCUTS
                                                                                             : UI_VIEW_MOUSE;
         } else if (strcmp(argv[1], "open") == 0) {
             const char *n = argc >= 3 ? argv[2] : "";
+            if (!strcmp(n,"card")) {
+                esp_err_t err=ui_shell_browse_card();
+                printf("UI_CARD browser=%s\n",esp_err_to_name(err));
+                return err==ESP_OK ? 0 : 1;
+            }
+#if CONFIG_KVM_USB_MONITOR_EVAL
+            if (!strcmp(n, "usb-monitor")) {
+                bool controls = argc == 5 && !strcmp(argv[4], "controls");
+                if ((argc != 4 && !controls) || (strcmp(argv[3], "640x480") && strcmp(argv[3], "1024x600") && strcmp(argv[3], "windows"))) {
+                    printf("usage: ui open usb-monitor <windows|640x480|1024x600> [controls] from Extensions\n");
+                    return 1;
+                }
+                if (!ui_platform_lock(1500)) return 1;
+                bool started = !strcmp(argv[3], "windows") ? pack_panel_open_windows_monitor(controls) :
+                               pack_panel_open_monitor(!strcmp(argv[3], "1024x600"), controls);
+                ui_platform_unlock();
+                printf("USB_MONITOR_OPEN size=%s started=%u\n", argv[3], (unsigned)started);
+                return started ? 0 : 1;
+            }
+#endif
             ok = strcmp(n, "host") == 0 || strcmp(n, "client") == 0 || strcmp(n, "settings") == 0;
             t = strcmp(n, "client") == 0     ? UI_ACT_OPEN_CLIENT_DETAILS
                 : strcmp(n, "settings") == 0 ? UI_ACT_OPEN_SETTINGS
                                              : UI_ACT_OPEN_HOST_DETAILS;
         }
         if (!ok) {
-            printf("usage: ui nav <mouse|keyboard|shortcuts> | ui open <host|client|settings> | ui close\n");
+            printf("usage: ui nav <mouse|keyboard|shortcuts> | ui open <host|client|settings|card> | ui close\n");
             return 1;
         }
         esp_err_t err = ui_shell_local_action(t, v);
@@ -557,6 +871,15 @@ static int cmd_ui(int argc, char **argv)
         }
         ui_shell_counters_t sc;
         ui_shell_status(&sc);
+#if CONFIG_KVM_UI_BENCH
+        if (argc==3 && !strcmp(argv[2],"status") && ui_platform_lock(200)) {
+            unsigned zoom=pack_chart_view_visible_zoom();
+            ui_platform_unlock();
+            if (zoom) printf("UI_CHART zoom_percent=%u\n",zoom);
+        }
+#endif
+        printf("UI_CARD completed_scans=%u menus=%u choices=%u\n",
+               pack_panel_scans(),pack_panel_menus(),pack_panel_choices());
         printf("UI_SHELL active=%s views=%u shows=%" PRIu32 " refused=%" PRIu32 " created=%" PRIu32 " cancels=%" PRIu32
                " cancel_refused=%" PRIu32 " nav=%" PRIu32 " details=%" PRIu32 " local_refused=%" PRIu32 "\n",
                ui_shell_active() ? "yes" : "no", sc.views, sc.router.shows, sc.router.show_refused,
@@ -615,14 +938,12 @@ static int cmd_ui(int argc, char **argv)
                s.pad.y1, s.pad.y2);
         return 0;
     }
-#if CONFIG_KVM_UI_BENCH
+#if CONFIG_KVM_UI_BENCH_TAP
     if (argc >= 4 && strcmp(argv[1], "tap") == 0) {
-        // HIL bring-up: a synthetic one-finger tap through the same bridge path as GT911 samples (router ->
-        // LVGL pointer). Refused while pad -> HID is on or the product shell is shown (its buttons submit HID
-        // actions), so it can never reach the HOST.
+        // The bring-up image exercises the GT911 routing path on the benchmark's own screen.
         ui_touch_bridge_stats_t s;
         ui_touch_bridge_get_stats(&s);
-        if (!ui_touch_bridge_running() || s.hid_enabled || ui_shell_active()) {
+        if (!ui_touch_bridge_running() || s.hid_enabled || !ui_bench_screen_active()) {
             printf("ui tap: needs a bench scene (`ui scene idle`) with pad -> HID off\n");
             return 1;
         }
@@ -648,6 +969,10 @@ static int cmd_ui(int argc, char **argv)
         t.point_count = 0;
         t.timestamp_us = (uint64_t)esp_timer_get_time();
         t.sample_seq++;
+        if (!ui_bench_screen_active()) {
+            ui_touch_bridge_cancel();
+            return 1;
+        }
         ui_touch_bridge_post(&t);
         vTaskDelay(pdMS_TO_TICKS(150));
         char last[24];
@@ -674,14 +999,26 @@ static int cmd_ui(int argc, char **argv)
         printf("ui %s %s\n", argv[1], on ? "on" : "off");
         return 0;
     }
-    if (argc >= 2 && strcmp(argv[1], "snap") == 0) {
-        uint16_t div = argc >= 3 ? (uint16_t)atoi(argv[2]) : 4;
-        uint32_t crc = 2166136261u;
+    bool (*view_ready)(void) = NULL;
+#ifdef KVM_MEDIA_SYNTHETIC_DIAG
+    if (argc == 2 && strcmp(argv[1], "media-pattern-snap") == 0)
+        view_ready = media_panel_pixel_pattern_scan;
+#endif
+    if ((argc >= 2 && strcmp(argv[1], "snap") == 0) || view_ready) {
+        bool compact = !view_ready && argc >= 3 && strcmp(argv[argc - 1], "compact") == 0;
+        int arguments = argc - (compact ? 1 : 0);
+        char *end = NULL;
+        long div = view_ready ? 1 : arguments >= 3 ? strtol(argv[2], &end, 10) : 4;
+        if (arguments > 3 || (end && (*end || end == argv[2])) || div < 1 || div > 16) {
+            printf("usage: ui snap [1..16] [compact]\n");
+            return 1;
+        }
+        snap_output_t output = {.hash = 2166136261u, .compact = compact};
         uint16_t w = 0;
         uint16_t h = 0;
-        printf("SNAP_BEGIN div=%u\n", div);
-        esp_err_t err = ui_platform_snapshot(div, snap_row, &crc, &w, &h);
-        printf("SNAP_END w=%u h=%u crc=%08" PRIX32 " err=%s\n", w, h, crc, esp_err_to_name(err));
+        printf("SNAP_BEGIN div=%ld\n", div);
+        esp_err_t err = ui_platform_snapshot_if(view_ready, (uint16_t)div, snap_row, &output, &w, &h);
+        printf("SNAP_END w=%u h=%u crc=%08" PRIX32 " err=%s\n", w, h, output.hash, esp_err_to_name(err));
         return err == ESP_OK ? 0 : 1;
     }
     if (argc >= 2 && strcmp(argv[1], "reset") == 0) {
@@ -726,8 +1063,12 @@ static int cmd_ui(int argc, char **argv)
         return 0;
     }
     print_ui_metrics("current", 0, NULL);
-    printf("usage: ui [bench <idle|small|full|scroll> [s] | demo | scene <name> | snap [div] | reset | store |"
-           " touch | tap x y [ms] | pad on|off | drag on|off | shell [status] | nav <view> | open <host|client> |"
+    printf("usage: ui [bench <current|idle|small|full|scroll> [s] | demo | scene <name> | snap [div] [compact] | reset | store |"
+           " touch |"
+#if CONFIG_KVM_UI_BENCH_TAP
+           " tap x y [ms] |"
+#endif
+           " pad on|off | drag on|off | shell [status] | nav <view> | open <host|client> |"
            " close]\n");
     return 0;
 }
@@ -1000,6 +1341,32 @@ static int hid_probe(const char *what, const char *arg)
 
 static int cmd_hid(int argc, char **argv)
 {
+#ifdef KVM_MEDIA_SYNTHETIC_DIAG
+    if (argc >= 2 && strcmp(argv[1], "cadence") == 0) {
+        if (argc == 4 && strcmp(argv[2], "start") == 0) {
+            char *end;
+            unsigned long ms = strtoul(argv[3], &end, 10);
+            kvm_hid_snapshot_t snap;
+            hid_dispatch_get_snapshot(&snap, NULL);
+            bool ok = !*end && ms >= 100 && ms <= 120000 && snap.owner_kind != OWNER_REMOTE &&
+                      snap.ledger_empty && !snap.keepalive_enabled && usb_hid_service_begin((unsigned)ms);
+            printf("HID_SERVICE start=%s limit_ms=%lu\n", ok ? "ok" : "unavailable", ms);
+            return ok ? 0 : 1;
+        }
+        usb_hid_service_window_t w;
+        if (argc != 3 || strcmp(argv[2], "stop") || !usb_hid_service_end(&w)) {
+            puts("HID_SERVICE unavailable");
+            return 1;
+        }
+        printf("HID_SERVICE elapsed_us=%" PRIu32 " services=%" PRIu32 " ready=%" PRIu32
+               " timed=%" PRIu32 " max_defer_us=%" PRIu32 " pending_us=%" PRIu32
+               " max_gap_us=%" PRIu32 " gaps_over_20ms=%" PRIu32 " sent=%" PRIu32
+               " complete=%" PRIu32 " refused=%" PRIu32 " failed=%" PRIu32 " link_changes=%" PRIu32 " expired=%d\n",
+               w.elapsed_us, w.services, w.all_ready, w.timed_requests, w.max_defer_us, w.pending_us,
+               w.max_gap_us, w.gaps_over_20ms, w.sent, w.complete, w.refused, w.failed, w.link_changes, w.expired);
+        return 0;
+    }
+#endif
 #if CONFIG_KVM_HID_BENCH_PROBE
     if (argc >= 3 && strcmp(argv[1], "probe") == 0) {
         return hid_probe(argv[2], argc >= 4 ? argv[3] : NULL);
@@ -1149,7 +1516,7 @@ esp_err_t kvm_console_start(void)
         {.command = "hid", .help = "hid [release | keepalive on|off [s]]: HID core state (neutral-only actions)", .func = cmd_hid},
         {.command = "gesture", .help = "gesture [replay]: engine thresholds; replay VEC-001..004 without HID", .func = cmd_gesture},
 #if CONFIG_KVM_UI_BENCH
-        {.command = "ui", .help = "ui [shell [status] | bench <scene> [s] | demo | scene <name> | snap [div] | reset]: LVGL platform and shell", .func = cmd_ui},
+        {.command = "ui", .help = "ui [shell [status] | bench <scene> [s] | demo | scene <name> | snap [div] [compact] | reset]: LVGL platform and shell", .func = cmd_ui},
 #endif
         {.command = "tasks", .help = "FreeRTOS run-time stats and task list", .func = cmd_tasks},
         {.command = "cpu", .help = "cpu [ms]: per-core load", .func = cmd_cpu},

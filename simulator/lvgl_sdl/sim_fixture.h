@@ -21,6 +21,8 @@
 //   armed   <hex>                               ADR-016 one-shot bits
 //   locked  <hex>                               ADR-016 locked bits
 //   caps    unknown | on | off                  CapsLock LED report of the HOST
+//   palette day | night | high-contrast         global appearance used while rendering this fixture
+//   extensions 0 | 1                            install the optional shell entry for extensions
 //   maint   0 | 1
 //   error   <u16>                               kvm_hid_err_t carried in the snapshot
 //   confirm 0 | 1                               FR-734 policy the shell reports to the SHORTCUTS view
@@ -78,7 +80,7 @@
 //        tap_confirm 0 | 1, tap_lang, hold_lang, pick_lang en|ko|zh|ja, tap_flick_mode, flick <key>:<dir>,
 //        layout_open, layout_back, layout_page prev|next, layout_row <0..6>, layout_all, layout_search,
 //        layout_type <text>, layout_star <0..6>, layout_pick_fav <0..7>, layout_pick_recent <0..4>,
-//        layout_index <0..8>, wait <ms>.
+//        layout_index <0..8>, tap_workspace, pick_workspace full|above|above-left|left|right, tap_rail, wait <ms>.
 #pragma once
 
 #include <stdbool.h>
@@ -109,6 +111,9 @@ typedef enum {
     SIM_STEP_TAP_TRUSTED,
     SIM_STEP_TAP_FORGET,
     SIM_STEP_TAP_CONFIRM,
+    SIM_STEP_TAP_WORKSPACE,  // tap the 2-in-1 key to open the workspace picker
+    SIM_STEP_TAP_RAIL,       // tap the top-edge keyboard's navigation drawer handle
+    SIM_STEP_PICK_WORKSPACE, // tap full, above or left in the open picker
     SIM_STEP_TAP_LANG,       // short tap on the language key: cycle to the next available language (ADR-037)
     SIM_STEP_HOLD_LANG,      // long press on the language key: open the picker (ADR-037)
     SIM_STEP_PICK_LANG,      // tap one row of the open picker
@@ -147,6 +152,7 @@ typedef struct {
     ui_approval_view_t approval; // published through ui_app_set_approval()
     ui_settings_view_t settings; // published through ui_app_set_settings()
     bool settings_open;          // open the Settings card before the steps run
+    bool extensions_entry;       // install the board's optional Extensions entry in the shell
     bool zh_engine;              // install the canned pinyin decoder of sim_zh.c (the ZH layer)
     bool ja_engine;              // install the canned romaji / kana-kanji decoder of sim_ja.c (the JA layer)
     ui_settings_section_t section;

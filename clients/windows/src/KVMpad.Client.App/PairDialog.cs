@@ -5,7 +5,6 @@
 using System;
 using System.Drawing;
 using System.Windows.Forms;
-using KVMpad.Client.Core.Discovery;
 using KVMpad.Client.Core.Pairing;
 
 namespace KVMpad.Client.App;
@@ -24,11 +23,9 @@ internal sealed class PairDialog : Form
     private readonly TextBox _code;
     private readonly Label _status;
 
-    public PairDialog(DiscoveredDevice device)
+    public PairDialog(string displayName)
     {
-        Device = device ?? throw new ArgumentNullException(nameof(device));
-
-        Text = "Pair with " + device.DisplayName;
+        Text = "Pair with " + displayName;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MinimizeBox = false;
         MaximizeBox = false;
@@ -49,14 +46,13 @@ internal sealed class PairDialog : Form
         {
             AutoSize = true,
             MaximumSize = new Size(380, 0),
-            Text = "Enter the six-digit code shown on " + device.DisplayName + ".",
+            Text = "Enter the six-digit code shown on " + displayName + ".",
         };
 
         var hint = new Label
         {
             AutoSize = true,
             MaximumSize = new Size(380, 0),
-            ForeColor = SystemColors.GrayText,
             Text = "The code is valid for two minutes. The device will then ask you to accept this computer, "
                 + "named " + Environment.MachineName + ".",
         };
@@ -74,7 +70,6 @@ internal sealed class PairDialog : Form
         {
             AutoSize = true,
             MaximumSize = new Size(380, 0),
-            ForeColor = SystemColors.GrayText,
             Text = "Six digits.",
         };
 
@@ -101,8 +96,6 @@ internal sealed class PairDialog : Form
         CancelButton = cancel;
         PairButton = pair;
     }
-
-    public DiscoveredDevice Device { get; }
 
     /// <summary>The normalized six digits, valid only when the dialog returned OK.</summary>
     public string Code { get; private set; } = string.Empty;

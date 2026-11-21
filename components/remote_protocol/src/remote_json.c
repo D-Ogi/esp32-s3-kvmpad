@@ -339,10 +339,10 @@ static bool lit(const char *s, uint16_t len, uint16_t pos, const char *word, uin
 
 static int tok_new(kvm_json_doc_t *d, kvm_json_type_t t, int parent, uint16_t start)
 {
-    if (d->ntok >= KVM_JSON_MAX_TOKENS) {
+    if (d->ntok >= d->capacity) {
         return -1;
     }
-    kvm_json_tok_t *k = &d->tok[d->ntok];
+    kvm_json_tok_t *k = &(d->external ? d->external : d->tok)[d->ntok];
     k->type = (uint8_t)t;
     k->flags = 0;
     k->parent = (int16_t)parent;
@@ -355,7 +355,7 @@ static int tok_new(kvm_json_doc_t *d, kvm_json_type_t t, int parent, uint16_t st
 static bool dup_key(const kvm_json_doc_t *d, int obj, uint16_t start, uint16_t len)
 {
     for (uint16_t t = 0; t < d->ntok; t++) {
-        const kvm_json_tok_t *k = &d->tok[t];
+        const kvm_json_tok_t *k = &kvm_json_tokens(d)[t];
         if (k->parent == (int16_t)obj && (k->flags & KVM_JSON_FLAG_KEY) != 0u &&
             span_equal(d->text + k->start, k->len, d->text + start, len)) {
             return true;
@@ -366,15 +366,37 @@ static bool dup_key(const kvm_json_doc_t *d, int obj, uint16_t start, uint16_t l
 
 typedef enum { ST_VALUE = 0, ST_KEY, ST_COLON, ST_AFTER } jstate_t;
 
+static kvm_json_err_t parse_document(kvm_json_doc_t *doc, const char *text, size_t len,
+                                     kvm_json_tok_t *external, uint16_t capacity, uint8_t max_depth, size_t max_len);
+
 kvm_json_err_t kvm_json_parse(kvm_json_doc_t *doc, const char *text, size_t len)
 {
+    return parse_document(doc, text, len, NULL, KVM_JSON_MAX_TOKENS, KVM_JSON_MAX_DEPTH, KVM_JSON_MAX_FRAME);
+}
+
+kvm_json_err_t kvm_json_parse_local(kvm_json_doc_t *doc, const char *text, size_t len,
+                                    kvm_json_tok_t *tokens, uint16_t capacity, uint8_t max_depth)
+{
+    if (!tokens || !capacity || capacity > INT16_MAX || !max_depth || max_depth > 24) {
+        doc->ntok = 0;
+        return KVM_JSON_ERR_SIZE;
+    }
+    return parse_document(doc, text, len, tokens, capacity, max_depth, UINT16_MAX);
+}
+
+static kvm_json_err_t parse_document(kvm_json_doc_t *doc, const char *text, size_t len,
+                                     kvm_json_tok_t *external, uint16_t capacity, uint8_t max_depth, size_t max_len)
+{
+    doc->external = external;
+    doc->capacity = capacity;
+    kvm_json_tok_t *tokens = external ? external : doc->tok;
     doc->text = text;
     doc->len = 0;
     doc->ntok = 0;
     if (text == NULL || len == 0u) {
         return KVM_JSON_ERR_EMPTY;
     }
-    if (len > KVM_JSON_MAX_FRAME) {
+    if (len > max_len) {
         return KVM_JSON_ERR_SIZE;
     }
     uint16_t n = (uint16_t)len;
@@ -383,7 +405,7 @@ kvm_json_err_t kvm_json_parse(kvm_json_doc_t *doc, const char *text, size_t len)
     }
     doc->len = n;
 
-    int16_t stack[KVM_JSON_MAX_DEPTH];
+    int16_t stack[24];
     uint8_t sp = 0;
     jstate_t st = ST_VALUE;
     uint16_t pos = 0;
@@ -416,13 +438,13 @@ kvm_json_err_t kvm_json_parse(kvm_json_doc_t *doc, const char *text, size_t len)
 
         switch (st) {
         case ST_VALUE: {
-            if (c == '}' && sp > 0u && doc->tok[stack[sp - 1u]].type == (uint8_t)KVM_JSON_OBJECT) {
+            if (c == '}' && sp > 0u && tokens[stack[sp - 1u]].type == (uint8_t)KVM_JSON_OBJECT) {
                 err = KVM_JSON_ERR_SYNTAX; // "{"a":}"
                 goto fail;
             }
             if (c == ']') {
-                if (sp == 0u || doc->tok[stack[sp - 1u]].type != (uint8_t)KVM_JSON_ARRAY ||
-                    doc->tok[stack[sp - 1u]].count != 0u) {
+                if (sp == 0u || tokens[stack[sp - 1u]].type != (uint8_t)KVM_JSON_ARRAY ||
+                    tokens[stack[sp - 1u]].count != 0u) {
                     err = KVM_JSON_ERR_SYNTAX;
                     goto fail;
                 }
@@ -432,7 +454,7 @@ kvm_json_err_t kvm_json_parse(kvm_json_doc_t *doc, const char *text, size_t len)
                 break;
             }
             if (c == '{' || c == '[') {
-                if (sp >= KVM_JSON_MAX_DEPTH) {
+                if (sp >= max_depth) {
                     err = KVM_JSON_ERR_DEPTH;
                     goto fail;
                 }
@@ -442,7 +464,7 @@ kvm_json_err_t kvm_json_parse(kvm_json_doc_t *doc, const char *text, size_t len)
                     goto fail;
                 }
                 if (parent >= 0 && pending_key < 0) {
-                    doc->tok[parent].count++; // array element; an object member was counted with its key
+                    tokens[parent].count++; // array element; an object member was counted with its key
                 }
                 pending_key = -1;
                 stack[sp] = (int16_t)t;
@@ -465,7 +487,7 @@ kvm_json_err_t kvm_json_parse(kvm_json_doc_t *doc, const char *text, size_t len)
                     err = KVM_JSON_ERR_TOKENS;
                     goto fail;
                 }
-                doc->tok[t].len = bl;
+                tokens[t].len = bl;
                 pos = nx;
             } else if (c == '-' || (c >= '0' && c <= '9')) {
                 uint16_t nl = 0;
@@ -479,9 +501,9 @@ kvm_json_err_t kvm_json_parse(kvm_json_doc_t *doc, const char *text, size_t len)
                     err = KVM_JSON_ERR_TOKENS;
                     goto fail;
                 }
-                doc->tok[t].len = nl;
+                tokens[t].len = nl;
                 if (is_int) {
-                    doc->tok[t].flags |= KVM_JSON_FLAG_INT;
+                    tokens[t].flags |= KVM_JSON_FLAG_INT;
                 }
                 pos = (uint16_t)(pos + nl);
             } else {
@@ -500,11 +522,11 @@ kvm_json_err_t kvm_json_parse(kvm_json_doc_t *doc, const char *text, size_t len)
                     err = KVM_JSON_ERR_TOKENS;
                     goto fail;
                 }
-                doc->tok[t].len = wl;
+                tokens[t].len = wl;
                 pos = (uint16_t)(pos + wl);
             }
             if (parent >= 0 && pending_key < 0) {
-                doc->tok[parent].count++; // array element; an object member was counted with its key
+                tokens[parent].count++; // array element; an object member was counted with its key
             }
             pending_key = -1;
             st = ST_AFTER;
@@ -513,7 +535,7 @@ kvm_json_err_t kvm_json_parse(kvm_json_doc_t *doc, const char *text, size_t len)
 
         case ST_KEY: {
             if (c == '}') {
-                if (doc->tok[stack[sp - 1u]].count != 0u) {
+                if (tokens[stack[sp - 1u]].count != 0u) {
                     err = KVM_JSON_ERR_SYNTAX; // trailing comma
                     goto fail;
                 }
@@ -542,9 +564,9 @@ kvm_json_err_t kvm_json_parse(kvm_json_doc_t *doc, const char *text, size_t len)
                 err = KVM_JSON_ERR_TOKENS;
                 goto fail;
             }
-            doc->tok[t].len = bl;
-            doc->tok[t].flags |= KVM_JSON_FLAG_KEY;
-            doc->tok[parent].count++;
+            tokens[t].len = bl;
+            tokens[t].flags |= KVM_JSON_FLAG_KEY;
+            tokens[parent].count++;
             pending_key = t;
             pos = nx;
             st = ST_COLON;
@@ -563,11 +585,11 @@ kvm_json_err_t kvm_json_parse(kvm_json_doc_t *doc, const char *text, size_t len)
         case ST_AFTER:
             if (c == ',') {
                 pos++;
-                st = (doc->tok[stack[sp - 1u]].type == (uint8_t)KVM_JSON_OBJECT) ? ST_KEY : ST_VALUE;
+                st = (tokens[stack[sp - 1u]].type == (uint8_t)KVM_JSON_OBJECT) ? ST_KEY : ST_VALUE;
                 break;
             }
-            if ((c == '}' && doc->tok[stack[sp - 1u]].type == (uint8_t)KVM_JSON_OBJECT) ||
-                (c == ']' && doc->tok[stack[sp - 1u]].type == (uint8_t)KVM_JSON_ARRAY)) {
+            if ((c == '}' && tokens[stack[sp - 1u]].type == (uint8_t)KVM_JSON_OBJECT) ||
+                (c == ']' && tokens[stack[sp - 1u]].type == (uint8_t)KVM_JSON_ARRAY)) {
                 pos++;
                 sp--;
                 st = ST_AFTER;
@@ -603,12 +625,12 @@ int kvm_json_root(const kvm_json_doc_t *doc)
 
 int kvm_json_member(const kvm_json_doc_t *doc, int obj, const char *name)
 {
-    if (obj < 0 || (unsigned)obj >= doc->ntok || doc->tok[obj].type != (uint8_t)KVM_JSON_OBJECT) {
+    if (obj < 0 || (unsigned)obj >= doc->ntok || kvm_json_tokens(doc)[obj].type != (uint8_t)KVM_JSON_OBJECT) {
         return -1;
     }
     uint16_t nlen = (uint16_t)strlen(name);
     for (uint16_t t = (uint16_t)(obj + 1); t < doc->ntok; t++) {
-        const kvm_json_tok_t *k = &doc->tok[t];
+        const kvm_json_tok_t *k = &kvm_json_tokens(doc)[t];
         if (k->parent != (int16_t)obj || (k->flags & KVM_JSON_FLAG_KEY) == 0u) {
             continue;
         }
@@ -624,21 +646,21 @@ uint16_t kvm_json_count(const kvm_json_doc_t *doc, int container)
     if (container < 0 || (unsigned)container >= doc->ntok) {
         return 0;
     }
-    uint8_t ty = doc->tok[container].type;
+    uint8_t ty = kvm_json_tokens(doc)[container].type;
     if (ty != (uint8_t)KVM_JSON_OBJECT && ty != (uint8_t)KVM_JSON_ARRAY) {
         return 0;
     }
-    return doc->tok[container].count;
+    return kvm_json_tokens(doc)[container].count;
 }
 
 int kvm_json_element(const kvm_json_doc_t *doc, int arr, uint16_t index)
 {
-    if (arr < 0 || (unsigned)arr >= doc->ntok || doc->tok[arr].type != (uint8_t)KVM_JSON_ARRAY) {
+    if (arr < 0 || (unsigned)arr >= doc->ntok || kvm_json_tokens(doc)[arr].type != (uint8_t)KVM_JSON_ARRAY) {
         return -1;
     }
     uint16_t seen = 0;
     for (uint16_t t = (uint16_t)(arr + 1); t < doc->ntok; t++) {
-        if (doc->tok[t].parent != (int16_t)arr) {
+        if (kvm_json_tokens(doc)[t].parent != (int16_t)arr) {
             continue;
         }
         if (seen == index) {
@@ -651,12 +673,12 @@ int kvm_json_element(const kvm_json_doc_t *doc, int arr, uint16_t index)
 
 int kvm_json_key(const kvm_json_doc_t *doc, int obj, uint16_t index)
 {
-    if (obj < 0 || (unsigned)obj >= doc->ntok || doc->tok[obj].type != (uint8_t)KVM_JSON_OBJECT) {
+    if (obj < 0 || (unsigned)obj >= doc->ntok || kvm_json_tokens(doc)[obj].type != (uint8_t)KVM_JSON_OBJECT) {
         return -1;
     }
     uint16_t seen = 0;
     for (uint16_t t = (uint16_t)(obj + 1); t < doc->ntok; t++) {
-        const kvm_json_tok_t *k = &doc->tok[t];
+        const kvm_json_tok_t *k = &kvm_json_tokens(doc)[t];
         if (k->parent != (int16_t)obj || (k->flags & KVM_JSON_FLAG_KEY) == 0u) {
             continue;
         }
@@ -670,11 +692,11 @@ int kvm_json_key(const kvm_json_doc_t *doc, int obj, uint16_t index)
 
 bool kvm_json_keys_allowed(const kvm_json_doc_t *doc, int obj, const char *const *allowed)
 {
-    if (obj < 0 || (unsigned)obj >= doc->ntok || doc->tok[obj].type != (uint8_t)KVM_JSON_OBJECT) {
+    if (obj < 0 || (unsigned)obj >= doc->ntok || kvm_json_tokens(doc)[obj].type != (uint8_t)KVM_JSON_OBJECT) {
         return false;
     }
     for (uint16_t t = (uint16_t)(obj + 1); t < doc->ntok; t++) {
-        const kvm_json_tok_t *k = &doc->tok[t];
+        const kvm_json_tok_t *k = &kvm_json_tokens(doc)[t];
         if (k->parent != (int16_t)obj || (k->flags & KVM_JSON_FLAG_KEY) == 0u) {
             continue;
         }
@@ -694,21 +716,21 @@ bool kvm_json_keys_allowed(const kvm_json_doc_t *doc, int obj, const char *const
 
 bool kvm_json_str_eq(const kvm_json_doc_t *doc, int tok, const char *s)
 {
-    if (tok < 0 || (unsigned)tok >= doc->ntok || doc->tok[tok].type != (uint8_t)KVM_JSON_STRING) {
+    if (tok < 0 || (unsigned)tok >= doc->ntok || kvm_json_tokens(doc)[tok].type != (uint8_t)KVM_JSON_STRING) {
         return false;
     }
-    return span_equal(doc->text + doc->tok[tok].start, doc->tok[tok].len, s, (uint16_t)strlen(s));
+    return span_equal(doc->text + kvm_json_tokens(doc)[tok].start, kvm_json_tokens(doc)[tok].len, s, (uint16_t)strlen(s));
 }
 
 size_t kvm_json_str_copy(const kvm_json_doc_t *doc, int tok, char *out, size_t cap)
 {
-    if (tok < 0 || (unsigned)tok >= doc->ntok || doc->tok[tok].type != (uint8_t)KVM_JSON_STRING || cap == 0u) {
+    if (tok < 0 || (unsigned)tok >= doc->ntok || kvm_json_tokens(doc)[tok].type != (uint8_t)KVM_JSON_STRING || cap == 0u) {
         if (cap > 0u && out != NULL) {
             out[0] = '\0';
         }
         return (size_t)-1;
     }
-    size_t r = unescape(doc->text + doc->tok[tok].start, doc->tok[tok].len, out, cap);
+    size_t r = unescape(doc->text + kvm_json_tokens(doc)[tok].start, kvm_json_tokens(doc)[tok].len, out, cap);
     if (r == (size_t)-1) {
         out[0] = '\0';
     }
@@ -717,12 +739,12 @@ size_t kvm_json_str_copy(const kvm_json_doc_t *doc, int tok, char *out, size_t c
 
 bool kvm_json_get_i64(const kvm_json_doc_t *doc, int tok, int64_t *out)
 {
-    if (tok < 0 || (unsigned)tok >= doc->ntok || doc->tok[tok].type != (uint8_t)KVM_JSON_NUMBER ||
-        (doc->tok[tok].flags & KVM_JSON_FLAG_INT) == 0u) {
+    if (tok < 0 || (unsigned)tok >= doc->ntok || kvm_json_tokens(doc)[tok].type != (uint8_t)KVM_JSON_NUMBER ||
+        (kvm_json_tokens(doc)[tok].flags & KVM_JSON_FLAG_INT) == 0u) {
         return false;
     }
-    const char *s = doc->text + doc->tok[tok].start;
-    uint16_t len = doc->tok[tok].len;
+    const char *s = doc->text + kvm_json_tokens(doc)[tok].start;
+    uint16_t len = kvm_json_tokens(doc)[tok].len;
     uint16_t i = 0;
     bool neg = false;
     if (s[0] == '-') {
@@ -749,10 +771,10 @@ bool kvm_json_get_i64(const kvm_json_doc_t *doc, int tok, int64_t *out)
 
 bool kvm_json_get_bool(const kvm_json_doc_t *doc, int tok, bool *out)
 {
-    if (tok < 0 || (unsigned)tok >= doc->ntok || doc->tok[tok].type != (uint8_t)KVM_JSON_BOOL) {
+    if (tok < 0 || (unsigned)tok >= doc->ntok || kvm_json_tokens(doc)[tok].type != (uint8_t)KVM_JSON_BOOL) {
         return false;
     }
-    *out = (doc->text[doc->tok[tok].start] == 't');
+    *out = (doc->text[kvm_json_tokens(doc)[tok].start] == 't');
     return true;
 }
 

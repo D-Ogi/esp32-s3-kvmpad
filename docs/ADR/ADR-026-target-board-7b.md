@@ -102,6 +102,18 @@ The touch contract of 03 §2 is unchanged except for the coordinate range.
 - AT-HW-01..05 as in `04` with the 7B values: I²C scan `0x24` + `0x5D`; EXIO5 read-back LOW before `tud_init`; GT911
   configuration 1024×600; VSYNC at the nominal rate; USB enumeration after cold and warm reset.
 - Host unit test `test/host_unit/test_io_ext.c` (EXIO5 = HIGH unreachable, safe default, inverted PWM).
+- During the unit 1 USB monitor update, the restored firmware read `0x5E` after writing `0x10`.
+  The updated HAL waits 10 ms between setting direction and writing the output levels, as in the
+  7B I²C demo. It samples the pins up to five times per configuration and permits two configurations.
+  In the host fixture, a 25 ms delay before pin levels settled was accepted at 40 ms. A persistent
+  `0x5E` or a high USB_SEL prevented startup.
+  [Host timing cases](../../../evidence/build/board-warm-start/results.json)
+- On unit 1 a RAM-only probe ran the startup sequence and observed `0x10` four times over 1.3 s.
+  With signed release `0c5a716ba220`, two consecutive UART resets started from measured operating
+  levels of `0x5E`. On boots 397 and 398 the first configuration returned `0x10` before TinyUSB
+  started. Windows enumerated all four HID interfaces, the board retained its pairing and the LCD
+  completed refreshes on both boots. The cause of the earlier persistent mismatch remains open.
+  [Physical reset results](../../../evidence/build/board-warm-ram/cycles-397-398.json)
 - Evidence: `../evidence/hardware/*` (SHA256 in `hardware/boards.md` and `test/reports/`).
 
 ## Migration

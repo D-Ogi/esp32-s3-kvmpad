@@ -14,6 +14,8 @@
     <Platforms>AnyCPU</Platforms>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>false</SelfContained>
+    <CardVideoReader Condition="'$(CardVideoReader)' == ''">$(MSBuildThisFileDirectory)..\..\native\bin\card-pixels.exe</CardVideoReader>
+    <HostPicker Condition="'$(HostPicker)' == ''">$(MSBuildThisFileDirectory)..\..\native\bin\kvmpad-capture.exe</HostPicker>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <!-- Required by the LibraryImport source generator, which emits the marshalling stubs for the P/Invokes
          in Interop/NativeMethods.cs. No hand-written unsafe block exists in this project. -->
@@ -25,6 +27,18 @@
 
   <ItemGroup>
     <ProjectReference Include="..\KVMpad.Client.Core\KVMpad.Client.Core.csproj" />
+    <None Include="..\..\..\..\design\assets\control-icons\*.png"
+          Link="assets\control-icons\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\native\bin\kvmpad_pairing.dll" Condition="Exists('..\..\native\bin\kvmpad_pairing.dll')"
+          Link="kvmpad_pairing.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\..\..\hosts\windows\*.py"
+          Exclude="..\..\..\..\hosts\windows\test_*.py;..\..\..\..\hosts\windows\studio.py"
+          Link="host\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\..\..\tools\live_view\framing.py"
+          Link="host\framing.py" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="$(HostPicker)" Condition="'$(HostPicker)' != '' and Exists('$(HostPicker)')"
+          Link="host\kvmpad-capture.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- The generated host layouts of ADR-024 (TASK-071): the same file the device compiles in, shipped beside
@@ -34,6 +48,26 @@
       <Link>layouts\kbd_layouts.json</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\..\..\tools\kvmpack\*.py;..\..\..\..\tools\kvmpack\preview.html;..\..\..\..\tools\kvmpack\autopilot_preview.js"
+          Link="studio\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\..\..\tools\kvmpack\schemas\**\*.json"
+          Link="studio\schemas\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\..\..\extensions\usb-monitor-console\*.json"
+          Link="studio\examples\usb-monitor-console\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\..\..\tools\kvmpack\examples\**\*.json;..\..\..\..\tools\kvmpack\examples\**\*.png"
+          Link="studio\examples\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\..\..\tools\live_view\card_video_import.py;..\..\..\..\tools\live_view\prepare_card_video.py;..\..\..\..\tools\live_view\stock_card_pixels.py"
+          Link="media\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="$(CardVideoReader)" Condition="Exists('$(CardVideoReader)')"
+          Link="media\card-pixels.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\..\..\hosts\windows\appearance.py"
+          Link="media\appearance.py" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -8,4 +8,4 @@ idf_component_register(
     SRCS "src/hid_core.c" "src/kbd_fsm.c" "src/hid_keymap.c" "src/hid_dispatch.c"
     INCLUDE_DIRS "include"
     REQUIRES usb_hid_device
-    PRIV_REQUIRES esp_timer log freertos)
+    PRIV_REQUIRES esp_timer esp_hw_support log freertos)

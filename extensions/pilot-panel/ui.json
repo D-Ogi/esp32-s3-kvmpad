@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "orientation": "portrait",
+  "screens": ["charts_page", "autopilot", "radio", "check_taxi", "check_approach", "setup"],
+  "root": {
+    "id": "kneeboard",
+    "type": "Column",
+    "bounds": {"x": 0, "y": 0, "w": 600, "h": 944},
+    "children": [
+      {
+        "id": "charts_page",
+        "type": "Column",
+        "bounds": {"x": 0, "y": 0, "w": 600, "h": 944},
+        "props": {"title": "Airport charts"},
+        "children": [
+          {"id": "airport", "type": "Text", "bounds": {"x": 16, "y": 8, "w": 568, "h": 48}, "props": {"text": "Brzeziny  /  Simulator charts"}},
+          {"id": "charts", "type": "ChartViewer", "bounds": {"x": 8, "y": 68, "w": 584, "h": 864}, "props": {"charts": [{"title": "Taxi diagram  /  AD 2-01", "asset": "assets/taxi.png"}, {"title": "Runway 23 approach  /  IAC 2-03", "asset": "assets/approach.png"}, {"title": "Apron stands  /  APN 2-02", "asset": "assets/apron.png"}]}}
+        ]
+      },
+      {
+        "id": "autopilot",
+        "type": "Column",
+        "bounds": {"x": 0, "y": 0, "w": 600, "h": 944},
+        "props": {"title": "Autopilot"},
+        "children": [
+          {"id": "autopilot_panel", "type": "AutopilotPanel", "bounds": {"x": 8, "y": 8, "w": 584, "h": 928}}
+        ]
+      },
+      {
+        "id": "radio",
+        "type": "Column",
+        "bounds": {"x": 0, "y": 0, "w": 600, "h": 944},
+        "props": {"title": "Radio and transponder"},
+        "children": [
+          {"id": "radio_panel", "type": "RadioPanel", "bounds": {"x": 8, "y": 8, "w": 584, "h": 928}}
+        ]
+      },
+      {
+        "id": "check_taxi",
+        "type": "Column",
+        "bounds": {"x": 0, "y": 0, "w": 600, "h": 944},
+        "props": {"title": "Before taxi"},
+        "children": [
+          {"id": "aircraft_taxi", "type": "TabStrip", "bounds": {"x": 16, "y": 6, "w": 568, "h": 56}, "props": {"tabs": ["Cessna 172S", "Diamond DA40 NG"], "pages": ["c172_taxi", "da40_taxi"]}, "events": {"change": "select_aircraft_taxi"}},
+          {
+            "id": "c172_taxi",
+            "type": "Column",
+            "bounds": {"x": 0, "y": 70, "w": 600, "h": 874},
+            "children": [
+              {"id": "c172_taxi_title", "type": "Text", "bounds": {"x": 16, "y": 16, "w": 568, "h": 50}, "props": {"text": "Cessna 172S  /  Before taxi"}},
+              {"id": "c172_taxi_1_item", "type": "Text", "bounds": {"x": 16, "y": 88, "w": 568, "h": 38}, "props": {"text": "Airport chart"}},
+              {"id": "c172_taxi_1_note", "type": "Text", "bounds": {"x": 12, "y": 127, "w": 576, "h": 50}, "props": {"text": "Open the taxiway diagram."}},
+              {"id": "c172_taxi_1_check", "type": "TabStrip", "bounds": {"x": 50, "y": 188, "w": 500, "h": 56}, "props": {"tabs": ["Pending", "Done"]}},
+              {"id": "c172_taxi_2_item", "type": "Text", "bounds": {"x": 16, "y": 295, "w": 568, "h": 38}, "props": {"text": "ATIS"}},
+              {"id": "c172_taxi_2_note", "type": "Text", "bounds": {"x": 12, "y": 334, "w": 576, "h": 50}, "props": {"text": "Note the ATIS information code."}},
+              {"id": "c172_taxi_2_check", "type": "TabStrip", "bounds": {"x": 50, "y": 395, "w": 500, "h": 56}, "props": {"tabs": ["Pending", "Done"]}},
+              {"id": "c172_taxi_3_item", "type": "Text", "bounds": {"x": 16, "y": 502, "w": 568, "h": 38}, "props": {"text": "COM 1"}},
+              {"id": "c172_taxi_3_note", "type": "Text", "bounds": {"x": 12, "y": 541, "w": 576, "h": 50}, "props": {"text": "Check the ground control frequency."}},
+              {"id": "c172_taxi_3_check", "type": "TabStrip", "bounds": {"x": 50, "y": 602, "w": 500, "h": 56}, "props": {"tabs": ["Pending", "Done"]}},
+              {"id": "c172_taxi_4_item", "type": "Text", "bounds": {"x": 16, "y": 709, "w": 568, "h": 38}, "props": {"text": "ATC clearance"}},
+              {"id": "c172_taxi_4_note", "type": "Text", "bounds": {"x": 12, "y": 748, "w": 576, "h": 50}, "props": {"text": "Write down the route and compare it with the chart."}},
+              {"id": "c172_taxi_4_check", "type": "TabStrip", "bounds": {"x": 50, "y": 809, "w": 500, "h": 56}, "props": {"tabs": ["Pending", "Done"]}}
+            ]
+          },
+          {
+            "id": "da40_taxi",
+            "type": "Column",
+            "bounds": {"x": 0, "y": 70, "w": 600, "h": 874},
+            "children": [
+              {"id": "da40_taxi_title", "type": "Text", "bounds": {"x": 16, "y": 16, "w": 568, "h": 50}, "props": {"text": "Diamond DA40 NG  /  Before taxi"}},
+              {"id": "da40_taxi_1_item", "type": "Text", "bounds": {"x": 16, "y": 88, "w": 568, "h": 38}, "props": {"text": "Apron chart"}},
+              {"id": "da40_taxi_1_note", "type": "Text", "bounds": {"x": 12, "y": 127, "w": 576, "h": 50}, "props": {"text": "Find your parking stand on the chart."}},
+              {"id": "da40_taxi_1_check", "type": "TabStrip", "bounds": {"x": 50, "y": 188, "w": 500, "h": 56}, "props": {"tabs": ["Pending", "Done"]}},
+              {"id": "da40_taxi_2_item", "type": "Text", "bounds": {"x": 16, "y": 295, "w": 568, "h": 38}, "props": {"text": "MFD map"}},
+              {"id": "da40_taxi_2_note", "type": "Text", "bounds": {"x": 12, "y": 334, "w": 576, "h": 50}, "props": {"text": "Compare the map position with the simulator."}},
+              {"id": "da40_taxi_2_check", "type": "TabStrip", "bounds": {"x": 50, "y": 395, "w": 500, "h": 56}, "props": {"tabs": ["Pending", "Done"]}},
+              {"id": "da40_taxi_3_item", "type": "Text", "bounds": {"x": 16, "y": 502, "w": 568, "h": 38}, "props": {"text": "COM radio"}},
+              {"id": "da40_taxi_3_note", "type": "Text", "bounds": {"x": 12, "y": 541, "w": 576, "h": 50}, "props": {"text": "Check which radio is active."}},
+              {"id": "da40_taxi_3_check", "type": "TabStrip", "bounds": {"x": 50, "y": 602, "w": 500, "h": 56}, "props": {"tabs": ["Pending", "Done"]}},
+              {"id": "da40_taxi_4_item", "type": "Text", "bounds": {"x": 16, "y": 709, "w": 568, "h": 38}, "props": {"text": "Taxi clearance"}},
+              {"id": "da40_taxi_4_note", "type": "Text", "bounds": {"x": 12, "y": 748, "w": 576, "h": 50}, "props": {"text": "Write the clearance in the ATC log."}},
+              {"id": "da40_taxi_4_check", "type": "TabStrip", "bounds": {"x": 50, "y": 809, "w": 500, "h": 56}, "props": {"tabs": ["Pending", "Done"]}}
+            ]
+          }
+        ]
+      },
+      {
+        "id": "check_approach",
+        "type": "Column",
+        "bounds": {"x": 0, "y": 0, "w": 600, "h": 944},
+        "props": {"title": "Approach"},
+        "children": [
+          {"id": "aircraft_approach", "type": "TabStrip", "bounds": {"x": 16, "y": 6, "w": 568, "h": 56}, "props": {"tabs": ["Cessna 172S", "Diamond DA40 NG"], "pages": ["c172_approach", "da40_approach"]}, "events": {"change": "select_aircraft_approach"}},
+          {
+            "id": "c172_approach",
+            "type": "Column",
+            "bounds": {"x": 0, "y": 70, "w": 600, "h": 874},
+            "children": [
+              {"id": "c172_approach_title", "type": "Text", "bounds": {"x": 16, "y": 16, "w": 568, "h": 50}, "props": {"text": "Cessna 172S  /  Before approach"}},
+              {"id": "c172_approach_1_item", "type": "Text", "bounds": {"x": 16, "y": 88, "w": 568, "h": 38}, "props": {"text": "Approach chart"}},
+              {"id": "c172_approach_1_note", "type": "Text", "bounds": {"x": 12, "y": 127, "w": 576, "h": 50}, "props": {"text": "Pin the chart for the selected runway."}},
+              {"id": "c172_approach_1_check", "type": "TabStrip", "bounds": {"x": 50, "y": 188, "w": 500, "h": 56}, "props": {"tabs": ["Pending", "Done"]}},
+              {"id": "c172_approach_2_item", "type": "Text", "bounds": {"x": 16, "y": 295, "w": 568, "h": 38}, "props": {"text": "NAV receiver"}},
+              {"id": "c172_approach_2_note", "type": "Text", "bounds": {"x": 12, "y": 334, "w": 576, "h": 50}, "props": {"text": "Check the navigation source in the simulator."}},
+              {"id": "c172_approach_2_check", "type": "TabStrip", "bounds": {"x": 50, "y": 395, "w": 500, "h": 56}, "props": {"tabs": ["Pending", "Done"]}},
+              {"id": "c172_approach_3_item", "type": "Text", "bounds": {"x": 16, "y": 502, "w": 568, "h": 38}, "props": {"text": "ATIS"}},
+              {"id": "c172_approach_3_note", "type": "Text", "bounds": {"x": 12, "y": 541, "w": 576, "h": 50}, "props": {"text": "Compare the ATIS information with your last note."}},
+              {"id": "c172_approach_3_check", "type": "TabStrip", "bounds": {"x": 50, "y": 602, "w": 500, "h": 56}, "props": {"tabs": ["Pending", "Done"]}},
+              {"id": "c172_approach_4_item", "type": "Text", "bounds": {"x": 16, "y": 709, "w": 568, "h": 38}, "props": {"text": "After landing"}},
+              {"id": "c172_approach_4_note", "type": "Text", "bounds": {"x": 12, "y": 748, "w": 576, "h": 50}, "props": {"text": "Find the runway exits on the airport diagram."}},
+              {"id": "c172_approach_4_check", "type": "TabStrip", "bounds": {"x": 50, "y": 809, "w": 500, "h": 56}, "props": {"tabs": ["Pending", "Done"]}}
+            ]
+          },
+          {
+            "id": "da40_approach",
+            "type": "Column",
+            "bounds": {"x": 0, "y": 70, "w": 600, "h": 874},
+            "children": [
+              {"id": "da40_approach_title", "type": "Text", "bounds": {"x": 16, "y": 16, "w": 568, "h": 50}, "props": {"text": "Diamond DA40 NG  /  Before approach"}},
+              {"id": "da40_approach_1_item", "type": "Text", "bounds": {"x": 16, "y": 88, "w": 568, "h": 38}, "props": {"text": "Destination chart"}},
+              {"id": "da40_approach_1_note", "type": "Text", "bounds": {"x": 12, "y": 127, "w": 576, "h": 50}, "props": {"text": "Check the selected runway."}},
+              {"id": "da40_approach_1_check", "type": "TabStrip", "bounds": {"x": 50, "y": 188, "w": 500, "h": 56}, "props": {"tabs": ["Pending", "Done"]}},
+              {"id": "da40_approach_2_item", "type": "Text", "bounds": {"x": 16, "y": 295, "w": 568, "h": 38}, "props": {"text": "MFD flight plan"}},
+              {"id": "da40_approach_2_note", "type": "Text", "bounds": {"x": 12, "y": 334, "w": 576, "h": 50}, "props": {"text": "Compare the waypoints with the chart."}},
+              {"id": "da40_approach_2_check", "type": "TabStrip", "bounds": {"x": 50, "y": 395, "w": 500, "h": 56}, "props": {"tabs": ["Pending", "Done"]}},
+              {"id": "da40_approach_3_item", "type": "Text", "bounds": {"x": 16, "y": 502, "w": 568, "h": 38}, "props": {"text": "ATIS"}},
+              {"id": "da40_approach_3_note", "type": "Text", "bounds": {"x": 12, "y": 541, "w": 576, "h": 50}, "props": {"text": "Write down the current ATIS information code."}},
+              {"id": "da40_approach_3_check", "type": "TabStrip", "bounds": {"x": 50, "y": 602, "w": 500, "h": 56}, "props": {"tabs": ["Pending", "Done"]}},
+              {"id": "da40_approach_4_item", "type": "Text", "bounds": {"x": 16, "y": 709, "w": 568, "h": 38}, "props": {"text": "Taxi chart"}},
+              {"id": "da40_approach_4_note", "type": "Text", "bounds": {"x": 12, "y": 748, "w": 576, "h": 50}, "props": {"text": "Pin the chart in the second slot."}},
+              {"id": "da40_approach_4_check", "type": "TabStrip", "bounds": {"x": 50, "y": 809, "w": 500, "h": 56}, "props": {"tabs": ["Pending", "Done"]}}
+            ]
+          }
+        ]
+      },
+      {
+        "id": "setup",
+        "type": "Column",
+        "bounds": {"x": 0, "y": 0, "w": 600, "h": 944},
+        "props": {"title": "Setup"},
+        "children": [
+          {"id": "aircraft_heading", "type": "Text", "bounds": {"x": 16, "y": 24, "w": 568, "h": 56}, "props": {"text": "Checklist aircraft"}},
+          {"id": "aircraft_setup", "type": "TabStrip", "bounds": {"x": 16, "y": 94, "w": 568, "h": 56}, "props": {"tabs": ["Cessna 172S", "Diamond DA40 NG"]}, "events": {"change": "select_aircraft_setup"}},
+          {"id": "aircraft_hint", "type": "Text", "bounds": {"x": 12, "y": 174, "w": 576, "h": 60}, "props": {"text": "Applies to Before taxi and Approach checklists."}}
+        ]
+      }
+    ]
+  }
+}

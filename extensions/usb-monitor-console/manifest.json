@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "id": "org.kvmpad.usb.console",
+  "version": "1.0.0",
+  "min_firmware": "1.3.0",
+  "title": "USB Monitor Console",
+  "description": "A portrait USB desktop with a local touchpad and keyboard. Switch to the Pointer screen for a larger touchpad.",
+  "category": "COMPOSITE",
+  "entry_view": "usb_console",
+  "permissions": ["ui.basic", "usb.monitor", "hid.keyboard", "hid.mouse"],
+  "required_permissions": ["usb.monitor", "hid.keyboard", "hid.mouse"],
+  "usb": {"mode": "monitor_controls", "requires": ["usb.monitor", "hid.keyboard", "hid.mouse"]},
+  "host": {"requires": []},
+  "limits": {"max_events_per_sec": 100, "max_memory_kib": 512}
+}

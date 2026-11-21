@@ -12,6 +12,8 @@
 // prompt label only; nothing here logs it (SEC-105).
 #include "text_glue.h"
 #include "ui_shell.h"
+#include "kvm_control_icons.h"
+#include "ui_theme.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -22,6 +24,9 @@
 #include "esp_timer.h"
 #include "hid_core.h"
 #include "hid_dispatch.h"
+#if KVM_HID_HAS_HPE
+#include "hpe_studio.h"
+#endif
 #include "hid_keymap.h"
 #include "ime_glue.h"
 #include "kbd_layouts.h" // FR-741: the picker reports an index into the generated tables
@@ -29,8 +34,17 @@
 #include "remote_glue.h"
 #include "ui_app.h"
 #include "ui_glue.h"
+#include "ui_overlay.h"
 #include "ui_platform.h"
 #include "ui_touch_bridge.h"
+#include "pack_panel.h"
+#include "hpe_panel.h"
+#ifdef KVM_MEDIA_SYNTHETIC_DIAG
+#include "media_panel.h"
+#endif
+#include "host_panel.h"
+#include "kvm_hid_intent.h"
+#include "ui_tokens.h"
 
 static const char *TAG = "ui_shell";
 
@@ -39,6 +53,9 @@ static const char *TAG = "ui_shell";
 
 static ui_app_t s_app;
 static bool s_built;
+static bool s_suspending;
+static bool s_tools_active;
+static lv_obj_t *s_tools_screen;
 static lv_timer_t *s_remote_timer;
 static uint32_t s_remote_seq; // last remote_glue view projected; 0 forces a republish
 static bool s_remote_fresh;
@@ -78,12 +95,25 @@ static bool on_screen(void)
     return s_built && lv_screen_active() == s_app.screen;
 }
 
+#if KVM_HID_HAS_HPE
+static void sync_shell_profile(void)
+{
+    const bool settings = ui_overlay_top(&s_app.router) == UI_OVERLAY_SETTINGS;
+    const bool keyboard_only = s_app.router.active == UI_VIEW_KEYBOARD && s_app.keyboard.workspace == UI_KBD_FULL;
+    // Windows can request native precision contacts at any time. A workspace with a pad must accept them.
+    hid_dispatch_set_profile(settings ? HPE_SETTINGS_PROFILE : keyboard_only ? HPE_KEYBOARD_PROFILE : HPE_MOUSE_PROFILE);
+}
+#endif
+
 static void pad_changed(void *ctx, const lv_area_t *pad)
 {
     (void)ctx;
     if (!on_screen()) {
         return; // a bench scene owns the pad rectangle while the shell is off screen
     }
+#if KVM_HID_HAS_HPE
+    sync_shell_profile();
+#endif
     if (pad) {
         const touch_rect_t r = {(int16_t)pad->x1, (int16_t)pad->y1, (int16_t)pad->x2, (int16_t)pad->y2};
         ui_touch_bridge_set_pad(&r, true);
@@ -181,6 +211,12 @@ static void settings_apply(uint8_t id, int32_t value, uint8_t index)
     case UI_SETTING_CONFIRM_ALT_F4:
         ok = app_config_set_field(KVM_CFG_F_CONFIRM_ALT_F4, v != 0 ? 1u : 0u);
         break;
+    case UI_SETTING_PALETTE:
+        ok = v < UI_PALETTE_COUNT && app_config_set_control_palette((uint8_t)v);
+        break;
+    case UI_SETTING_BRIGHTNESS:
+        ok = app_config_set_field(KVM_CFG_F_BRIGHTNESS, v);
+        break;
     case UI_SETTING_KEEPAWAKE_ENABLED:
         ok = app_config_set_field(KVM_CFG_F_KEEPAWAKE_ENABLED, v != 0 ? 1u : 0u);
         if (ok) {
@@ -243,7 +279,8 @@ static void settings_change(void *ctx, ui_setting_id_t id, int32_t value, uint8_
 static void settings_project(void)
 {
     const uint32_t seq = app_config_seq();
-    if (seq == 0 || seq == s_settings_seq) {
+    uint8_t palette = app_config_control_palette();
+    if (seq == 0 || (seq == s_settings_seq && palette == s_settings_view.palette)) {
         return;
     }
     if (!app_config_settings(&s_cfg_copy, 5)) {
@@ -258,6 +295,8 @@ static void settings_project(void)
     v->confirm_alt_f4 = s_cfg_copy.confirm_alt_f4;
     v->keepawake_enabled = s_cfg_copy.keepawake_enabled;
     v->keepawake_interval_s = s_cfg_copy.keepawake_interval_s;
+    v->brightness = s_cfg_copy.brightness;
+    v->palette = palette;
     v->unicode_mode = s_cfg_copy.unicode_mode;
     text_glue_set_mode(s_cfg_copy.unicode_mode); // FR-747: the delivery mode follows the saved record
     v->lang_ko = s_cfg_copy.lang_ko;             // ADR-037: what the language key offers
@@ -293,14 +332,381 @@ static void settings_project(void)
 static void remote_timer_cb(lv_timer_t *t)
 {
     (void)t; // LVGL task, lock held
-    ime_glue_install(&s_app); // TASK-072: a no-op until the background load is done, then once
+#if CONFIG_KVM_USB_MONITOR_EVAL
+    bool native;
+    if (remote_glue_take_display_profile(&native)) pack_panel_remote_monitor_mode(native);
+#endif
+    ui_theme_set_control_palette((ui_control_palette_t)app_config_control_palette());
     if (on_screen()) {
+#if KVM_HID_HAS_HPE
+        sync_shell_profile();
+#endif
         remote_project();
         settings_project();
+        if (s_settings_view.seq != 0) {
+            const bool local_composition = s_app.keyboard.text_mode_ok;
+            ime_glue_sync(&s_app, local_composition && s_settings_view.lang_zh,
+                          local_composition && s_settings_view.lang_ja, local_composition && s_settings_view.lang_ko);
+        }
     } else {
+        if (s_tools_active) {
+            // A dictionary load can finish after the keyboard has left the screen.
+            ime_glue_sync(&s_app, false, false, false);
+        }
         s_remote_fresh = false; // a bench scene owns the screen: republish when the shell comes back
         s_settings_seq = 0;
     }
+}
+
+static void pack_home(void)
+{
+    s_tools_active = false;
+    ui_touch_bridge_cancel();
+    hid_dispatch_release_all(KVM_RA_VIEW_CHANGE);
+    lv_screen_load(s_app.screen);
+    ui_router_show(&s_app.router, UI_VIEW_MOUSE);
+    ui_app_show(&s_app);
+    ui_touch_bridge_set_hid_enabled(!s_suspending);
+}
+
+enum { TOOLS_HOME, TOOLS_PROFILES, TOOLS_HOST };
+static void open_device_tools(void);
+
+static void leave_shell_input(void)
+{
+    ui_touch_bridge_cancel();
+    ui_touch_bridge_set_hid_enabled(false);
+    ui_app_leave_for_extensions(&s_app);
+    s_tools_active = true;
+    ime_glue_sync(&s_app, false, false, false);
+    hid_dispatch_release_all(KVM_RA_VIEW_CHANGE);
+}
+
+esp_err_t ui_shell_browse_card(void)
+{
+    if (!s_built)
+        return ESP_ERR_INVALID_STATE;
+    if (!ui_platform_lock(LOCK_MS))
+        return ESP_ERR_TIMEOUT;
+    esp_err_t result = ESP_ERR_INVALID_STATE;
+    if (on_screen() && !s_app.router.depth) {
+        leave_shell_input();
+        if (pack_panel_open(pack_home,open_device_tools))
+            result = ESP_OK;
+        else {
+            pack_home();
+            result = ESP_ERR_NO_MEM;
+        }
+    }
+    ui_platform_unlock();
+    return result;
+}
+
+#ifdef KVM_MEDIA_SYNTHETIC_DIAG
+static bool synthetic_media;
+
+static bool help_state(bool open)
+{
+    return on_screen() && s_app.router.active == UI_VIEW_MOUSE &&
+           (open ? s_app.router.depth == 1 && s_app.router.stack[0].d->id == UI_OVERLAY_GESTURE_HELP &&
+                   s_app.mouse.help_card : !s_app.router.depth && !s_app.mouse.help_card);
+}
+
+bool ui_shell_help_state(bool open)
+{
+    if (!ui_platform_lock(LOCK_MS)) return false;
+    bool ok = help_state(open);
+    ui_platform_unlock();
+    return ok;
+}
+
+static void help_pointer_read(lv_indev_t *indev, lv_indev_data_t *data)
+{
+    const touch_route_out_t *out = lv_indev_get_user_data(indev);
+    data->point = (lv_point_t){out->ptr_x, out->ptr_y};
+    data->state = out->ptr_pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+
+static lv_obj_t *help_close_button(lv_obj_t *parent)
+{
+    if (lv_obj_check_type(parent, &lv_label_class) &&
+        !strcmp(lv_label_get_text(parent), "Close") && lv_obj_check_type(lv_obj_get_parent(parent), &lv_button_class))
+        return lv_obj_get_parent(parent);
+    for (uint32_t i = 0; i < lv_obj_get_child_count(parent); ++i) {
+        lv_obj_t *button = help_close_button(lv_obj_get_child(parent, i));
+        if (button) return button;
+    }
+    return NULL;
+}
+
+// Only the LVGL task runs the pointer and button callbacks. The console holds
+// no pointer to a timer, object or stack data that can expire on timeout.
+static struct {
+    lv_timer_t *timer;
+    lv_indev_t *indev;
+    lv_display_t *display;
+    touch_router_t router;
+    touch_route_out_t contact;
+    kvm_touch_sample_t sample;
+    uint64_t deadline, pressed_at;
+    uint32_t hold_us;
+    bool open, painted;
+    esp_err_t result;
+} help_test;
+
+static void help_painted(lv_event_t *event)
+{
+    (void)event;
+    help_test.painted = true;
+}
+
+static void help_finish(esp_err_t result)
+{
+    if (help_test.indev) {
+        lv_display_remove_event_cb_with_user_data(help_test.display, help_painted, &help_test);
+        lv_indev_reset(help_test.indev, NULL);
+        lv_indev_delete(help_test.indev);
+        help_test.indev = NULL;
+    }
+    lv_timer_delete(help_test.timer);
+    help_test.timer = NULL;
+    help_test.result = result;
+}
+
+static bool help_press(void)
+{
+    lv_obj_t *button = help_test.open ? s_app.mouse.btn_help : help_close_button(s_app.mouse.help_card);
+    if (!button) return false;
+    lv_obj_update_layout(s_app.screen);
+    lv_area_t area;
+    lv_obj_get_coords(button, &area);
+    lv_point_t point = {(area.x1 + area.x2) / 2, (area.y1 + area.y2) / 2};
+    lv_display_t *disp = lv_display_get_default();
+    lv_obj_t *hit = lv_indev_search_obj(lv_display_get_layer_sys(disp), &point);
+    if (!hit) hit = lv_indev_search_obj(lv_display_get_layer_top(disp), &point);
+    if (!hit) hit = lv_indev_search_obj(s_app.screen, &point);
+    if (hit != button) return false;
+
+    touch_router_init(&help_test.router);
+    if (ui_router_pad_area(&s_app.router, &area)) {
+        touch_rect_t pad = {area.x1, area.y1, area.x2, area.y2};
+        touch_router_set_pad(&help_test.router, &pad, true);
+    }
+    help_test.sample = (kvm_touch_sample_t){.valid = true, .timestamp_us = now_us(), .sample_seq = 1, .point_count = 1};
+    help_test.sample.point[0].x_px = point.x;
+    help_test.sample.point[0].y_px = point.y;
+    touch_router_route(&help_test.router, &help_test.sample, &help_test.contact);
+    if (!help_test.contact.ptr_pressed || help_test.contact.pad.point_count) return false;
+    help_test.display = disp;
+    help_test.indev = lv_indev_create();
+    if (!help_test.indev) return false;
+    lv_indev_set_type(help_test.indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_display(help_test.indev, disp);
+    lv_indev_set_mode(help_test.indev, LV_INDEV_MODE_EVENT);
+    lv_indev_set_user_data(help_test.indev, &help_test.contact);
+    lv_indev_set_read_cb(help_test.indev, help_pointer_read);
+    if (!lv_display_add_event_cb(disp, help_painted, LV_EVENT_RENDER_READY, &help_test)) return false;
+    help_test.pressed_at = now_us();
+    lv_indev_read(help_test.indev);
+    lv_obj_invalidate(button);
+    return true;
+}
+
+static void help_step(lv_timer_t *timer)
+{
+    (void)timer;
+    uint64_t now = now_us();
+    if (now >= help_test.deadline || !help_state(!help_test.open)) {
+        help_finish(ESP_ERR_TIMEOUT);
+        return;
+    }
+    if (!help_test.indev) {
+        if (!help_press()) help_finish(ESP_FAIL);
+        return;
+    }
+    if (!help_test.painted || now - help_test.pressed_at < 90000) return;
+    help_test.sample.point_count = 0;
+    ++help_test.sample.sample_seq;
+    help_test.sample.timestamp_us = now;
+    touch_router_route(&help_test.router, &help_test.sample, &help_test.contact);
+    lv_indev_read(help_test.indev);
+    help_test.hold_us = (uint32_t)(now - help_test.pressed_at);
+    help_finish(ESP_OK);
+}
+
+esp_err_t ui_shell_help_touch(bool open)
+{
+    if (!ui_platform_lock(LOCK_MS)) return ESP_ERR_TIMEOUT;
+    esp_err_t result = ESP_ERR_INVALID_STATE;
+    if (!help_test.timer && help_state(!open)) {
+        memset(&help_test, 0, sizeof(help_test));
+        help_test.open = open;
+        help_test.deadline = now_us() + 2000000;
+        help_test.timer = lv_timer_create(help_step, 8, NULL);
+        result = help_test.timer ? ESP_OK : ESP_ERR_NO_MEM;
+    }
+    ui_platform_unlock();
+    return result;
+}
+
+esp_err_t ui_shell_help_completion(uint32_t *hold_us)
+{
+    if (!ui_platform_lock(LOCK_MS)) return ESP_ERR_TIMEOUT;
+    esp_err_t result = help_test.timer ? ESP_ERR_NOT_FINISHED : help_test.result;
+    *hold_us = help_test.hold_us;
+    ui_platform_unlock();
+    return result;
+}
+
+static esp_err_t start_card_test(const char *file, const char *mode, const char *source, bool pixel_size)
+{
+    if (!s_built)
+        return ESP_ERR_INVALID_STATE;
+    if (!ui_platform_lock(LOCK_MS))
+        return ESP_ERR_TIMEOUT;
+    esp_err_t result = ESP_ERR_INVALID_STATE;
+    if (on_screen() && !s_app.router.depth && s_app.router.active == UI_VIEW_MOUSE) {
+        leave_shell_input();
+        if (file ? pack_panel_card_run(pack_home, file, mode, source, pixel_size) : pack_panel_card_reference(pack_home))
+            result = ESP_OK;
+        else {
+            if (s_tools_active)
+                pack_home();
+            result = ESP_FAIL;
+        }
+    }
+    ui_platform_unlock();
+    return result;
+}
+
+esp_err_t ui_shell_card_reference(void) { return start_card_test(NULL, NULL, NULL, false); }
+
+esp_err_t ui_shell_card_run(const char *file, const char *mode, const char *source, bool pixel_size)
+{
+    return file && mode && source ? start_card_test(file, mode, source, pixel_size) : ESP_ERR_INVALID_ARG;
+}
+
+esp_err_t ui_shell_card_action(const char *action)
+{
+    if (!s_built || !ui_platform_lock(LOCK_MS))
+        return ESP_ERR_INVALID_STATE;
+    bool clicked = pack_panel_card_action(action);
+    ui_platform_unlock();
+    return clicked ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
+
+esp_err_t ui_shell_card_home(void)
+{
+    if (!s_built || !ui_platform_lock(LOCK_MS))
+        return ESP_ERR_INVALID_STATE;
+    bool left = pack_panel_card_home();
+    ui_platform_unlock();
+    return left ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
+
+static void synthetic_home(void)
+{
+    synthetic_media = false;
+    pack_home();
+}
+
+static esp_err_t open_synthetic_media(unsigned fps, unsigned frames, kvm_live_codec_t codec, bool pattern, bool paced)
+{
+    if (!s_built)
+        return ESP_ERR_INVALID_STATE;
+    if (!ui_platform_lock(LOCK_MS))
+        return ESP_ERR_TIMEOUT;
+    esp_err_t result = ESP_ERR_INVALID_STATE;
+    if (!synthetic_media && on_screen() && !s_app.router.depth) {
+        leave_shell_input();
+        synthetic_media = pattern ? media_panel_pixel_pattern(synthetic_home)
+                          : codec == KVM_LIVE_JPEG ? media_panel_synthetic_jpeg_paced(fps, frames, synthetic_home)
+                          : paced ? media_panel_synthetic_h264_paced(fps, frames, synthetic_home)
+                          : codec == KVM_LIVE_H264_INTRA ? media_panel_synthetic_h264_start(fps, frames, synthetic_home)
+                               : media_panel_synthetic_start(fps, frames, synthetic_home);
+        result = synthetic_media ? ESP_OK : ESP_ERR_NO_MEM;
+        if (!synthetic_media)
+            pack_home();
+    }
+    ui_platform_unlock();
+    return result;
+}
+
+esp_err_t ui_shell_synthetic_media(unsigned fps, unsigned frames, kvm_live_codec_t codec, bool paced)
+{
+    return open_synthetic_media(fps, frames, codec, false, paced);
+}
+
+esp_err_t ui_shell_pixel_pattern(bool scan)
+{
+    if (!scan) return open_synthetic_media(0, 0, KVM_LIVE_JPEG, true, false);
+    if (!s_built || !ui_platform_lock(LOCK_MS)) return ESP_ERR_INVALID_STATE;
+    bool ok = synthetic_media && media_panel_pixel_pattern_scan();
+    ui_platform_unlock();
+    return ok ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
+
+void ui_shell_stop_synthetic_media(void)
+{
+    if (!s_built || !ui_platform_lock(LOCK_MS))
+        return;
+    if (synthetic_media) {
+        media_panel_close();
+        synthetic_home();
+    }
+    ui_platform_unlock();
+}
+#endif
+
+static void tools_select(lv_event_t *event)
+{
+    unsigned choice = (unsigned)(uintptr_t)lv_event_get_user_data(event);
+    if (!s_tools_screen || lv_screen_active() != s_tools_screen)
+        return;
+    lv_screen_load(s_app.screen);
+    lv_obj_delete_async(s_tools_screen);
+    s_tools_screen = NULL;
+    bool opened = false;
+    if (choice == TOOLS_PROFILES)
+        opened = hpe_panel_open(pack_home);
+    if (choice == TOOLS_HOST)
+        opened = host_panel_open(pack_home);
+    if (!opened)
+        pack_home();
+}
+
+static void tools_button(const char *name, const lv_image_dsc_t *mask, unsigned choice, int y)
+{
+    lv_obj_t *btn = lv_button_create(s_tools_screen);
+    lv_obj_set_pos(btn, 24, y);
+    lv_obj_set_size(btn, 360, 60);
+    ui_theme_control_button(btn);
+    lv_obj_t *label = lv_label_create(btn);
+    lv_label_set_text_static(label, name);
+    lv_obj_center(label);
+    lv_obj_align(ui_theme_control_mask(btn, mask), LV_ALIGN_LEFT_MID, 2, 0);
+    lv_obj_add_event_cb(btn, tools_select, LV_EVENT_CLICKED, (void *)(uintptr_t)choice);
+}
+
+static void open_device_tools(void)
+{
+    if (!on_screen())
+        return;
+    leave_shell_input();
+    s_tools_screen = lv_obj_create(NULL);
+    ui_theme_apply(s_tools_screen, UI_STYLE_CONTROL_PAGE, LV_STATE_DEFAULT);
+    tools_button("Home", &kvm_icon_home, TOOLS_HOME, 16);
+    tools_button("HOST Bridge", &kvm_icon_host, TOOLS_HOST, 100);
+#if KVM_HID_HAS_HPE
+    tools_button("HID profiles", &kvm_icon_keyboard, TOOLS_PROFILES, 184);
+#endif
+    lv_screen_load(s_tools_screen);
+}
+
+static void extensions_direct(lv_event_t *e)
+{
+    (void)e;
+    ui_shell_browse_card();
 }
 
 esp_err_t ui_shell_show(void)
@@ -313,6 +719,7 @@ esp_err_t ui_shell_show(void)
     }
     esp_err_t err = ESP_OK;
     if (!s_built) {
+        ui_theme_set_control_palette((ui_control_palette_t)app_config_control_palette());
         // FR-744: the v1 CLIENT and the reference HOST are Windows (ADR-021); a HOST OS setting comes with Settings.
         const ui_app_hooks_t hooks = {.now_us = now_us,
                                       .cancel_input = cancel_input,
@@ -323,6 +730,7 @@ esp_err_t ui_shell_show(void)
                                       .layout_chord = KVM_CHORD_LAYOUT_WIN};
         s_built = ui_app_init(&s_app, ui_glue_store(), ui_glue_actions(), &hooks);
         if (s_built) {
+            ui_app_add_extensions_button(&s_app, extensions_direct);
             ESP_LOGI(TAG, "shell built: %u views, nav %s", s_app.n_views, s_app.nav ? "yes" : "no");
         } else {
             ESP_LOGE(TAG, "shell build failed");
@@ -330,8 +738,15 @@ esp_err_t ui_shell_show(void)
         }
     }
     if (s_built) {
+        s_tools_active = false;
+        pack_panel_leave();
+        host_panel_leave();
         if (lv_screen_active() != s_app.screen) {
             lv_screen_load(s_app.screen);
+        }
+        if (s_tools_screen) {
+            lv_obj_delete_async(s_tools_screen);
+            s_tools_screen = NULL;
         }
         ui_app_show(&s_app);
         s_remote_fresh = false;
@@ -354,9 +769,21 @@ void ui_shell_suspend(void)
     ui_touch_bridge_cancel();
     ui_touch_bridge_set_hid_enabled(false);
     if (s_built && ui_platform_lock(LOCK_MS)) {
+        s_suspending = true;
+        pack_panel_leave();
+        host_panel_leave();
+        if (s_tools_screen || !on_screen())
+            lv_screen_load(s_app.screen);
+        if (s_tools_screen) {
+            lv_obj_delete_async(s_tools_screen);
+            s_tools_screen = NULL;
+        }
+        hpe_panel_leave();
         if (on_screen()) {
             ui_app_leave(&s_app);
         }
+        s_suspending = false;
+        s_tools_active = false;
         ui_platform_unlock();
     }
     hid_dispatch_release_all(KVM_RA_VIEW_CHANGE);
@@ -383,6 +810,16 @@ bool ui_shell_refresh_pad(void)
     }
     ui_platform_unlock();
     return on;
+}
+
+esp_err_t ui_shell_keyboard_workspace(ui_kbd_workspace_t workspace)
+{
+    if (!s_built || !ui_platform_lock(LOCK_MS)) return ESP_ERR_INVALID_STATE;
+    const bool ok = on_screen() &&
+        ui_actions_submit(ui_glue_actions(), UI_ACT_NAVIGATE, 0, UI_VIEW_KEYBOARD, now_us(), NULL) &&
+        ui_view_keyboard_select_workspace(&s_app.keyboard, workspace);
+    ui_platform_unlock();
+    return ok ? ESP_OK : ESP_ERR_INVALID_STATE;
 }
 
 esp_err_t ui_shell_local_action(ui_action_type_t type, uint16_t value)

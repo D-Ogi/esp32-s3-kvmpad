@@ -79,6 +79,8 @@ typedef struct {
     uint16_t len;
     uint16_t ntok;
     kvm_json_tok_t tok[KVM_JSON_MAX_TOKENS];
+    kvm_json_tok_t *external; // optional caller-owned storage for local package documents
+    uint16_t capacity;
 } kvm_json_doc_t;
 
 /**
@@ -86,6 +88,16 @@ typedef struct {
  * `text` must stay valid while the document is read.
  */
 kvm_json_err_t kvm_json_parse(kvm_json_doc_t *doc, const char *text, size_t len);
+
+/** Parse a local document with caller-owned tokens and a nesting limit up to 24.
+ * The caller bounds text length (at most UINT16_MAX bytes) and owns both buffers. */
+kvm_json_err_t kvm_json_parse_local(kvm_json_doc_t *doc, const char *text, size_t len,
+                                    kvm_json_tok_t *tokens, uint16_t capacity, uint8_t max_depth);
+
+static inline const kvm_json_tok_t *kvm_json_tokens(const kvm_json_doc_t *doc)
+{
+    return doc->external ? doc->external : doc->tok;
+}
 
 /** Root token index (0) when the document holds a value, or -1 for an empty document. */
 int kvm_json_root(const kvm_json_doc_t *doc);
@@ -95,7 +107,7 @@ static inline kvm_json_type_t kvm_json_type(const kvm_json_doc_t *doc, int tok)
     if (tok < 0 || (unsigned)tok >= doc->ntok) {
         return KVM_JSON_UNDEFINED;
     }
-    return (kvm_json_type_t)doc->tok[tok].type;
+    return (kvm_json_type_t)kvm_json_tokens(doc)[tok].type;
 }
 
 /** Value token of member `name` of the object `obj`, or -1 when absent / `obj` is not an object. */

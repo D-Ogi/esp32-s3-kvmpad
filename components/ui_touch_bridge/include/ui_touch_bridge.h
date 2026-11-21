@@ -23,11 +23,16 @@ extern "C" {
 /** Gesture intent sink; returns true when the intent was queued. Called from the bridge task. */
 typedef bool (*ui_touch_hid_sink_fn)(void *ctx, const kvm_hid_intent_t *intent);
 
+struct _lv_obj_t;
 typedef struct {
     uint16_t h_res, v_res;
     ui_touch_hid_sink_fn sink;
     void *sink_ctx;
     bool hid_enabled; // pad -> HID at start; off means the pad is routed but the gesture FSM is idle
+    // Optional local surface; called by the LVGL task. A captured gesture cancels the pointer.
+    bool (*local_contacts)(unsigned count, const kvm_touch_point_t points[2], uint64_t timestamp_us);
+    // Opt in to completed presses between LVGL polls. Called with the currently hit widget.
+    bool (*buffered_target)(struct _lv_obj_t *target);
 } ui_touch_bridge_cfg_t;
 
 typedef struct {

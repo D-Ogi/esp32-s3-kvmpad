@@ -96,6 +96,8 @@ bool ui_router_init(ui_router_t *r, lv_obj_t *parent, const ui_shell_layout_t *l
 
     const int32_t w = layout->width;
     const int32_t h = layout->height;
+    r->height = h;
+    r->topbar_height = layout->topbar_h;
     r->topbar_slot = plain_layer(parent, 0, 0, w, layout->topbar_h);
     r->content_slot = plain_layer(parent, 0, layout->topbar_h, w, h - layout->topbar_h);
     r->overlay_layer = plain_layer(parent, 0, 0, w, h);
@@ -115,6 +117,25 @@ bool ui_router_init(ui_router_t *r, lv_obj_t *parent, const ui_shell_layout_t *l
     return true;
 }
 
+static void destroy_view(ui_router_t *r, ui_view_id_t id)
+{
+    lv_obj_t *root = r->view_root[id];
+    if (root == NULL) return;
+    if (r->views[id]->destroy != NULL) r->views[id]->destroy(r->views[id]->ctx);
+    lv_obj_delete(root);
+    r->view_root[id] = NULL;
+}
+
+void ui_router_release_extension_memory(ui_router_t *r)
+{
+    if (r == NULL || !r->ready || r->busy || r->depth != 0) return;
+    r->busy = true;
+    if (r->active != UI_VIEW_MOUSE) r->active = -1;
+    destroy_view(r, UI_VIEW_KEYBOARD);
+    destroy_view(r, UI_VIEW_SHORTCUTS);
+    r->busy = false;
+}
+
 void ui_router_deinit(ui_router_t *r)
 {
     if (r == NULL || !r->ready) {
@@ -128,13 +149,7 @@ void ui_router_deinit(ui_router_t *r)
         }
     }
     for (int i = 0; i < UI_VIEW_COUNT; i++) {
-        if (r->view_root[i] != NULL) {
-            if (r->views[i]->destroy != NULL) {
-                r->views[i]->destroy(r->views[i]->ctx);
-            }
-            lv_obj_delete(r->view_root[i]);
-            r->view_root[i] = NULL;
-        }
+        destroy_view(r, (ui_view_id_t)i);
     }
     lv_obj_delete(r->toast_layer);
     lv_obj_delete(r->overlay_layer);
@@ -203,6 +218,15 @@ bool ui_router_show(ui_router_t *r, ui_view_id_t target)
 int ui_router_active(const ui_router_t *r)
 {
     return r != NULL && r->ready ? r->active : -1;
+}
+
+void ui_router_set_full_height(ui_router_t *r, bool full_height)
+{
+    if (!r || !r->ready || lv_obj_is_hidden(r->topbar_slot) == full_height) return;
+    int32_t y = full_height ? 0 : r->topbar_height;
+    lv_obj_set_hidden(r->topbar_slot, full_height);
+    lv_obj_set_y(r->content_slot, y);
+    lv_obj_set_height(r->content_slot, r->height - y);
 }
 
 bool ui_router_pad_area(ui_router_t *r, lv_area_t *out)

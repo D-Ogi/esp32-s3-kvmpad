@@ -13,6 +13,7 @@
 
 #include "esp_err.h"
 #include "usb_hid_reports.h"
+#include "hpe_reports.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,7 +39,8 @@ typedef struct {
     uint8_t protocol[KVM_HID_ITF_COUNT];      // KVM_HID_PROTOCOL_BOOT / _REPORT per interface
     uint32_t set_protocol_count;
     uint8_t led_state;                        // last LED output report (Num/Caps/Scroll/...)
-    uint32_t led_reports;
+    bool led_known;                           // keyboard output received in this USB configuration
+    uint32_t led_reports;                     // lifetime diagnostic, across configurations
     uint32_t neutral_sent;                    // fallback neutral reports (no transport hooks installed)
     uint32_t neutral_failed;                  // fallback neutral report not accepted (endpoint busy)
     uint32_t reports_sent;                    // reports accepted through usb_hid_device_send()
@@ -49,6 +51,9 @@ typedef struct {
     uint32_t report_complete;
     uint32_t report_failed;
     uint32_t get_report_requests;
+    hpe_features_t ptp;
+    uint32_t ptp_generation; // mode/surface changes invalidate queued frames from the old route
+    uint32_t studio_frames, studio_invalid;
     bool remote_wakeup_enabled;               // HOST-enabled flag at the last suspend
     uint64_t last_mount_us;
 } usb_hid_status_t;
@@ -58,6 +63,25 @@ typedef struct {
  * board_hal_init() has confirmed EXIO5=LOW (TECH-030).
  */
 esp_err_t usb_hid_device_start(void);
+
+#if CONFIG_KVM_USB_MONITOR_EVAL
+const char *usb_hid_device_serial(void);
+/** Local monitor panel only. Re-enumerate the native port after a disconnect interval.
+ * The most recent selection wins, including while a previous switch is in flight. */
+esp_err_t usb_hid_device_set_monitor(bool active);
+esp_err_t usb_hid_device_set_monitor_mode(bool active, bool native);
+/** Local extension only. Select the display with boot keyboard and mouse, or return to normal HID. */
+esp_err_t usb_hid_device_set_monitor_controls(bool active, bool native);
+esp_err_t usb_hid_device_set_monitor_windows(bool controls);
+/** True while the host has configured either display profile and its bus is awake. */
+bool usb_hid_device_monitor_mounted(void);
+/** Display link state: detached, mounted or suspended. */
+kvm_usb_state_t usb_hid_device_monitor_state(void);
+typedef struct {
+    uint32_t passed_bytes, filtered_bytes;
+} usb_monitor_port_bytes_t;
+usb_monitor_port_bytes_t usb_hid_device_monitor_bytes(void);
+#endif
 
 /**
  * Transport hooks for the HID scheduler. All of them are called in the TinyUSB task:
@@ -71,6 +95,10 @@ typedef struct {
     void (*pump)(void *ctx);
     void (*on_state)(void *ctx, kvm_usb_state_t state, uint32_t usb_epoch);
     void (*on_complete)(void *ctx, uint8_t itf);
+    void (*on_ptp_route)(void *ctx, bool native, bool surface_enabled, uint32_t generation);
+    uint8_t (*get_profile)(void *ctx);
+    bool (*on_studio_output)(void *ctx, const hpe_packet_t *packet);
+    void (*on_failed)(void *ctx, uint8_t itf);
     void *ctx;
 } usb_hid_transport_t;
 
@@ -79,6 +107,9 @@ esp_err_t usb_hid_device_set_transport(const usb_hid_transport_t *t);
 /** Any task (not ISR): run the pump hook in the TinyUSB task soon. Coalesces repeated requests. */
 void usb_hid_device_request_pump(void);
 
+/** TinyUSB task only. HID class instances, zero for display-only or during a profile switch. */
+uint8_t usb_hid_device_interface_count(void);
+
 /** TinyUSB task only (inside a hook): hand one input report to the IN endpoint of `itf`. */
 bool usb_hid_device_send(uint8_t itf, const uint8_t *report, uint8_t len);
 
@@ -86,6 +117,18 @@ bool usb_hid_device_send(uint8_t itf, const uint8_t *report, uint8_t len);
 uint8_t usb_hid_device_protocol(uint8_t itf);
 
 void usb_hid_device_get_status(usb_hid_status_t *out);
+
+#ifdef KVM_MEDIA_SYNTHETIC_DIAG
+// Observes the existing TinyUSB scheduler pump. A window never queues a pump or submits a report.
+typedef struct {
+    uint32_t elapsed_us, services, all_ready, timed_requests, max_defer_us, pending_us;
+    uint32_t max_gap_us, gaps_over_20ms;
+    uint32_t sent, complete, refused, failed, link_changes;
+    bool expired;
+} usb_hid_service_window_t;
+bool usb_hid_service_begin(unsigned limit_ms);
+bool usb_hid_service_end(usb_hid_service_window_t *out);
+#endif
 
 const char *usb_hid_state_name(kvm_usb_state_t s);
 

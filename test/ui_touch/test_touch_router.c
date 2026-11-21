@@ -9,6 +9,7 @@
 
 #include "gesture_engine.h"
 #include "kvm_test.h"
+#include "local_contacts.h"
 #include "touch_router.h"
 
 #define W 1024
@@ -236,6 +237,27 @@ static void test_cancel_blocks_until_lift(void)
     CHECK_EQ(o.pad.point_count, 0);
 }
 
+static void test_cancelled_ids_survive_controller_fault(void)
+{
+    reset(true);
+    r.require_lift_after_error = true;
+    pts_t held = two(0, CHROME_X, CHROME_Y, 1, PAD_X, PAD_Y);
+    route(&held);
+    touch_router_cancel(&r);
+    kvm_touch_sample_t fault = sample(NULL);
+    fault.valid = false;
+    touch_router_route(&r, &fault, &o);
+    CHECK(o.ptr_cancel && !o.ptr_pressed);
+    touch_router_route(&r, &fault, &o); // repeated errors cannot manufacture a physical lift
+    route(&held);
+    CHECK(!o.ptr_pressed && o.pad.point_count == 0);
+    pts_t second = one(1, PAD_X, PAD_Y);
+    route(&second);
+    CHECK_EQ(touch_router_target(&r, 1), TOUCH_TARGET_BLOCKED);
+    route(&held); // ID 0 lifted in the previous valid frame and is now a fresh press
+    CHECK(o.ptr_pressed && !o.ptr_cancel && o.pad.point_count == 0);
+}
+
 // AT-UIFW-04 with the real gesture FSM: a two-finger tap on the pad gives exactly one right click,
 // a rail press during a pad drag never presses the LVGL pointer, and every button goes back up.
 static void feed(kvm_gesture_t *g, int *down, int *up, int *right)
@@ -388,10 +410,233 @@ static void test_random_invariants(void)
            (unsigned)r.st.pointer_cancels);
 }
 
+static void queue_sample(local_contacts_queue_t *q, const pts_t *points)
+{
+    kvm_touch_sample_t s = sample(points);
+    local_contacts_post(q, &s, (local_pointer_t){0});
+}
+
+typedef struct {
+    unsigned n;
+    kvm_hid_intent_t events[8 * KVM_GESTURE_MAX_OUT];
+} gesture_trace_t;
+
+static void drain_gestures(local_contacts_queue_t *q, kvm_gesture_t *gesture, uint32_t *seq, gesture_trace_t *trace)
+{
+    for (unsigned i = 0; i < q->used; i++) {
+        const local_contacts_t *frame = &q->pending[i];
+        kvm_touch_sample_t s = {.valid = frame->count <= 2, .timestamp_us = frame->timestamp_us,
+                                .sample_seq = ++*seq, .point_count = frame->count <= 2 ? (uint8_t)frame->count : 0};
+        memcpy(s.point, frame->points, sizeof(frame->points));
+        kvm_gesture_out_t out;
+        kvm_gesture_feed(gesture, &s, &out);
+        if (trace && trace->n + out.n <= sizeof(trace->events)/sizeof(trace->events[0])) {
+            memcpy(&trace->events[trace->n], out.ev, out.n * sizeof(out.ev[0]));
+            trace->n += out.n;
+        } else if (trace) {
+            CHECK(0 && "gesture trace overflow");
+        }
+    }
+    q->used = 0;
+}
+
+static void test_gestures_during_monitor_refresh(void)
+{
+    for (int fingers = 1; fingers <= 2; fingers++) {
+        local_contacts_queue_t q = {0};
+        kvm_gesture_t gesture;
+        kvm_gesture_init(&gesture, NULL);
+        uint32_t seq = 0;
+        pts_t p = fingers == 1 ? one(1, 200, 100) : two(1, 200, 100, 2, 300, 100);
+        if (fingers == 1) {
+            queue_sample(&q, &p);
+            queue_sample(&q, NULL); // First tap of tap-and-drag.
+        }
+        for (int i = 0; i <= 31; i++) {
+            p.p[0].y_px += 3;
+            p.p[1].y_px += 3;
+            queue_sample(&q, &p);
+        }
+        drain_gestures(&q, &gesture, &seq, NULL);
+        CHECK_EQ(gesture.st.cancels, 0);
+        if (fingers == 1) {
+            CHECK(gesture.left_held && gesture.st.drags == 1);
+            local_contacts_expire(&q, q.last_time + KVM_TOUCH_GAP_CANCEL_US);
+            CHECK(!q.used);
+            local_contacts_expire(&q, q.last_time + KVM_TOUCH_GAP_CANCEL_US + 1);
+            CHECK(q.blocked && q.used == 1);
+            drain_gestures(&q, &gesture, &seq, NULL);
+            CHECK(!gesture.left_held && gesture.state == KVM_GEST_CANCELLED);
+            s_t += KVM_TOUCH_GAP_CANCEL_US + 1;
+            queue_sample(&q, &p);
+            CHECK(q.blocked && !q.used);
+        } else {
+            CHECK(gesture.st.scrolls > 0 && !gesture.left_held);
+        }
+        queue_sample(&q, NULL);
+        drain_gestures(&q, &gesture, &seq, NULL);
+        CHECK(!gesture.left_held && gesture.state == KVM_GEST_IDLE);
+        CHECK(!q.blocked);
+    }
+}
+
+static void test_short_reversals_during_refresh(void)
+{
+    enum { POINTER, SCROLL, CENTROID_TURN, OPPOSING, LEFT_TAP, RIGHT_TAP };
+    // The diagonal / parallel strokes travel 36 px, initially reverse by 1 px,
+    // and return to their origin before the stalled reader sees a sample.
+    const int16_t steps[]={0,6,12,18,24,30,36,35,29,22,15,8,0};
+    for (int kind=POINTER;kind<=RIGHT_TAP;kind++) for (int stalled=0;stalled<=1;stalled++) {
+        local_contacts_queue_t q={0};
+        kvm_gesture_t gesture;
+        kvm_gesture_init(&gesture,NULL);
+        uint32_t seq=0;
+        gesture_trace_t trace={0};
+        for (unsigned i=0;i<sizeof(steps)/sizeof(steps[0]);i++) {
+            int16_t d=steps[i];
+            if (kind==LEFT_TAP || kind==RIGHT_TAP) {
+                int limit=kind==LEFT_TAP ? 6 : 10;
+                d=(int16_t)(i==0 ? 0 : (i%2 ? -limit : limit)); // Jitter at the tap boundary.
+            }
+            pts_t points=kind==POINTER || kind==LEFT_TAP
+                ? one(1,(int16_t)(200+d),(int16_t)(100+d))
+                : two(1,200,(int16_t)(100+d),2,300,(int16_t)(kind==OPPOSING ? 100-d : 100+d));
+            if (kind==CENTROID_TURN) {
+                // Each finger moves in one direction only, but their center rises then falls.
+                points.p[0].y_px=(int16_t)(100+12*(i<6 ? (int)i : 6));
+                points.p[1].y_px=(int16_t)(140-12*(i>6 ? (int)i-6 : 0));
+            }
+            queue_sample(&q,&points);
+            if (!stalled) drain_gestures(&q,&gesture,&seq,&trace);
+        }
+        queue_sample(&q,NULL);
+        drain_gestures(&q,&gesture,&seq,&trace);
+        unsigned buttons=0;
+        bool outward=false, returning=false;
+        for (unsigned i=0;i<trace.n;i++) {
+            const kvm_hid_intent_t *e=&trace.events[i];
+            if (e->type==KVM_HID_MOUSE_BTN_DOWN || e->type==KVM_HID_MOUSE_BTN_UP) buttons++;
+            if (kind==POINTER && e->type==KVM_HID_MOUSE_MOVE) {
+                outward |= e->data.mouse_move.dx>0 && e->data.mouse_move.dy>0;
+                returning |= outward && e->data.mouse_move.dx<0 && e->data.mouse_move.dy<0;
+            }
+            if ((kind==SCROLL || kind==CENTROID_TURN) && e->type==KVM_HID_MOUSE_WHEEL) {
+                outward |= e->data.wheel.vertical>0;
+                returning |= outward && e->data.wheel.vertical<0;
+            }
+        }
+        if (kind==POINTER || kind==SCROLL || kind==CENTROID_TURN) {
+            CHECK(outward && returning);
+            CHECK_EQ(buttons,0);
+        } else if (kind==OPPOSING) {
+            CHECK_EQ(trace.n,0); // Fixed centroid; neither a scroll nor a stationary two-finger tap.
+        } else {
+            unsigned button=kind==LEFT_TAP ? KVM_MOUSE_BTN_LEFT : KVM_MOUSE_BTN_RIGHT;
+            CHECK_EQ(trace.n,2);
+            CHECK(trace.events[0].type==KVM_HID_MOUSE_BTN_DOWN && trace.events[0].data.mouse_button.button_id==button);
+            CHECK(trace.events[1].type==KVM_HID_MOUSE_BTN_UP && trace.events[1].data.mouse_button.button_id==button);
+        }
+        CHECK_EQ(gesture.st.cancels,0);
+        CHECK(!gesture.left_held && gesture.state==KVM_GEST_IDLE);
+    }
+}
+
+static void test_drag_threshold_after_queue_checkpoint(void)
+{
+    gesture_trace_t trace[2]={0};
+    for (int stalled=0;stalled<=1;stalled++) {
+        local_contacts_queue_t q={0};
+        kvm_gesture_t gesture;
+        kvm_gesture_init(&gesture,NULL);
+        uint32_t seq=0;
+        pts_t p=one(1,200,100);
+        queue_sample(&q,&p);
+        queue_sample(&q,NULL);
+        drain_gestures(&q,&gesture,&seq,NULL);
+        CHECK_EQ(gesture.st.taps,1);
+
+        // Second touch: 130 ms of continuous samples establish a checkpoint
+        // at +7. Only +9 crosses the armed tap-and-drag threshold (>8 px).
+        const int16_t dx[]={0,7,7,7,7,7,7,7,7,7,7,7,7,7,8,9,8,7};
+        for (unsigned i=0;i<sizeof(dx)/sizeof(dx[0]);i++) {
+            p.p[0].x_px=(int16_t)(200+dx[i]);
+            queue_sample(&q,&p);
+            if (!stalled) drain_gestures(&q,&gesture,&seq,&trace[stalled]);
+        }
+        queue_sample(&q,NULL); // 180 ms after the second touch began.
+        drain_gestures(&q,&gesture,&seq,&trace[stalled]);
+        const kvm_hid_intent_t *e=trace[stalled].events;
+        printf("    checkpoint %s: reports=%u drags=%u taps=%u\n",stalled ? "queued" : "immediate",
+               trace[stalled].n,(unsigned)gesture.st.drags,(unsigned)gesture.st.taps);
+        CHECK_EQ(gesture.st.drags,1);
+        CHECK_EQ(gesture.st.taps,1);
+        CHECK_EQ(gesture.st.cancels,0);
+        CHECK(!gesture.left_held && gesture.state==KVM_GEST_IDLE);
+        CHECK_EQ(trace[stalled].n,4);
+        CHECK(e[0].type==KVM_HID_MOUSE_BTN_DOWN && e[0].data.mouse_button.button_id==KVM_MOUSE_BTN_LEFT);
+        CHECK(e[1].type==KVM_HID_MOUSE_MOVE && e[1].data.mouse_move.dx>0 && e[1].data.mouse_move.dy==0);
+        CHECK(e[2].type==KVM_HID_MOUSE_MOVE && e[2].data.mouse_move.dx<0 && e[2].data.mouse_move.dy==0);
+        CHECK(e[3].type==KVM_HID_MOUSE_BTN_UP && e[3].data.mouse_button.button_id==KVM_MOUSE_BTN_LEFT);
+    }
+    CHECK_EQ(trace[0].events[1].data.mouse_move.dx,trace[1].events[1].data.mouse_move.dx);
+    CHECK_EQ(trace[0].events[2].data.mouse_move.dx,trace[1].events[2].data.mouse_move.dx);
+}
+
+static void test_local_pair_queue(void)
+{
+    local_contacts_queue_t q = {0};
+    pts_t pair = two(3, 400, 150, 1, 600, 150);
+    for (int i = 0; i < 24; ++i) {
+        pair.p[1].x_px++;
+        kvm_touch_sample_t s = sample(&pair);
+        local_contacts_post(&q, &s, (local_pointer_t){0});
+    }
+    CHECK_EQ(q.pending[0].points[0].x_px, 601);
+    CHECK(q.used >= 2 && q.used < 8);
+    CHECK_EQ(q.pending[q.used - 1].points[0].x_px, 624);
+    CHECK_EQ(q.pending[0].points[0].track_id, 1);
+    pair.p[0].track_id = 4;
+    kvm_touch_sample_t changed = sample(&pair);
+    local_contacts_post(&q, &changed, (local_pointer_t){0});
+    CHECK(q.blocked && q.used == 1 && q.pending[0].count == 3);
+    kvm_touch_sample_t lift = sample(NULL);
+    local_contacts_post(&q, &lift, (local_pointer_t){0});
+    CHECK(!q.blocked && q.pending[1].count == 0);
+    changed = sample(&pair);
+    local_contacts_post(&q, &changed, (local_pointer_t){0});
+    changed.timestamp_us += KVM_TOUCH_GAP_CANCEL_US + 1;
+    changed.sample_seq++;
+    local_contacts_post(&q, &changed, (local_pointer_t){0});
+    CHECK(q.blocked && q.used == 1);
+    q = (local_contacts_queue_t){0};
+    for (int i = 0; i < 9; ++i) {
+        kvm_touch_sample_t s = sample(i % 2 ? NULL : &pair);
+        local_contacts_post(&q, &s, (local_pointer_t){0});
+    }
+    CHECK(q.blocked && q.used == 1 && q.pending[0].count == 3);
+}
+
+static void test_gap_before_lift(void)
+{
+    local_contacts_queue_t q = {0};
+    pts_t p = one(1, 200, 100);
+    queue_sample(&q, &p);
+    kvm_touch_sample_t lift = sample(NULL);
+    lift.sample_seq++; // The missing sample may have moved beyond the tap target.
+    local_contacts_post(&q, &lift, (local_pointer_t){0});
+    CHECK(!q.blocked && q.used == 2);
+    CHECK(q.pending[0].count == 3 && q.pending[1].count == 0);
+}
+
 int main(void)
 {
     printf("test_touch_router\n");
     RUN(test_chrome_tap);
+    RUN(test_local_pair_queue);
+    RUN(test_gestures_during_monitor_refresh);
+    RUN(test_short_reversals_during_refresh);
+    RUN(test_drag_threshold_after_queue_checkpoint);
+    RUN(test_gap_before_lift);
     RUN(test_pad_drag_no_pointer);
     RUN(test_pad_disabled_routes_to_chrome);
     RUN(test_capture_across_edge);
@@ -399,6 +644,7 @@ int main(void)
     RUN(test_chrome_held_then_pad_blocked);
     RUN(test_second_chrome_blocked);
     RUN(test_invalid_cancels_without_click);
+    RUN(test_cancelled_ids_survive_controller_fault);
     RUN(test_cancel_blocks_until_lift);
     RUN(test_gesture_integration);
     RUN(test_random_invariants);

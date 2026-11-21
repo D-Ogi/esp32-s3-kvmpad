@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "org.kvmpad.utility.cursor-magnifier",
+  "version": "1.0.0",
+  "min_firmware": "1.3.0",
+  "title": "Cursor Magnifier",
+  "description": "Consent-based live crop of the host desktop around cursor, with 512px overview and 2x zoom.",
+  "category": "LIVE_VIEW",
+  "entry_view": "cursor_magnifier",
+  "permissions": [
+    "ui.basic",
+    "host.screen.region"
+  ],
+  "required_permissions": [
+    "host.screen.region"
+  ],
+  "usb": {
+    "mode": "static_superset",
+    "requires": []
+  },
+  "host": {
+    "requires": [
+      "capture.windows"
+    ]
+  },
+  "limits": {
+    "max_events_per_sec": 15,
+    "max_memory_kib": 512
+  }
+}

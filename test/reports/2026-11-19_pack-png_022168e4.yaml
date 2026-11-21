@@ -1,0 +1,112 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+requirements: [EXT-011, EXT-020, PACK-016]
+source: ESP32-S3-Touch-LCD-7B product, local changes on 022168e4
+evidence_root: ../evidence/build/pack-png
+tests:
+  - name: 7B package loading budget in Extension Studio and the offline SDK
+    result: PASS_SW
+    evidence: [studio-budget/comparison.json, target-budget/results.json, target-budget/differential/comparison.csv, studio-budget/unit.log, studio-budget/repair.log, studio-budget/isolated.log]
+    observed: >-
+      The Release validator matched all 177 measured decoder thresholds to the byte. QEMU ran
+      the release Xtensa decoder and pinned libpng and zlib with a bounded test allocator.
+      Each PNG decoded at its threshold and failed with one byte less. The corpus included
+      grayscale and truecolor transparency, palettes, 16-bit samples, Adam7, metadata,
+      multiple IDAT sizes and smaller deflate windows. The SDK accounted for the fixed
+      49328-byte scene and the highest individual asset cost. It accepted each measured
+      manifest minimum in KiB and rejected one KiB below it.
+    authoring: >-
+      The original 86-byte PNG at 512 by 1 consumed 14668 decoder bytes. The isolated kit
+      refused to create an archive at 49 and 62 KiB and built it at 63 KiB. The Studio
+      opened the under-budget source for repair, identified the asset, refused packaging
+      and transfer, and passed the repaired project to the paired installer.
+      All 41 SDK, editor and typed-state tests passed.
+    limits: The measurements cover package loading. Physical heap availability and view rendering costs are separate.
+  - name: Decoded RGBA pixels
+    result: PASS
+    evidence: final-native.log
+    observed: >-
+      The native build of the firmware decoder and its pinned libpng produced byte-identical RGBA8 output to
+      Pillow on 13 static images. Inputs covered grayscale, packed pixels, palette transparency, RGB, RGBA,
+      16-bit RGB, a single-frame APNG whose default image is its frame, and Adam7 on narrow and odd-sized images.
+      The harness checked that every pixel was written once. A 1024 by 568 image decoded within a 128 KiB
+      decoder allocation budget. A 64-byte budget refused the same input.
+  - name: Archive admission and publisher verification
+    result: PASS
+    evidence: final-native.log
+    observed: >-
+      Signed and unsigned nested asset paths passed the same native archive and scene loader. Reversing the ZIP
+      directory order preserved the signature. Substituting a PNG with and without recomputing integrity.json
+      failed. Archives of 64 members passed for both signature modes. The loader rejected excess entry count,
+      expanded size above 2 MiB, bad paths, case-fold collisions, malformed chunks, unknown critical chunks,
+      animation, CRC errors, invalid zlib data and trailing bytes. The caller retained its already-open read/write
+      file after pack_load_file validated it from offset five.
+  - name: ESP32-S3 product
+    result: PASS
+    evidence: [configure.log, compile.log, default.log, whole.log, whole-sign.log, verify.log]
+    image_bytes: 3543040
+    slot_bytes_free: 651264
+    image_sha256: 404b26e07b9089aa2d2c6abc9e4e51dc98e7e6490460067c222cb79270f383bf
+    observed: >-
+      The Xtensa compiler built the pack_runtime component with the new PNG reader, dynamic member signature
+      input, provisioned Ed25519 publisher and ESP-IDF's pinned espressif/libpng component. The complete
+      signed application fit in its 4 MiB slot and verified against the public boot key from the offline
+      OTA0 backup. The default empty-trust archive, loader and PNG modules also compiled for Xtensa.
+limits:
+  - ZIP admission is bounded by 256 KiB compressed, 2 MiB inflated, 64 members and 160 ASCII bytes per asset path.
+  - The validation worker inflates one ZIP member at a time. Stored members borrow the immutable archive buffer.
+  - The pinned PNG and zlib allocations, including the single RGBA row, share the declared budget with the scene and its referenced button thumbnails.
+  - Physical admission of a UI-only local package is recorded below. The provisioned publisher variant has separate hardware acceptance.
+authored_button_icons_20261120:
+  status: "Verified on the desktop, in the LVGL simulator, and on the 7B for the UI-only day-palette fixture."
+  desktop: >-
+    The SDK passed 23 tests and Studio passed 17, including PNG import, reuse, removing the reference,
+    narrow buttons, package save and reopen. The offline preview embedded one image for two buttons.
+    Its DOM harness exercised both actions. The real browser screenshot was unavailable in this session.
+    The complete offline SDK passed its isolated distribution test.
+  device_code: >-
+    Sixteen thumbnail comparisons matched the RGBA reference after BGRA packing.
+    The LVGL simulator exercised transparency, three palettes, touch, layout bounds and cleanup.
+    The normal signed ESP32-S3 application built with SHA-256 d810c17f32c1eb275b75770725719f08cbcfe57ce8a4107a175a305648f16583.
+  records:
+    - "ws:evidence/build/pack-icon-authoring/sdk.log"
+    - "ws:evidence/build/pack-icon-authoring/studio.log"
+    - "ws:evidence/build/pack-icon-authoring/offline-sdk.log"
+    - "ws:evidence/build/pack-icon-authoring/dom.log"
+    - "ws:evidence/build/pack-button-icons/device.log"
+    - "ws:evidence/build/pack-button-icons/view.log"
+    - "ws:evidence/build/pack-icon-authoring/normal-build.log"
+physical_card_staging_20261120:
+  board: >-
+    The RAM-only transfer helper mounted the exFAT volume labeled 2601 and wrote a 5591-byte
+    UI-only test package at the card root. After publishing the file it reopened it and
+    verified SHA-256 a9bf52e632b06ecad92d0d4ec5974c44913b4ef9bb937b66f1faeaacf14d5763.
+  firmware: >-
+    The earlier renderer could report successful activation after LVGL rejected the second
+    image. The corrected renderer unwinds the partial view and a subsequent open succeeds.
+    Unit 1 started the corrected signed normal release
+    1db00449cf3b8ccf041b9a9d59a8f0b5106bfebeb5ced351ce0e4cd52bc24f6e on boot 433,
+    displayed the Extensions menu and retained the saved CLIENT pairing and four HID interfaces.
+  installation: >-
+    The owner selected Install from card and Install and open, touched the image on Mark complete
+    and reported Complete. The UART snapshot of the physical scanout shows the checklist, the
+    Complete status and both landscape icons. The 1024x600 frame passed its 063FF25C checksum.
+  pixels: >-
+    Both 32x18 thumbnails in the day palette matched the original opaque PNG after thumbnail sampling
+    and RGB565 quantization: 576 of 576 pixels at (38,322) and 576 of 576 at (350,322).
+    The same package ran through the production loader and LVGL simulator. Both icons and both state
+    transitions passed in three palettes, with 6912 of 6912 reference pixels matching.
+    On boot 434 the owner selected High contrast, marked the item complete and reset it to Pending.
+    The physical 1024x600 frame passed checksum 80DCB6B6. All 35840 button pixels and 13440
+    status pixels matched the high-contrast LVGL reference. Night and translucent artwork remain
+    to be checked on the physical display.
+  records:
+    - "ws:evidence/build/pack-icon-card-7b/staged.json"
+    - "ws:evidence/build/pack-icon-card-7b/installed.json"
+    - "ws:evidence/build/pack-button-icons/failure-after.log"
+    - "ws:evidence/build/pack-icon-card-7b/published.json"
+    - "ws:evidence/build/pack-icon-card-7b/lcd-20261120-163116-1.json"
+    - "ws:evidence/build/pack-icon-card-7b/lcd-20261120-163116-1.png"
+    - "ws:evidence/build/pack-icon-card-7b/simulator/pixels.json"
+    - "ws:evidence/build/pack-control-palettes/lcd-20261120-164215-1.png"

@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kvmpad.dev/schemas/kvmpack-ui-v1.json",
+  "title": "KVMpad UI scene v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "root"
+  ],
+  "properties": {
+    "screens": {
+      "type": "array", "minItems": 2, "maxItems": 10, "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,47}$"},
+      "description": "Ordered IDs of titled top-level containers. The first is the extension start screen."
+    },
+    "orientation": {
+      "enum": ["landscape", "portrait"],
+      "default": "landscape"
+    },
+    "version": {
+      "const": 1
+    },
+    "root": {
+      "$ref": "#/$defs/node"
+    }
+  },
+  "$defs": {
+    "bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "w",
+        "h"
+      ],
+      "properties": {
+        "x": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1023
+        },
+        "y": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 991
+        },
+        "w": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 992
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_\\-]{0,47}$"
+        },
+        "type": {
+          "enum": [
+            "Column",
+            "Row",
+            "Grid",
+            "Text",
+            "Button",
+            "StatusChip",
+            "TouchArea",
+            "AxisPad",
+            "Dial",
+            "GaugeNeedle",
+            "GaugeArc",
+            "Horizon",
+            "ValueTile",
+            "StreamViewport",
+            "Slider",
+            "Spacer",
+            "TabStrip",
+            "ChartViewer",
+            "AutopilotPanel",
+            "RadioPanel",
+            "MonitorViewport",
+            "KeyboardSurface",
+            "TouchpadSurface"
+          ]
+        },
+        "bounds": {
+          "$ref": "#/$defs/bounds"
+        },
+        "props": {
+          "type": "object",
+          "properties": {
+            "charts": {
+              "type":"array", "minItems":2, "maxItems":3,
+              "items":{
+                "type":"object", "additionalProperties":false, "required":["asset","title"],
+                "properties":{
+                  "asset":{"type":"string","pattern":"^assets/.+\\.png$","maxLength":160},
+                  "title":{"type":"string","minLength":1,"maxLength":48}
+                }
+              }
+            },
+            "icon": {
+              "type": "string",
+              "pattern": "^assets/.+\\.png$",
+              "maxLength": 160,
+              "description": "Exact name of a static PNG in this package, displayed beside a Button caption."
+            }
+          },
+          "maxProperties": 20
+        },
+        "events": {
+          "type": "object",
+          "maxProperties": 8,
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,95}$"
+          }
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        }
+      },
+      "if": {
+        "required": ["props"],
+        "properties": {"props": {"required": ["icon"]}}
+      },
+      "then": {"properties": {"type": {"const": "Button"}}},
+      "allOf": [
+        {
+          "if": {"properties": {"type": {"enum": ["MonitorViewport", "KeyboardSurface", "TouchpadSurface"]}}},
+          "then": {
+            "required": ["bounds"],
+            "properties": {"props": {"maxProperties": 0}, "events": {"maxProperties": 0}, "children": {"maxItems": 0}}
+          }
+        },
+        {
+          "if": {"properties": {"type": {"const": "MonitorViewport"}}},
+          "then": {"properties": {"bounds": {"properties": {"w": {"minimum": 160}, "h": {"minimum": 120}}}}}
+        },
+        {
+          "if": {"properties": {"type": {"const": "KeyboardSurface"}}},
+          "then": {"properties": {"bounds": {"properties": {"w": {"minimum": 440}, "h": {"minimum": 176}}}}}
+        },
+        {
+          "if": {"properties": {"type": {"const": "TouchpadSurface"}}},
+          "then": {"properties": {"bounds": {"properties": {"w": {"minimum": 132}, "h": {"minimum": 88}}}}}
+        }
+      ]
+    }
+  }
+}

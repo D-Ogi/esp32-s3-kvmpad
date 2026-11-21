@@ -27,7 +27,7 @@ extern "C" {
 
 typedef struct {
     const char *label;
-    const char *icon;    // LV_SYMBOL_* or NULL
+    const void *icon;    // LV_SYMBOL_*, a control mask descriptor, or NULL
     uint16_t control_id; // 07 §3: a UI-local id, never a keycode
 } ui_segment_t;
 

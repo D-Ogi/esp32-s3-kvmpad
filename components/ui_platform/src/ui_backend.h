@@ -11,6 +11,17 @@
 #include "esp_err.h"
 #include "esp_lcd_types.h"
 #include "lvgl.h"
+#include "sdkconfig.h"
+
+// Two internal RGB bounce buffers plus one internal LVGL strip. Both profiles
+// use 32 RGB565 scanlines across those three allocations (64 KiB at 1024 px).
+#ifdef KVM_LCD_LONGER_REFILL
+#define UI_LCD_BOUNCE_LINES 12
+#define UI_LCD_DRAW_LINES 8
+#else
+#define UI_LCD_BOUNCE_LINES 10
+#define UI_LCD_DRAW_LINES CONFIG_KVM_UI_DRAW_BUF_LINES
+#endif
 
 #ifdef __cplusplus
 extern "C" {

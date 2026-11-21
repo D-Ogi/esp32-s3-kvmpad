@@ -1,0 +1,14 @@
+<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+     Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+     Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad) -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/KVMpad.Client.App/KVMpad.Client.App.csproj" />
+  </ItemGroup>
+</Project>

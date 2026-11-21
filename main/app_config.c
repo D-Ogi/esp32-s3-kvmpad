@@ -7,13 +7,19 @@
 // slider dragged for ten seconds still costs at most two NVS writes. The task runs below the HID, touch,
 // LVGL and network priorities; its stack stays in internal RAM because it writes flash.
 #include "app_config.h"
+#include "sdkconfig.h"
+#if CONFIG_TINYUSB_HID_COUNT == 4
+#include "hpe_access_config.h"
+#endif
 
 #include <inttypes.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "config_store.h"
 #include "config_store_nvs.h"
+#include "board_hal.h"
 #include "esp_attr.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -32,6 +38,8 @@ static StaticSemaphore_t s_mtx_buf;
 static SemaphoreHandle_t s_mtx;
 static TaskHandle_t s_task;
 static bool s_ready;
+static _Atomic uint8_t s_palette;
+static uint8_t s_saved_palette;
 static volatile uint32_t s_seq; // bumped under the lock by every write (app_config_seq)
 
 static void lock(void)
@@ -50,15 +58,70 @@ static void unlock_and_wake(bool wake)
     }
 }
 
+#if CONFIG_TINYUSB_HID_COUNT == 4
+static hpe_access_timing_t s_access = HPE_ACCESS_DEFAULTS;
+static bool s_access_dirty;
+
+static bool access_flush(void)
+{
+    if (s_access_dirty && config_store_nvs_access_write(hpe_access_pack(s_access)) == ESP_OK)
+        s_access_dirty = false;
+    return !s_access_dirty;
+}
+
+bool app_config_access_read(hpe_access_timing_t *out)
+{
+    if (!out || !s_ready || xSemaphoreTake(s_mtx, 0) != pdTRUE) return false;
+    *out = s_access;
+    xSemaphoreGive(s_mtx);
+    return true;
+}
+
+bool app_config_access_save(hpe_access_timing_t value)
+{
+    if (!s_ready || !s_task || !hpe_access_valid(value) || xSemaphoreTake(s_mtx, 0) != pdTRUE) return false;
+    bool changed = hpe_access_pack(value) != hpe_access_pack(s_access);
+    s_access = value;
+    s_access_dirty |= changed;
+    unlock_and_wake(changed);
+    return true;
+}
+#endif
+
+uint8_t app_config_control_palette(void)
+{
+    return atomic_load(&s_palette);
+}
+
+bool app_config_set_control_palette(uint8_t value)
+{
+    if (!s_task || value > 2) return false;
+    if (atomic_exchange(&s_palette, value) != value) xTaskNotifyGive(s_task);
+    return true;
+}
+
+static bool palette_flush(void)
+{
+    uint8_t value = atomic_load(&s_palette);
+    if (value == s_saved_palette) return true;
+    if (config_store_nvs_palette_write(value) != ESP_OK) return false;
+    s_saved_palette = value;
+    return true;
+}
+
 static void writer_task(void *arg)
 {
     (void)arg;
     for (;;) {
         lock();
         const uint64_t now = config_store_nvs_now_ms();
+        (void)palette_flush();
         if (kvm_config_store_tick(&s_store, now)) {
             ESP_LOGI(TAG, "settings written (%" PRIu32 " writes)", s_store.stats.writes);
         }
+#if CONFIG_TINYUSB_HID_COUNT == 4
+        (void)access_flush();
+#endif
         uint32_t wait_ms = kvm_config_store_ms_until_write(&s_store, config_store_nvs_now_ms());
         xSemaphoreGive(s_mtx);
         if (wait_ms > IDLE_WAKE_MS) {
@@ -78,6 +141,11 @@ esp_err_t app_config_start(void)
     if (err != ESP_OK) {
         return err;
     }
+#if CONFIG_TINYUSB_HID_COUNT == 4
+    uint64_t timing_word;
+    if (config_store_nvs_access_read(&timing_word) == ESP_OK) s_access = hpe_access_unpack(timing_word);
+#endif
+    if (config_store_nvs_palette_read(&s_saved_palette) == ESP_OK) atomic_store(&s_palette, s_saved_palette);
     s_seq = 1;
     s_ready = true;
     if (xTaskCreatePinnedToCore(writer_task, "cfg_store", TASK_STACK, NULL, TASK_PRIO, &s_task, 0) != pdPASS) {
@@ -143,7 +211,11 @@ bool app_config_flush(void)
         return true;
     }
     lock();
-    const bool ok = kvm_config_store_flush(&s_store, config_store_nvs_now_ms());
+    bool ok = kvm_config_store_flush(&s_store, config_store_nvs_now_ms());
+    ok = palette_flush() && ok;
+#if CONFIG_TINYUSB_HID_COUNT == 4
+    ok = access_flush() && ok;
+#endif
     xSemaphoreGive(s_mtx);
     return ok;
 }
@@ -331,6 +403,7 @@ bool app_config_settings(app_config_settings_t *out, uint32_t timeout_ms)
     out->pair_require_accept = c->pair_require_accept != 0;
     out->control_approval = c->control_approval;
     out->confirm_alt_f4 = c->confirm_alt_f4 != 0;
+    out->brightness = c->brightness;
     out->keepawake_enabled = c->keepawake_enabled != 0;
     out->keepawake_interval_s = c->keepawake_interval_s;
     out->unicode_mode = c->unicode_mode;
@@ -362,6 +435,13 @@ bool app_config_set_field(kvm_config_field_t field, uint32_t value)
     }
     lock();
     const bool ok = kvm_config_store_set_field(&s_store, field, value, config_store_nvs_now_ms());
+    if (ok && field == KVM_CFG_F_BRIGHTNESS) {
+        // Keep the validated setting and PWM writes in the same order for concurrent callers.
+        esp_err_t err = board_hal_backlight_level((uint8_t)value);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "backlight brightness: %s", esp_err_to_name(err));
+        }
+    }
     unlock_and_wake(ok);
     return ok;
 }
