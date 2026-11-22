@@ -1,21 +1,52 @@
 # KVMpad
 
-KVMpad turns a **Waveshare ESP32-S3-Touch-LCD-7B** into a USB keyboard and multitouch trackpad. Plug its native USB port into a computer to type, drag, scroll and use shortcuts. On Windows, the same 7-inch screen can also serve as an extended desktop. A portrait console combines that desktop, a touchpad and a keyboard on one screen.
+KVMpad lets you control a computer from a **Waveshare ESP32-S3-Touch-LCD-7B** or from another PC on the network. The board plugs into the target computer as a USB keyboard and mouse. You can type and scroll on its touchscreen or send input from the paired Windows CLIENT. Its 7-inch LCD can also show a magnified area of a Windows monitor or act as an extended desktop.
 
 ![KVMpad hybrid keyboard in the Night theme, with a touchpad above the keys and controls on the right](simulator/golden/keyboard_pad_above_night.png)
 
 *The 1024 × 600 hybrid keyboard rendered by the project's LVGL simulator.*
+
+## Control a computer remotely
+
+Connect the board's native USB port to the **target computer**. On the **operator PC**, open KVMpad CLIENT. Enable remote access on the board, tap **Pair a client**, then choose **Discover → Pair** on the PC. Enter the six-digit PIN and approve it on the LCD. In the CLIENT, choose **Connect → Host input** and request control. You can then capture keyboard and mouse input, send a shortcut, or type text on the target. [Windows CLIENT guide](clients/windows/README.md)
+
+| What you want to do | Signal path and requirements |
+| --- | --- |
+| Send keys and mouse movements | Operator PC → encrypted WebSocket (WSS) over Wi-Fi → KVMpad → USB HID → target. The target receives ordinary keyboard and mouse reports without a KVMpad application running on it. |
+| Use SSH | SSH access to a running target uses that computer's own SSH service. KVMpad firmware has no SSH login. Its development console is on USB-UART. |
+| Operate a BIOS or UEFI setup screen | The board exposes a USB Boot Keyboard and Boot Mouse. Physical UEFI input testing is still pending. The 7B also **receives video over USB**. On the tested system the Windows display driver produces those frames after the OS starts. No pre-boot sender or return stream to the operator CLIENT has been verified. Viewing POST remotely on an ordinary target requires an independent source such as HDMI capture or a management controller with remote console support. [USB HID test status](components/usb_hid_device/README.md) · [USB video transport](docs/ADR/ADR-043-usb-extended-display.md) |
+| View a running Windows desktop on the board | The Windows HOST companion sends an approved monitor region to Cursor Magnifier on the LCD. For a separate desktop, the Espressif USB display driver sends an extended Windows desktop to the board over USB. [HOST capture guide](hosts/windows/README.md) · [USB monitor guide](components/usb_monitor/README.md) |
 
 ## What works today
 
 | Use case | How it works |
 | --- | --- |
 | Keyboard and mouse | Local USB input works offline. Place the touchpad above the keyboard or beside it on either side. In the top layout you can move the controls to the left or right. Day, Night, High contrast and backlight settings are under **Settings → Appearance**. |
-| Windows remote control | The Windows CLIENT discovers the board over Wi-Fi. Enter the six-digit PIN in the CLIENT and approve on the LCD. Subsequent connections verify the saved device certificate. The HOST companion reuses that pairing for extensions that need access to the PC. [CLIENT setup](clients/windows/README.md) |
+| Windows remote control | Subsequent connections verify the saved device certificate. The HOST companion reuses the same pairing for extensions that need access to the PC. [CLIENT setup](clients/windows/README.md) |
 | USB monitor | With the USB monitor firmware profile and the signed driver distributed by Espressif, Windows can extend its desktop onto the board. Use **Extensions → USB monitor** for a standalone screen, or open **USB Monitor Console** to keep local input alongside the desktop. [Monitor setup and driver](components/usb_monitor/README.md) · [Portrait console](extensions/usb-monitor-console/) |
 | Live magnifier | Cursor Magnifier shows the area around the pointer on a Windows monitor. Choose the monitor in the Windows picker and approve it on the board. The HOST supports JPEG, Cinepak and H.264. [Capture setup and codec requirements](hosts/windows/README.md) |
 | Offline video | The media firmware plays H.264 video from microSD. The Windows CLIENT can prepare companion files for clips that exceed the board's decoder memory. Open **Extensions → Video files** on the board to select a clip. [Card preparation](clients/windows/README.md#prepare-an-h264-video-for-offline-playback) |
 | Extensions | Install a package from a FAT32 or exFAT microSD card and review its permissions on the LCD. Swipe up from the bottom of a multi-screen extension to switch screens or return Home. Pilot Panel includes an offline kneeboard with charts and checklists, plus radio, transponder and autopilot demos. [Pilot Panel](extensions/pilot-panel/) · [Extension examples](tools/kvmpack/examples/) |
+
+## Screen gallery
+
+The landscape views below come from the native LVGL simulator. Open an image to inspect its labels at full size.
+
+| System shortcuts | Japanese keyboard |
+| --- | --- |
+| [![Shortcut tiles with categories and modifier controls](simulator/golden/shortcuts.png)](simulator/golden/shortcuts.png) | [![Japanese kana keyboard and candidate strip](simulator/golden/keyboard_ja.png)](simulator/golden/keyboard_ja.png) |
+| **Flight instruments** | **Card video player** |
+| [![Airspeed, artificial horizon and altitude with sample telemetry](docs/images/flight-instruments.png)](docs/images/flight-instruments.png) | [![H.264 clip with Play and card playback mode choices](docs/images/card-video.png)](docs/images/card-video.png) |
+
+### Portrait console and Pilot Panel
+
+| USB Monitor Console | Pilot kneeboard |
+| --- | --- |
+| [<img src="docs/images/usb-console.png" width="240" alt="Color test pattern above the touchpad and keyboard">](docs/images/usb-console.png) | [<img src="docs/images/pilot-kneeboard.png" width="240" alt="Brzeziny simulator airfield chart with chart selection and zoom controls">](docs/images/pilot-kneeboard.png) |
+| LVGL simulator with a test pattern in the USB viewport. | LVGL simulator with the bundled airfield chart. |
+| **Radio and transponder** | **Autopilot** |
+| [<img src="docs/images/pilot-radio.png" width="240" alt="COM frequencies, numeric keypad and transponder in Demo mode">](docs/images/pilot-radio.png) | [<img src="docs/images/pilot-autopilot-lcd.png" width="240" alt="Autopilot heading, altitude and vertical speed on the 7B LCD in Demo mode">](docs/images/pilot-autopilot-lcd.png) |
+| LVGL simulator in the Night theme. | Captured from the physical 7B LCD framebuffer in Demo mode. |
 
 ## Hardware and development status
 
