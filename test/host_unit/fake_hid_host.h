@@ -128,12 +128,24 @@ static inline void fh_event(void *ctx, const kvm_hid_event_t *ev)
     }
 }
 
+// A fresh USB connection has no pressed inputs. Keep the observer's trace, events
+// and cumulative edge counts so a reconnect cannot erase a repeat.
+static inline void fh_reset_connection(fake_host_t *h)
+{
+    h->mods = h->buttons = 0;
+    memset(h->keys, 0, sizeof(h->keys));
+    h->consumer = 0;
+    h->no_complete = false;
+    for (int i = 0; i < KVM_HID_ITFS; i++) {
+        h->refuse[i] = false;
+        h->protocol[i] = KVM_HID_PROTOCOL_REPORT;
+    }
+}
+
 static inline void fh_init(fake_host_t *h)
 {
     memset(h, 0, sizeof(*h));
-    for (int i = 0; i < KVM_HID_ITFS; i++) {
-        h->protocol[i] = KVM_HID_PROTOCOL_REPORT;
-    }
+    fh_reset_connection(h);
 }
 
 static inline kvm_hid_port_t fh_port(fake_host_t *h)

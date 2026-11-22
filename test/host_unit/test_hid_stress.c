@@ -32,9 +32,10 @@ static uint32_t rnd_below(uint32_t n)
 }
 
 // Every report on the wire must be well-formed (AT-HID-03/04).
-static void check_wire(int from)
+static void check_and_clear_wire(void)
 {
-    for (int i = from; i < host.n; i++) {
+    CHECK_EQ(host.dropped_log, 0);
+    for (int i = 0; i < host.n; i++) {
         const fh_report_t *r = &host.log[i];
         if (r->itf == KVM_HID_ITF_KEYBOARD) {
             CHECK_EQ(r->len, 8);
@@ -44,15 +45,55 @@ static void check_wire(int from)
                 CHECK(!kvm_usage_is_modifier(r->b[k])); // modifiers only as bits
             }
         } else if (r->itf == KVM_HID_ITF_MOUSE) {
-            CHECK(r->len == 3 || r->len == 5);
+            CHECK_EQ(r->len, host.protocol[KVM_HID_ITF_MOUSE] == KVM_HID_PROTOCOL_BOOT ? 3 : 5);
             CHECK((r->b[0] & 0xF8) == 0);
         } else {
             CHECK_EQ(r->itf, KVM_HID_ITF_CONSUMER);
+            CHECK_EQ(r->len, 2);
             uint16_t u = (uint16_t)(r->b[0] | (r->b[1] << 8));
             CHECK(u == 0 || kvm_consumer_is_allowed(u));
         }
     }
     CHECK(host.max_abs_delta <= 127);
+    host.n = 0;
+}
+
+// Each trial begins neutral. Before a loss the host may see a prefix of the
+// shortcut; after loss it must receive a neutral report on every interface.
+static void check_chord_wire(const kvm_chord_t *ch, int prefix, bool delivered, bool interrupted)
+{
+    uint8_t expected[4][8] = {{0}};
+    bool keyboard = ch->kind == KVM_CHORD_KIND_KEYBOARD;
+    uint8_t itf = keyboard ? KVM_HID_ITF_KEYBOARD : KVM_HID_ITF_CONSUMER;
+    uint8_t len = keyboard ? 8 : 2;
+    int count = 2;
+    if (!keyboard) {
+        expected[0][0] = (uint8_t)ch->usage;
+        expected[0][1] = (uint8_t)(ch->usage >> 8);
+    } else if (ch->modifiers) {
+        count = 4; // modifiers, modifiers + key, modifiers, neutral (02 §7.3)
+        expected[0][0] = expected[1][0] = expected[2][0] = ch->modifiers;
+        expected[1][2] = (uint8_t)ch->usage;
+    } else {
+        expected[0][2] = (uint8_t)ch->usage;
+    }
+    CHECK(prefix <= count);
+    if (delivered || !interrupted) CHECK_EQ(prefix, count);
+    for (int i = 0; i < prefix && i < count; i++) {
+        CHECK_EQ(host.log[i].itf, itf);
+        CHECK_EQ(host.log[i].len, len);
+        CHECK(memcmp(host.log[i].b, expected[i], len) == 0);
+    }
+    if (interrupted) {
+        static const uint8_t neutral[8] = {0};
+        bool seen[KVM_HID_ITFS] = {false};
+        for (int i = prefix; i < host.n; i++) {
+            const fh_report_t *r = &host.log[i];
+            CHECK(r->len <= sizeof(neutral) && memcmp(r->b, neutral, r->len) == 0);
+            if (r->itf < KVM_HID_ITFS) seen[r->itf] = true;
+        }
+        for (unsigned i = 0; i < KVM_HID_ITFS; i++) CHECK(seen[i]);
+    }
 }
 
 static void chords_with_random_disconnects(void)
@@ -60,20 +101,13 @@ static void chords_with_random_disconnects(void)
     // AT-HID-09.
     fh_setup(&core, &host, &now);
     uint32_t usb_epoch = 1;
-    uint32_t key_press_total = 0, chords_accepted = 0;
-    int stuck = 0;
-    const uint16_t ids[] = {KVM_CHORD_CTRL_ALT_DEL, KVM_CHORD_ALT_TAB,      KVM_CHORD_TASK_MANAGER,
-                            KVM_CHORD_SHOW_DESKTOP, KVM_CHORD_CLOSE_WINDOW, KVM_CHORD_SCREENSHOT,
-                            KVM_CHORD_LAYOUT_WIN,   KVM_CHORD_LAYOUT_CTRL,  KVM_CHORD_MEDIA_MUTE};
+    const uint16_t last_id = KVM_HID_ITFS > KVM_HID_ITF_CONSUMER ? KVM_CHORD_COUNT-1 : KVM_CHORD_LAYOUT_CTRL;
+    uint32_t observed = 0, initial_reports = core.c.reports_sent;
     for (int i = 0; i < 10000; i++) {
-        uint16_t id = ids[rnd_below(sizeof(ids) / sizeof(ids[0]))];
+        uint16_t id = (uint16_t)(1 + rnd_below(last_id));
         const kvm_chord_t *ch = kvm_chord_get(id);
-        uint32_t presses_before = ch->kind == KVM_CHORD_KIND_CONSUMER ? host.consumer_presses
-                                                                       : host.key_presses[ch->usage];
         kvm_hid_intent_t c = fh_chord(id);
-        if (kvm_hid_core_local(&core, &c, now) == KVM_HID_OK) {
-            chords_accepted++;
-        }
+        CHECK_EQ(kvm_hid_core_local(&core, &c, now), KVM_HID_OK);
         // Run a random number of HOST polls, then maybe disconnect / suspend in the middle.
         int steps = (int)rnd_below(8);
         for (int s = 0; s < steps; s++) {
@@ -86,32 +120,37 @@ static void chords_with_random_disconnects(void)
             kvm_hid_core_poll(&core, now);
         }
         uint32_t r = rnd_below(10);
+        int before_loss = host.n;
         if (r == 0) {
             kvm_hid_core_set_usb(&core, KVM_HOST_USB_DETACHED, usb_epoch, now);
-            fh_init(&host); // the HOST forgets everything on unplug
+            CHECK_EQ(host.n, before_loss);
+            fh_reset_connection(&host);
             usb_epoch++;
             kvm_hid_core_set_usb(&core, KVM_HOST_USB_MOUNTED, usb_epoch, now);
         } else if (r == 1) {
             kvm_hid_core_set_usb(&core, KVM_HOST_USB_SUSPENDED, usb_epoch, now);
+            CHECK_EQ(host.n, before_loss);
             kvm_hid_core_set_usb(&core, KVM_HOST_USB_MOUNTED, usb_epoch, now);
         }
         fh_pump(&core, &host, &now);
-        uint32_t presses_after = ch->kind == KVM_CHORD_KIND_CONSUMER ? host.consumer_presses
-                                                                      : host.key_presses[ch->usage];
-        if (r != 0) {
-            CHECK(presses_after - presses_before <= 1); // 0 phantom repeats
+        int delivered = fh_count_events(&host, KVM_HID_EV_CHORD_DELIVERED);
+        CHECK_EQ(delivered + fh_count_events(&host, KVM_HID_EV_CHORD_ABORTED), 1);
+        if (r > 1) CHECK_EQ(delivered, 1);
+        for (int j = 0; j < host.nev; j++) {
+            if (host.ev[j].kind == KVM_HID_EV_CHORD_DELIVERED || host.ev[j].kind == KVM_HID_EV_CHORD_ABORTED)
+                CHECK_EQ(host.ev[j].a, id);
         }
-        key_press_total += presses_after >= presses_before ? presses_after - presses_before : 0;
-        stuck += !fh_host_neutral(&host);
+        host.nev = 0;
+        check_chord_wire(ch, r <= 1 ? before_loss : host.n, delivered != 0, r <= 1);
+        CHECK(fh_host_neutral(&host));
+        observed += (uint32_t)host.n;
+        check_and_clear_wire();
     }
-    CHECK_EQ(stuck, 0); // 0 stuck modifiers / keys / Consumer usages
-    CHECK(key_press_total <= chords_accepted);
-    // Every accepted shortcut ends with exactly one outcome event (delivered or aborted).
+    CHECK_EQ(observed, core.c.reports_sent - initial_reports);
     CHECK_EQ(kvm_hid_core_counters(&core)->chords_delivered + kvm_hid_core_counters(&core)->chords_aborted,
-             chords_accepted);
-    check_wire(0);
-    printf("    chords accepted %" PRIu32 ", delivered %" PRIu32 ", aborted %" PRIu32 ", releases %" PRIu32 "\n",
-           chords_accepted, kvm_hid_core_counters(&core)->chords_delivered,
+             10000);
+    printf("    10000 shortcuts, observed %" PRIu32 " reports, delivered %" PRIu32 ", aborted %" PRIu32 ", releases %" PRIu32 "\n",
+           observed, kvm_hid_core_counters(&core)->chords_delivered,
            kvm_hid_core_counters(&core)->chords_aborted, kvm_hid_core_counters(&core)->release_all);
 }
 
@@ -152,9 +191,9 @@ static void ten_thousand_release_all(void)
         kvm_hid_core_release_all(&core, KVM_RA_REQUEST);
         fh_pump(&core, &host, &now);
         stuck += !fh_host_neutral(&host);
+        check_and_clear_wire();
     }
     CHECK_EQ(stuck, 0);
-    check_wire(0);
 }
 
 // Random walk over every input source; after each step the core and the HOST model must agree once
@@ -203,7 +242,7 @@ static void property_random_events(void)
             kvm_hid_core_set_usb(&core, KVM_HOST_USB_DETACHED, usb_epoch, now);
         } else if (op < 72) {
             if (core.usb != KVM_HOST_USB_MOUNTED) {
-                fh_init(&host);
+                fh_reset_connection(&host);
                 usb_epoch++;
                 kvm_hid_core_set_usb(&core, KVM_HOST_USB_MOUNTED, usb_epoch, now);
             }
@@ -253,7 +292,7 @@ static void property_random_events(void)
                 host.refuse[k] = false;
             }
             if (core.usb != KVM_HOST_USB_MOUNTED) {
-                fh_init(&host);
+                fh_reset_connection(&host);
                 usb_epoch++;
                 kvm_hid_core_set_usb(&core, KVM_HOST_USB_MOUNTED, usb_epoch, now);
             }
@@ -270,11 +309,11 @@ static void property_random_events(void)
                 violations_sync++;
             }
         }
+        check_and_clear_wire();
     }
     CHECK_EQ(violations_offline, 0);
     CHECK_EQ(violations_sync, 0);
     CHECK_EQ(violations_remote, 0);
-    check_wire(0);
     const kvm_hid_counters_t *c = kvm_hid_core_counters(&core);
     printf("    100000 steps: reports %" PRIu32 ", accepted %" PRIu32 ", releases %" PRIu32 ", revokes %" PRIu32
            ", timeouts %" PRIu32 ", keepalive %" PRIu32 ", queue high water %" PRIu32 "\n",
