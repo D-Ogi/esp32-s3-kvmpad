@@ -74,6 +74,33 @@ static const char *caps_caption(const surface_t *s)
     return s->caps==CAPS_ON ? "Caps\nOn" : "Caps\nOff";
 }
 
+static unsigned legend_level(const surface_t *s)
+{
+    unsigned shift=(s->mods & 2) ? 1u : 0u;
+    bool altgr=(s->layout->flags & KBD_LAYOUT_ALTGR) && (s->mods & 64);
+    return shift+(altgr ? 2u : 0u);
+}
+
+static bool has_caps_pair(const kbd_key_t *binding,unsigned level)
+{
+    unsigned pair=(level & 2u) ? KBD_KEY_CAPS_ALTGR : KBD_KEY_CAPS_BASE;
+    return binding && (binding->flags & pair);
+}
+
+static const char *slot_legend(const kbd_key_t *binding,unsigned level,caps_state_t caps)
+{
+    // Caps reverses Shift within a letter pair, including the active AltGr pair.
+    if (caps==CAPS_ON && has_caps_pair(binding,level)) level^=1u;
+    const char *legend=kbd_layouts_legend(binding,level);
+    return *legend ? legend : kbd_layouts_legend(binding,0);
+}
+
+static void set_legend(surface_t *s,const cap_t *cap,const char *label)
+{
+    const char *legend=cap->key==CAPS ? label : *label ? ui_theme_drawable(ui_theme_font(s->font),label) : " ";
+    if (strcmp(lv_label_get_text(lv_obj_get_child(cap->button,-1)),legend)) ui_action_key_set_label(cap->button,legend);
+}
+
 static void layout_row(surface_t *s,unsigned start,unsigned end,unsigned row)
 {
     int count=(int)(end-start), units=0, used=0;
@@ -110,7 +137,7 @@ static void show_keys(surface_t *s)
         last_n=sizeof(function_bottom);
     }
     const bool altgr=(s->layout->flags & KBD_LAYOUT_ALTGR)!=0;
-    const unsigned level=((s->mods & 2) ? 1u : 0u) + (altgr && (s->mods & 64) ? 2u : 0u);
+    const unsigned level=legend_level(s);
     unsigned id=0, start=0, row=0;
     for (size_t i=0;i<n+last_n;i++) {
         uint8_t key=i<n ? slots[i] : last[i-n];
@@ -128,8 +155,7 @@ static void show_keys(surface_t *s)
             const kbd_key_t *binding=kbd_layouts_key(s->layout,(kbd_slot_t)key);
             if (!binding && (i>=n || key==KBD_SLOT_AE13 || key==KBD_SLOT_AB11 || key==KBD_SLOT_LSGT)) continue;
             usage=binding ? binding->usage : 0;
-            label=binding ? kbd_layouts_legend(binding,level) : "";
-            if (binding && !*label) label=kbd_layouts_legend(binding,0);
+            label=slot_legend(binding,level,s->caps);
             if (key>=KBD_SLOT_MUHE && key<=KBD_SLOT_HJCV) {
                 static const char *const names[]={"Muhenkan","Henkan","Kana","Han/Eng","Hanja"};
                 label=names[key-KBD_SLOT_MUHE];
@@ -154,9 +180,7 @@ static void show_keys(surface_t *s)
             lv_obj_replace_style(cap->button,function ? normal : special,function ? special : normal,LV_PART_MAIN);
             cap->desc.variant=variant;
         }
-        const char *legend=key==CAPS ? label : *label ? ui_theme_drawable(ui_theme_font(s->font),label) : " ";
-        lv_obj_t *caption=lv_obj_get_child(cap->button,-1);
-        if (strcmp(lv_label_get_text(caption),legend)) ui_action_key_set_label(cap->button,legend);
+        set_legend(s,cap,label);
         bool checked=(key==CAPS && s->caps==CAPS_ON) || (key==IME && s->ime_open) ||
                      ((modifier || key==WIN_MOD) && (s->mods & (1u<<(usage-0xe0))));
         ui_action_key_set_checked(cap->button,checked);
@@ -263,10 +287,20 @@ void ui_keyboard_surface_set_caps(lv_obj_t *surface,bool known,bool on)
     surface_t *s=lv_obj_get_user_data(surface);
     caps_state_t next=known ? (on ? CAPS_ON : CAPS_OFF) : CAPS_UNKNOWN;
     if (s->caps==next) return;
+    bool letters_change=s->caps==CAPS_ON || next==CAPS_ON;
     s->caps=next;
     lv_obj_t *key=s->keys[s->caps_id].button;
     ui_action_key_set_label(key,caps_caption(s));
     ui_action_key_set_checked(key,next==CAPS_ON);
+    if (letters_change) {
+        unsigned level=legend_level(s);
+        for (unsigned i=0;i<s->count;i++) {
+            cap_t *cap=&s->keys[i];
+            if (cap->key>=KBD_SLOT_COUNT || lv_obj_is_hidden(cap->button)) continue;
+            const kbd_key_t *binding=kbd_layouts_key(s->layout,(kbd_slot_t)cap->key);
+            if (has_caps_pair(binding,level)) set_legend(s,cap,slot_legend(binding,level,next));
+        }
+    }
 }
 
 lv_obj_t *ui_keyboard_surface_create(lv_obj_t *parent,int width,int height,const kbd_layout_t *layout,

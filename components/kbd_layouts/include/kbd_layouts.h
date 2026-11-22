@@ -49,6 +49,8 @@ typedef enum { KBD_GEOM_ANSI = 0, KBD_GEOM_ISO, KBD_GEOM_JIS, KBD_GEOM_ABNT2, KB
 #define KBD_KEY_DEAD 0x01u // at least one level is a dead key (the legend shows the accent)
 #define KBD_KEY_DEAD_LEVEL(lv) (0x10u << (lv)) // level lv (0..3) is a dead key
 #define KBD_KEY_IME 0x02u  // an IME key (Henkan, Muhenkan, Hiragana/Katakana, Zenkaku/Hankaku, Hangul, Hanja)
+#define KBD_KEY_CAPS_BASE 0x04u  // Base/Shift legends are a lower/upper letter pair
+#define KBD_KEY_CAPS_ALTGR 0x08u // AltGr/Shift+AltGr legends are a lower/upper letter pair
 
 #define KBD_LAYOUT_ALTGR 0x01u       // Right Alt is AltGr (levels 3 and 4 exist)
 #define KBD_LAYOUT_BEST_EFFORT 0x02u // a script drawn without shaping (TECH-078)

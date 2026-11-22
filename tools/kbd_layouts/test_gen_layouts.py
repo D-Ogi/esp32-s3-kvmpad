@@ -176,6 +176,17 @@ class GeneratorTests(unittest.TestCase):
         n = len(re.findall(r"\\[0-7]{3}|.", lit))
         self.assertEqual(n + 1, int(m.group(1)))
 
+    def test_caps_pairs(self):
+        def flags(legends, key_flags=0):
+            return gl.caps_pair_flags(gl.Key("AC01", 0x04, legends, key_flags))
+
+        self.assertEqual(flags(["a", "A", "ą", "Ą"]), 0x0c)
+        self.assertEqual(flags(["q", "Q", "@", "Ω"]), 0x04)
+        self.assertEqual(flags(["1", "!", "ς", "Σ"]), 0x08)
+        self.assertEqual(flags(["ß", "ẞ", "", ""]), 0x04)
+        self.assertEqual(flags(["a", "B", "é", "E"]), 0)
+        self.assertEqual(flags(["a", "A", "ą", "Ą"], gl.KEY_DEAD | 0x20 | 0x40), 0)
+
     def test_deterministic(self):
         self.assertEqual(run_fake(), self.files)
 

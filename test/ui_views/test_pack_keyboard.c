@@ -332,6 +332,43 @@ static void regional_layout(lv_obj_t *parent, const char *id, int width, int hei
     lv_obj_delete(surface_obj);
 }
 
+static void caps_altgr(lv_obj_t *parent)
+{
+    layout="de";
+    count=0;
+    lv_obj_t *surface_obj=pack_keyboard_surface_open(parent,440,176,ready);
+    assert(surface_obj);
+    uint32_t q=find_key(surface_obj,"q"), a=find_key(surface_obj,"a");
+    assert(q!=NO_CAP && a!=NO_CAP);
+    unsigned at=count;
+    tap_control(surface_obj,"AltGr");
+    assert(!strcmp(cap_text(surface_obj,q),"@") && !strcmp(cap_text(surface_obj,a),"æ"));
+    pack_keyboard_surface_set_caps(surface_obj,true,true);
+    assert(!strcmp(cap_text(surface_obj,q),"@") && !strcmp(cap_text(surface_obj,a),"Æ"));
+    tap_control(surface_obj,"Shift");
+    assert(!strcmp(cap_text(surface_obj,a),"æ"));
+    tap_id(surface_obj,a);
+    check(at,true,0xe1); check(at+1,true,0xe6); check(at+2,true,0x04);
+    check(at+3,false,0x04); check(at+4,false,0xe1); check(at+5,false,0xe6);
+    assert(count==at+6 && !strcmp(cap_text(surface_obj,a),"A"));
+    pack_keyboard_surface_set_caps(surface_obj,false,false);
+    assert(!strcmp(cap_text(surface_obj,a),"a"));
+    lv_obj_delete(surface_obj);
+
+    layout="pl";
+    surface_obj=pack_keyboard_surface_open(parent,440,176,ready);
+    assert(surface_obj);
+    a=find_key(surface_obj,"a");
+    assert(a!=NO_CAP);
+    tap_control(surface_obj,"AltGr");
+    assert(!strcmp(cap_text(surface_obj,a),"ą"));
+    pack_keyboard_surface_set_caps(surface_obj,true,true);
+    assert(!strcmp(cap_text(surface_obj,a),"Ą"));
+    tap_control(surface_obj,"Shift");
+    assert(!strcmp(cap_text(surface_obj,a),"ą"));
+    lv_obj_delete(surface_obj);
+}
+
 int main(int argc,char **argv)
 {
     lv_init(); assert(lv_test_display_create(600,1024)); lv_test_indev_create_all(); assert(ui_theme_init());
@@ -367,6 +404,7 @@ int main(int argc,char **argv)
         regional_layout(parent,layouts[i],440,176,directory);
     regional_layout(parent,"jp",458,182,NULL); // First size with 2 px gaps between targets.
     regional_layout(parent,"jp",584,288,NULL); // Installed console bounds.
+    caps_altgr(parent);
     layout="us";assert(pack_keyboard_surface_open(parent,584,288,ready));
     surface_obj=lv_obj_get_child(parent,0);assert(!strcmp(cap_text(surface_obj,0),"q"));
     count=0;
@@ -380,10 +418,14 @@ int main(int argc,char **argv)
     check(prior,true,0x14);
     pack_keyboard_surface_set_caps(surface_obj,true,true);
     assert(lv_obj_has_state(cap_at(surface_obj,find_key(surface_obj,"Caps\nOn")),LV_STATE_CHECKED));
-    assert(count==prior+1);
+    assert(count==prior+1 && !strcmp(cap_text(surface_obj,0),"Q"));
     up();check(prior+1,false,0x14);
     assert(count==prior+2);
+    type_key(surface_obj,"q",0x14,true,false);
+    assert(!strcmp(cap_text(surface_obj,0),"Q"));
     tap_control(surface_obj,"123");
+    type_key(surface_obj,"1",0x1e,false,false);
+    type_key(surface_obj,"!",0x1e,true,false);
     type_key(surface_obj,"Caps\nOn",0x39,false,false);
     tap_control(surface_obj,"ABC");
     assert(find_key(surface_obj,"Caps\nOn")!=NO_CAP);

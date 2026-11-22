@@ -59,7 +59,7 @@ PINS = {
     "KEYCODEMAPDB_COMMIT": "54788039c0b3486a8883090d6736c2500177af29",
 }
 
-GENERATOR_VERSION = 1
+GENERATOR_VERSION = 2
 RULES, MODEL = "evdev", "pc105"
 
 # symbols/* files that are not Expat / Expat-Open-Group (TECH-079): excluded until a license review.
@@ -81,6 +81,7 @@ MAX_LEGEND = 8  # bytes of UTF-8 (TECH-077)
 
 GEOMETRIES = ["ANSI", "ISO", "JIS", "ABNT2", "KR"]
 KEY_DEAD, KEY_IME = 0x01, 0x02  # kbd_key_t.flags; bit 4 + level: that level is a dead key
+KEY_CAPS_BASE, KEY_CAPS_ALTGR = 0x04, 0x08
 LAYOUT_ALTGR, LAYOUT_BEST_EFFORT = 0x01, 0x02  # kbd_layout_t.flags
 USAGE_NON_US_HASH = 0x32  # ISO: the key next to Enter (HID usage tables)
 
@@ -452,6 +453,20 @@ class Pool:
         return self.index[s]
 
 
+def caps_pair_flags(key: Key) -> int:
+    """Mark the supplied letter pairs for the Base/Shift and AltGr/Shift+AltGr legends."""
+    flags = 0
+    for base, bit in ((0, KEY_CAPS_BASE), (2, KEY_CAPS_ALTGR)):
+        lower, upper = key.legends[base:base + 2]
+        if (key.flags & (0x30 << base) or len(lower) != 1 or len(upper) != 1
+                or not lower.islower() or not upper.isupper()):
+            continue
+        # Either direction also recognizes sharp S and final sigma, whose reverse case is ambiguous.
+        if lower.upper() == upper or upper.lower() == lower:
+            flags |= bit
+    return flags
+
+
 def emit_c(layouts: list[Layout], usages: dict[str, int], provenance: list[str]) -> str:
     legends, names = Pool(), Pool()
     recs: list[tuple] = []
@@ -464,7 +479,7 @@ def emit_c(layouts: list[Layout], usages: dict[str, int], provenance: list[str])
             if k is None:
                 row.append(0xFFFF)
                 continue
-            r = (k.usage, k.flags, tuple(legends.add(t) for t in k.legends))
+            r = (k.usage, k.flags | caps_pair_flags(k), tuple(legends.add(t) for t in k.legends))
             if r not in rec_index:
                 rec_index[r] = len(recs)
                 recs.append(r)
