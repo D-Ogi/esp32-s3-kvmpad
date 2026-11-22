@@ -206,6 +206,7 @@ typedef struct {
     bool (*host_attach)(uint64_t session, const char *address, uint16_t port, const uint8_t *leaf, size_t length);
     void (*host_detach)(uint64_t session);
     bool (*display_profile)(uint64_t session, const char *serial, bool native);
+    bool (*ssh_listen)(void); // Open the device port before acknowledging the first binding.
 
     void *ctx;
 } kvm_srt_hooks_t;
@@ -230,6 +231,8 @@ typedef struct {
 
     /** FR-732 `pair.require_accept`, ON by default. */
     bool pair_require_accept;
+    /** SHA-256 of the active SSH host public key blob. All zero disables SSH binding. */
+    uint8_t ssh_host_key_sha256[KVM_PAIR_SHA256_LEN];
 
     /** FR-733 `control.approval`; KVM_CONTROL_APPROVAL_ALWAYS is the default. */
     kvm_control_approval_t control_approval;
@@ -275,6 +278,8 @@ typedef struct {
     uint8_t kind;  // kvm_srt_conn_kind_t
     bool pair_hello_seen;
     bool host_attached;
+    bool ssh_key_bound;
+    uint8_t ssh_key_sha256[KVM_PAIR_SHA256_LEN];
     uint64_t host_last_frame_us;
     char peer_ipv4[16];
     uint64_t id;
@@ -297,6 +302,12 @@ typedef struct {
     bool pair_ready;
 
     kvm_srt_conn_t conn[KVM_SRT_MAX_CONNS];
+    // The SSH channel has its own arbiter session and shares pairing with the live TLS sponsor.
+    uint64_t ssh_session;
+    uint64_t ssh_sponsor;
+    uint32_t ssh_epoch;
+    bool ssh_granted;
+    uint8_t ssh_client_key[KVM_PAIR_SHA256_LEN];
 
     bool remote_enabled;
     bool wifi_connected;
@@ -314,6 +325,23 @@ typedef struct {
     char pout[KVM_JSON_MAX_FRAME + 1]; // pairing serializer buffer
     kvm_srt_counters_t c;
 } kvm_srt_t;
+
+/** Return the live paired TLS connection sponsoring this SSH public key, or 0.
+ * Call under the transport lock. Check the same nonzero connection ID again at
+ * dispatch. This lookup does not grant a lease or authorize HID on its own. */
+uint64_t kvm_srt_ssh_sponsor(const kvm_srt_t *srt, const uint8_t fingerprint[KVM_PAIR_SHA256_LEN]);
+void kvm_srt_set_ssh_host_key(kvm_srt_t *srt, const uint8_t fingerprint[KVM_PAIR_SHA256_LEN]);
+
+typedef enum { KVM_SSH_DENIED, KVM_SSH_PENDING, KVM_SSH_GRANTED } kvm_srt_ssh_state_t;
+/** Call under the same transport lock as the WSS core. The adapter supplies a fresh connection ID
+ * after validating the SSH signature. A new connection always requests local approval. */
+bool kvm_srt_ssh_begin(kvm_srt_t *srt, uint64_t id, uint64_t sponsor,
+                       const uint8_t fingerprint[KVM_PAIR_SHA256_LEN], uint64_t now_us);
+kvm_srt_ssh_state_t kvm_srt_ssh_state(kvm_srt_t *srt, uint64_t id, uint64_t now_us);
+bool kvm_srt_ssh_input(kvm_srt_t *srt, uint64_t id, const kvm_hid_intent_t *intent, uint64_t now_us);
+/** Only call on evidence of traffic from the signed-in SSH peer. Polling never renews the lease. */
+bool kvm_srt_ssh_ping(kvm_srt_t *srt, uint64_t id, uint64_t now_us);
+void kvm_srt_ssh_end(kvm_srt_t *srt, uint64_t id, kvm_srt_loss_t loss, uint64_t now_us);
 
 // ---- lifecycle -----------------------------------------------------------------------------
 

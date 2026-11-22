@@ -87,6 +87,7 @@ typedef struct {
     lv_obj_t *bar;
     lv_obj_t *nav;
     lv_obj_t *settings_btn; // the gear in the top bar's trailing slot; submits UI_ACT_OPEN_SETTINGS
+    lv_obj_t *diagnostics; // optional, passive label on the display's top layer
     ui_router_t router;
     ui_view_mouse_t mouse;
     ui_view_keyboard_t keyboard;

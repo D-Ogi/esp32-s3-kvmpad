@@ -220,6 +220,11 @@ class FinalFrameTest(unittest.TestCase):
             self.observe("WRGB", desktop=False)
         self.assertEqual(self.phases, {})
 
+    def test_desktop_became_unavailable_during_readback(self):
+        with self.assertRaises(trial.DesktopUnavailable):
+            self.observe("KKKK", probe_exit=3)
+        self.assertIn("initial_RGBW", self.phases)
+
     def test_static_picture_can_survive_suspend(self):
         self.observe("WRGB", held_link="suspended")
         self.assertEqual(self.phases["hold_presentations"], 0)

@@ -14,20 +14,22 @@ extern "C" {
 #include <hidpi.h>
 }
 #include <cstdio>
+#include <cstring>
 #include <cstdint>
 #include <cwchar>
+#include <string>
 #include <algorithm>
 #include <array>
 #include <vector>
 #include "../../components/usb_hid_device/include/hpe_reports.h"
 #include "../../components/usb_hid_device/src/hpe_cert.h"
 
-static bool board_ancestor(DEVINST node)
+static bool board_ancestor(DEVINST node, const std::wstring &board_id)
 {
     for (unsigned depth = 0; depth < 12; ++depth) {
         wchar_t id[MAX_DEVICE_ID_LEN] = {};
         if (CM_Get_Device_IDW(node, id, MAX_DEVICE_ID_LEN, 0) != CR_SUCCESS) return false;
-        if (_wcsicmp(id, L"USB\\VID_303A&PID_400C\\441BF6C9229C") == 0) return true;
+        if (_wcsicmp(id, board_id.c_str()) == 0) return true;
         DEVINST parent;
         if (CM_Get_Parent(&parent, node, 0) != CR_SUCCESS) break;
         node = parent;
@@ -340,11 +342,10 @@ static bool get(HANDLE dev, unsigned id, unsigned max_size)
 
 // Resolve the board's current physical parent and port before opening the hub.
 // GET_DESCRIPTOR reads configuration zero; the class filter does not enumerate other ports.
-static bool configuration(unsigned revision)
+static bool configuration(unsigned revision, std::wstring &board_id)
 {
-    wchar_t name[] = L"USB\\VID_303A&PID_400C\\441BF6C9229C";
     ULONG port = 0;
-    HANDLE h = open_board_hub(name, port);
+    HANDLE h = open_board_hub(board_id.data(), port);
     if (h == INVALID_HANDLE_VALUE) return false;
     USB_NODE_CONNECTION_INFORMATION_EX connection = {};
     connection.ConnectionIndex = port;
@@ -426,10 +427,16 @@ static bool configuration(unsigned revision)
 
 int main(int argc, char **argv)
 {
-    const bool inspect = argc == 2 && !strcmp(argv[1], "--inspect");
-    if (argc != 1 && !inspect) return 2;
+    const bool inspect = argc == 3 && !strcmp(argv[2], "--inspect");
+    if ((argc != 2 && !inspect) || strlen(argv[1]) != 12 ||
+        strspn(argv[1], "0123456789ABCDEFabcdef") != 12) {
+        fputs("Usage: hpe-get-windows BOARD_USB_SERIAL [--inspect]\n", stderr);
+        return 2;
+    }
+    std::wstring board_id = L"USB\\VID_303A&PID_400C\\";
+    board_id.append(argv[1], argv[1] + 12);
     setvbuf(stdout, nullptr, _IONBF, 0);
-    printf("Read-only probe 303a:400c serial=441BF6C9229C mode=%s\n", inspect ? "inspect" : "hpe-feature");
+    printf("Read-only probe 303a:400c mode=%s\n", inspect ? "inspect" : "hpe-feature");
     GUID guid;
     HidD_GetHidGuid(&guid);
     HDEVINFO set = SetupDiGetClassDevsW(&guid, nullptr, nullptr, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
@@ -448,7 +455,7 @@ int main(int argc, char **argv)
         SP_DEVINFO_DATA info = {};
         info.cbSize = sizeof(info);
         if (!SetupDiGetDeviceInterfaceDetailW(set, &iface, detail, len, nullptr, &info) ||
-            !board_ancestor(info.DevInst))
+            !board_ancestor(info.DevInst, board_id))
             continue;
         wchar_t id[MAX_DEVICE_ID_LEN] = {};
         CM_Get_Device_IDW(info.DevInst, id, MAX_DEVICE_ID_LEN, 0);
@@ -523,7 +530,7 @@ int main(int argc, char **argv)
     }
     SetupDiDestroyDeviceInfoList(set);
     if (inspect) {
-        bool config_ok = revision && configuration(revision);
+        bool config_ok = revision && configuration(revision, board_id);
         unsigned expected = revision == 0x101 ? 8 : 3;
         if (!config_ok || mask != (1u << expected) - 1 || found != expected) ++failed;
         printf("INSPECT revision=%04x configuration=%s TLCs=%u HPE=%s errors=%u\n", revision,

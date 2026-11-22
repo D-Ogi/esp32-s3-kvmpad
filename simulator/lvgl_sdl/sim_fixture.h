@@ -54,6 +54,11 @@
 //   altf4    0 | 1                              shortcuts.confirm_alt_f4 (FR-734)
 //   awake    0 | 1                              keepawake.enabled (FR-711)
 //   awake_s  <10..300>                          keepawake.interval_s (ADR-020)
+//   two_finger_scroll 0|1                       mouse.two_finger_scroll (FR-504)
+//   mouse_sensitivity 0|1|2                     slow, normal, fast (FR-501)
+//   longpress_right_click 0|1                   hold to right-click (FR-503)
+//   natural_scroll 0|1                          mouse.natural_scroll (FR-502)
+//   diag_overlay 0|1                            show the diagnostic status on the display (FR-509)
 //   layout_id <id>                              host_layout, e.g. us or de(neo) (FR-741)
 //   layout_db 0 | 1                             whether the domain reports a layout database; 1 by default,
 //                                               and 0 keeps the Host layout row read-only (FR-741)

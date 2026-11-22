@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "sources": [],
+  "state": [
+    {
+      "id": "altitude",
+      "type": "int",
+      "initial": 1000,
+      "min": 0,
+      "max": 20000
+    }
+  ],
+  "connections": [
+    {
+      "from": "altitude",
+      "to": "altitude_value.text",
+      "transform": "format_number",
+      "params": {
+        "digits": 0
+      }
+    }
+  ],
+  "actions": [
+    {
+      "id": "increase",
+      "trigger": "wheel.step_up",
+      "type": "state.adjust",
+      "capability": "ui.basic",
+      "args": {
+        "name": "altitude",
+        "delta": 100
+      }
+    },
+    {
+      "id": "decrease",
+      "trigger": "wheel.step_down",
+      "type": "state.adjust",
+      "capability": "ui.basic",
+      "args": {
+        "name": "altitude",
+        "delta": -100
+      }
+    }
+  ]
+}

@@ -4,10 +4,43 @@
 config KVM_USB_MONITOR_EVAL
     bool "USB extended monitor evaluation profile"
     depends on KVM_UI_PLATFORM
-    depends on TINYUSB_HID_COUNT = 4
+    depends on TINYUSB_HID_COUNT = 2 || TINYUSB_HID_COUNT = 4
     default n
     help
-        Offer the Espressif USB extended monitor in Extensions. Opening the
-        monitor switches the USB port from HID to the display-only device.
-        Home closes the monitor and restores the normal HID configuration.
+        Start in the normal HID configuration for the selected build. The
+        local USB monitor view can switch to a display-only device, and the
+        USB Monitor Console can switch to a display with keyboard and mouse.
+        Leaving the monitor session restores the normal HID configuration.
         Use sdkconfig.usb-monitor-eval to configure the vendor endpoints and HID control-transfer handling together.
+
+config KVM_USB_SCREENSHOT
+    bool "Enable explicit firmware screenshot storage sessions"
+    depends on KVM_USB_MONITOR_EVAL
+    select TINYUSB_MSC_ENABLED
+    select TINYUSB_MSC_ASYNC_IO
+    default n
+    help
+        Offers a private 32 MiB image alongside boot keyboard and mouse
+        while the local screenshot session is open.
+
+config KVM_USB_GUD
+    bool "Enable explicit Linux GUD display sessions"
+    depends on KVM_USB_MONITOR_EVAL
+    default y
+    help
+        Exposes the Linux GUD display together with a boot keyboard and mouse
+        on the native USB port for locally selected sessions.
+        The shared test identity 1209:0001 is for private in-house use only.
+        Set an allocated VID/PID for distribution. Startup uses normal HID.
+
+if KVM_USB_GUD
+config KVM_USB_GUD_VID
+    hex "Authorized GUD vendor ID"
+    default 0x1209
+    range 0x0000 0xffff
+
+config KVM_USB_GUD_PID
+    hex "Authorized GUD product ID"
+    default 0x0001
+    range 0x0000 0xffff
+endif

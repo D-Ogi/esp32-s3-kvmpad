@@ -217,6 +217,21 @@ static void settings_apply(uint8_t id, int32_t value, uint8_t index)
     case UI_SETTING_BRIGHTNESS:
         ok = app_config_set_field(KVM_CFG_F_BRIGHTNESS, v);
         break;
+    case UI_SETTING_NATURAL_SCROLL:
+        ok = app_config_set_field(KVM_CFG_F_NATURAL_SCROLL, v);
+        break;
+    case UI_SETTING_DIAG_OVERLAY:
+        ok = app_config_set_field(KVM_CFG_F_DIAG_OVERLAY, v);
+        break;
+    case UI_SETTING_MOUSE_SENSITIVITY:
+        ok = app_config_set_field(KVM_CFG_F_MOUSE_SENSITIVITY, v);
+        break;
+    case UI_SETTING_LONGPRESS_RIGHT_CLICK:
+        ok = app_config_set_field(KVM_CFG_F_LONGPRESS_RIGHT_CLICK, v);
+        break;
+    case UI_SETTING_TWO_FINGER_SCROLL:
+        ok = app_config_set_field(KVM_CFG_F_TWO_FINGER_SCROLL, v);
+        break;
     case UI_SETTING_KEEPAWAKE_ENABLED:
         ok = app_config_set_field(KVM_CFG_F_KEEPAWAKE_ENABLED, v != 0 ? 1u : 0u);
         if (ok) {
@@ -296,6 +311,11 @@ static void settings_project(void)
     v->keepawake_enabled = s_cfg_copy.keepawake_enabled;
     v->keepawake_interval_s = s_cfg_copy.keepawake_interval_s;
     v->brightness = s_cfg_copy.brightness;
+    v->natural_scroll = s_cfg_copy.natural_scroll;
+    v->diag_overlay = s_cfg_copy.diag_overlay;
+    v->two_finger_scroll = s_cfg_copy.two_finger_scroll;
+    v->mouse_sensitivity = s_cfg_copy.mouse_sensitivity;
+    v->longpress_right_click = s_cfg_copy.longpress_right_click;
     v->palette = palette;
     v->unicode_mode = s_cfg_copy.unicode_mode;
     text_glue_set_mode(s_cfg_copy.unicode_mode); // FR-747: the delivery mode follows the saved record
@@ -699,6 +719,8 @@ static void open_device_tools(void)
     tools_button("HOST Bridge", &kvm_icon_host, TOOLS_HOST, 100);
 #if KVM_HID_HAS_HPE
     tools_button("HID profiles", &kvm_icon_keyboard, TOOLS_PROFILES, 184);
+#else
+    tools_button("Accessibility", &kvm_icon_keyboard, TOOLS_PROFILES, 184);
 #endif
     lv_screen_load(s_tools_screen);
 }

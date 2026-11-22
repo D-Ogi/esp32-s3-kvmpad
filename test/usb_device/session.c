@@ -17,8 +17,12 @@ static transfer_t endpoint[256];
 static tinyusb_config_t config;
 static unsigned keyboard_presses, keyboard_neutrals;
 static bool expect_stall;
+static bool sof_enabled;
 static unsigned stalls;
 static uint64_t now = 1000000;
+#if CONFIG_KVM_USB_SCREENSHOT
+static bool testing_storage;
+#endif
 static void service(void) { while (tud_task_event_ready()) tud_task_ext(0, false); }
 uint32_t tusb_time_millis_api(void) { return (uint32_t)(now / 1000); }
 int64_t esp_timer_get_time(void) { return (int64_t)now; }
@@ -59,7 +63,7 @@ void dcd_int_handler(uint8_t port) { (void)port; assert(false); }
 void dcd_int_enable(uint8_t port) { assert(!port); }
 void dcd_int_disable(uint8_t port) { assert(!port); }
 void dcd_remote_wakeup(uint8_t port) { (void)port; assert(false); }
-void dcd_sof_enable(uint8_t port, bool enable) { assert(!port && !enable); }
+void dcd_sof_enable(uint8_t port, bool enable) { assert(!port); sof_enabled = enable; }
 void dcd_set_address(uint8_t port, uint8_t addr) { assert(!port && addr < 128); }
 bool dcd_edpt_open(uint8_t port, const tusb_desc_endpoint_t *desc) { return !port && desc->wMaxPacketSize <= 64; }
 bool dcd_edpt_iso_alloc(uint8_t port, uint8_t ep, uint16_t size) { (void)port; (void)ep; (void)size; return false; }
@@ -73,9 +77,13 @@ void dcd_edpt_stall(uint8_t port, uint8_t ep)
 void dcd_edpt_clear_stall(uint8_t port, uint8_t ep) { assert(!port && !endpoint[ep].pending); }
 bool dcd_edpt_xfer(uint8_t port, uint8_t ep, uint8_t *data, uint16_t len, bool isr)
 {
-    assert(!port && !isr && len <= 64 && !endpoint[ep].pending);
+    bool bulk_storage = false;
+#if CONFIG_KVM_USB_SCREENSHOT
+    bulk_storage = testing_storage && (ep == 1 || ep == 0x81);
+#endif
+    assert(!port && !isr && len <= (bulk_storage ? 512 : 64) && !endpoint[ep].pending);
     endpoint[ep] = (transfer_t){data, len, true};
-    if (ep == 0x81) {
+    if (ep == 0x81 && !bulk_storage) {
         static const uint8_t neutral[8];
         assert(len == sizeof(neutral));
         if (memcmp(data, neutral, len)) ++keyboard_presses;
@@ -118,6 +126,89 @@ static void configure(uint8_t n)
 {
     setup(0, TUSB_REQ_SET_CONFIGURATION, n, 0, 0);
     status_stage(0x80);
+}
+static void check_input_report(uint8_t interface, uint16_t requested, const uint8_t *expected, uint16_t length)
+{
+    setup(0xa1, HID_REQ_CONTROL_GET_REPORT, HID_REPORT_TYPE_INPUT << 8, interface, requested);
+    assert(endpoint[0x80].pending && endpoint[0x80].len == length);
+    assert(memcmp(endpoint[0x80].data, expected, length) == 0);
+    complete(0x80);
+    status_stage(0);
+}
+
+static void set_keyboard_idle(uint8_t keyboard, uint8_t rate)
+{
+    setup(0x21, HID_REQ_CONTROL_SET_IDLE, (uint16_t)rate << 8, keyboard, 0);
+    status_stage(0x80);
+    setup(0xa1, HID_REQ_CONTROL_GET_IDLE, 0, keyboard, 1);
+    assert(endpoint[0x80].pending && endpoint[0x80].len == 1 && endpoint[0x80].data[0] == rate);
+    complete(0x80);
+    status_stage(0);
+}
+
+static void frames(unsigned ms)
+{
+    for (unsigned i = 0; i < ms; ++i) {
+        now += 1000;
+        if (sof_enabled) dcd_event_sof(0, (uint32_t)(now / 1000), false);
+        service();
+    }
+}
+
+static void check_keyboard_idle(uint8_t keyboard, uint8_t ep)
+{
+    drain();
+    kvm_hid_intent_t key = {.type=KVM_HID_KEY_DOWN, .data.key.usage_id=4};
+    assert(hid_dispatch_local(&key) == ESP_OK);
+    drain();
+    assert(!sof_enabled);
+    set_keyboard_idle(keyboard, 2);
+    frames(7);
+    assert(sof_enabled && !endpoint[ep].pending);
+    frames(1);
+    assert(endpoint[ep].pending && endpoint[ep].len == 8 && endpoint[ep].data[2] == 4);
+    frames(4); // A busy endpoint keeps a single copy in flight.
+    complete(ep);
+    frames(5);
+    set_keyboard_idle(keyboard, 1); // Fewer than 4 ms left: finish the old period.
+    frames(2);
+    assert(!endpoint[ep].pending);
+    frames(1);
+    assert(endpoint[ep].pending && endpoint[ep].data[2] == 4);
+    complete(ep);
+    frames(2);
+    key.type = KVM_HID_KEY_UP;
+    assert(hid_dispatch_local(&key) == ESP_OK);
+    service();
+    const uint8_t released[8] = {0};
+    assert(endpoint[ep].pending && !memcmp(endpoint[ep].data, released, 8));
+    complete(ep);
+    frames(3);
+    assert(!endpoint[ep].pending);
+    frames(1);
+    assert(endpoint[ep].pending && !memcmp(endpoint[ep].data, released, 8));
+    complete(ep);
+    set_keyboard_idle(keyboard, 0);
+    frames(20);
+    assert(!sof_enabled && !endpoint[ep].pending);
+    set_keyboard_idle(keyboard, 255);
+    frames(999);
+    assert(!endpoint[ep].pending);
+    frames(1);
+    assert(endpoint[ep].pending); // 20 + 1000 ms since the last transfer.
+    complete(ep);
+    frames(12);
+    set_keyboard_idle(keyboard, 2); // The new interval has already elapsed.
+    frames(1);
+    assert(endpoint[ep].pending);
+    complete(ep);
+    frames(6);
+    set_keyboard_idle(keyboard, 0); // The final 2 ms belong to the previous interval.
+    frames(2);
+    assert(endpoint[ep].pending);
+    complete(ep);
+    assert(!sof_enabled);
+    puts("PASS keyboard SET_IDLE: 4/8/1020 ms, duration changes, held and released state, zero rate.");
 }
 static void reset_bus(void)
 {
@@ -329,8 +420,12 @@ static void check_monitor_suspend(void)
 static void composite_session(const uint8_t *hid_device, const uint8_t *serial, unsigned serial_len)
 {
     uint8_t bytes[255];
-    for (unsigned native = 0; native <= 1; ++native) {
-        assert(usb_hid_device_set_monitor_controls(true, native) == ESP_OK);
+    const char *const sizes[] = {"esp32s3udisp0_R640x480_Ejpg4_Fps10_Bl96",
+                                 "esp32s3udisp0_R1024x600_Ejpg4_Fps10_Bl96",
+                                 "esp32s3udisp0_Ejpg4_Fps10_Bl96"};
+    for (unsigned mode = 0; mode < 3; ++mode) {
+        if (mode == 2) assert(usb_hid_device_set_monitor_windows(true) == ESP_OK);
+        else assert(usb_hid_device_set_monitor_controls(true, mode == 1) == ESP_OK);
         service();
         assert(usb_hid_device_interface_count() == 0 && usb().state == KVM_USB_DETACHED);
         wait_for_reconnect();
@@ -356,9 +451,7 @@ static void composite_session(const uint8_t *hid_device, const uint8_t *serial, 
             assert(itf[19] == TUSB_DESC_ENDPOINT && itf[20] == 0x82+hid && itf[21] == 3 &&
                    itf[22] == 8 && itf[23] == 0 && itf[24] == 1);
         }
-        const char *names[] = {native ? "esp32s3udisp0_R1024x600_Ejpg4_Fps10_Bl96" :
-                                       "esp32s3udisp0_R640x480_Ejpg4_Fps10_Bl96",
-                               "KVMpad Keyboard", "KVMpad Mouse"};
+        const char *names[] = {sizes[mode], "KVMpad Keyboard", "KVMpad Mouse"};
         for (unsigned string = 0; string < 3; ++string) {
             assert(descriptor(TUSB_DESC_STRING, 4+string, bytes) == 2+2*strlen(names[string]));
             for (unsigned j = 0; names[string][j]; ++j)
@@ -386,6 +479,7 @@ static void composite_session(const uint8_t *hid_device, const uint8_t *serial, 
         assert(stalls == before_stall+2);
         const uint8_t led = 2;
         check_first_led(1, true);
+        check_keyboard_idle(1, 0x82);
         uint32_t led_reports = usb().led_reports;
         setup(0x21,HID_REQ_CONTROL_SET_PROTOCOL,HID_PROTOCOL_BOOT,2,0);
         status_stage(0x80);
@@ -396,6 +490,7 @@ static void composite_session(const uint8_t *hid_device, const uint8_t *serial, 
         assert(endpoint[0x82].pending && endpoint[0x82].len == 8 && endpoint[0x82].data[2] == 4);
         assert(!endpoint[0x81].pending && !endpoint[0x84].pending);
         complete(0x82);
+        check_input_report(1, 8, (const uint8_t[]){0, 0, 4, 0, 0, 0, 0, 0}, 8);
         kvm_hid_intent_t move = {.type=KVM_HID_MOUSE_MOVE,.data.mouse_move={.dx=5,.dy=-3}};
         assert(hid_dispatch_local(&move) == ESP_OK);
         service();
@@ -437,12 +532,13 @@ static void composite_session(const uint8_t *hid_device, const uint8_t *serial, 
     wait_for_reconnect();
     reset_bus();
     assert(descriptor(TUSB_DESC_DEVICE,0,bytes) == 18 && !memcmp(bytes,hid_device,18));
-    assert(descriptor(TUSB_DESC_CONFIGURATION,0,bytes) > 82 && bytes[4] == 4);
+    assert(descriptor(TUSB_DESC_CONFIGURATION,0,bytes) == config.descriptor.full_speed_config[2]);
+    assert(bytes[4] == KVM_HID_ITF_COUNT && !memcmp(bytes, config.descriptor.full_speed_config, bytes[2]));
     configure(1);
     drain();
-    assert(usb_hid_device_interface_count() == 4 && !snapshot().neutralizing && snapshot().ledger_empty);
-    puts("PASS composite 303A:2986 MI_00 VGA/native, real HID report descriptors, local keyboard/mouse and bulk OUT, "
-         "neutral barriers, loss/resume/reset and return to four HID interfaces");
+    assert(usb_hid_device_interface_count() == KVM_HID_ITF_COUNT && !snapshot().neutralizing && snapshot().ledger_empty);
+    printf("PASS composite 303A:2986 MI_00 VGA/native/Windows, real HID report descriptors, local keyboard/mouse and bulk OUT, "
+           "neutral barriers, loss/resume/reset and return to %u HID interfaces\n", KVM_HID_ITF_COUNT);
     puts("PASS MI_01 LED On survives suspend/resume; interrupted SET_REPORT is discarded on reset; "
          "remount is Unknown until a complete one-byte output confirms Off.");
 }
@@ -461,7 +557,11 @@ static void monitor_session(void)
     assert(!usb_hid_device_monitor_mounted() && usb().state == KVM_USB_DETACHED && snapshot().ledger_empty);
     unsigned before_stall = stalls;
     expect_stall = true;
+#if KVM_HPE_FOUR
     setup(0xa1, HID_REQ_CONTROL_GET_REPORT, (HID_REPORT_TYPE_FEATURE << 8) | HPE_CAPS, KVM_HID_ITF_PTP, 2);
+#else
+    setup(0xa1, HID_REQ_CONTROL_GET_PROTOCOL, 0, 0, 1);
+#endif
     expect_stall = false;
     assert(stalls == before_stall+2);
     assert(usb_hid_device_set_monitor(false) == ESP_OK);
@@ -568,6 +668,12 @@ static void monitor_session(void)
          "detached after unplug while suspended, stale OUT and canceled switch.");
 }
 #endif
+#if CONFIG_KVM_USB_GUD
+#include "gud_session.inc"
+#endif
+#if CONFIG_KVM_USB_SCREENSHOT
+#include "screenshot_session.inc"
+#endif
 #if KVM_HPE_FOUR
 static void check_feature(uint8_t id, uint8_t value)
 {
@@ -632,7 +738,7 @@ static void check_service_window(void)
     puts("PASS: idle TinyUSB service window, first request to callback, ready endpoints, pending tail and expiry.");
 }
 #endif
-int main(void)
+int main(int argc, char **argv)
 {
     assert(hid_dispatch_start() == ESP_OK && usb_hid_device_start() == ESP_OK);
     reset_bus();
@@ -648,6 +754,40 @@ int main(void)
     setup(0x21, HID_REQ_CONTROL_SET_PROTOCOL, HID_PROTOCOL_BOOT, 1, 0);
     status_stage(0x80);
     assert(usb().led_state == led && usb().protocol[1] == HID_PROTOCOL_BOOT);
+#if CONFIG_TINYUSB_HID_COUNT == 2
+    assert(usb_hid_device_interface_count() == 2 && snapshot().ledger_empty);
+    kvm_hid_intent_t media = {.type=KVM_HID_CONSUMER_DOWN};
+    assert(hid_dispatch_local(&media) == ESP_ERR_NOT_SUPPORTED);
+#elif KVM_HID_ITF_COUNT == 3
+    kvm_hid_intent_t media = {.type=KVM_HID_CONSUMER_DOWN, .data.consumer.usage=KVM_CONSUMER_MUTE};
+    assert(hid_dispatch_local(&media) == ESP_OK);
+    drain();
+    check_input_report(2, 2, (const uint8_t[]){KVM_CONSUMER_MUTE, 0}, 2);
+    media.type = KVM_HID_CONSUMER_UP;
+    assert(hid_dispatch_local(&media) == ESP_OK);
+    drain();
+    check_input_report(2, 2, (const uint8_t[2]){0}, 2);
+#endif
+    kvm_hid_intent_t button = {.type=KVM_HID_MOUSE_BTN_DOWN, .data.mouse_button.button_id=KVM_MOUSE_BTN_RIGHT};
+    assert(hid_dispatch_local(&button) == ESP_OK);
+    drain();
+    const uint8_t boot_move[] = {2, 5, (uint8_t)-3};
+    kvm_hid_intent_t move = {.type=KVM_HID_MOUSE_MOVE, .data.mouse_move={.dx=5, .dy=-3}};
+    assert(hid_dispatch_local(&move) == ESP_OK);
+    service();
+    assert(endpoint[0x82].pending && endpoint[0x82].len == sizeof(boot_move));
+    assert(!memcmp(endpoint[0x82].data, boot_move, sizeof(boot_move)));
+    check_input_report(1, 8, (const uint8_t[]){2, 0, 0}, 3);
+    complete(0x82);
+    setup(0x21, HID_REQ_CONTROL_SET_PROTOCOL, HID_PROTOCOL_REPORT, 1, 0);
+    status_stage(0x80);
+    check_input_report(1, 8, (const uint8_t[]){2, 0, 0, 0, 0}, 5);
+    button.type = KVM_HID_MOUSE_BTN_UP;
+    assert(hid_dispatch_local(&button) == ESP_OK);
+    drain();
+    check_input_report(1, 5, (const uint8_t[5]){0}, 5);
+    setup(0x21, HID_REQ_CONTROL_SET_PROTOCOL, HID_PROTOCOL_BOOT, 1, 0);
+    status_stage(0x80);
 #if KVM_HPE_FOUR
     const uint16_t lengths[] = {1, 64, 65, 256, 257, 258};
     for (unsigned i = 0; i < sizeof(lengths) / sizeof(lengths[0]); ++i) certification(lengths[i]);
@@ -694,6 +834,7 @@ int main(void)
     assert(hid_dispatch_remote(42, epoch, &down) == ESP_OK);
     service(); // withhold the interrupt completion to queue another key behind it
     assert(keyboard_presses == 1 && snapshot().keys_down == 1);
+    check_input_report(0, 3, (const uint8_t[]){0, 0, 4}, 3);
 #ifdef KVM_MEDIA_SYNTHETIC_DIAG
     usb_hid_service_window_t blocked;
     assert(usb_hid_service_begin(100));
@@ -723,6 +864,9 @@ int main(void)
     configure(1);
     drain();
     assert(usb().usb_epoch == 2 && keyboard_neutrals == before + 1 && keyboard_presses == 1);
+    check_input_report(0, 8, (const uint8_t[8]){0}, 8);
+    puts("PASS GET_REPORT(Input): held key, short read, neutral after remount; "
+         "held/released mouse button without repeated motion in boot and report protocols.");
     check_first_led(0, false);
     assert(hid_dispatch_remote(42, epoch, &down) == ESP_OK);
     drain();
@@ -747,8 +891,24 @@ int main(void)
     drain();
     check_first_led(0, false);
     memset(endpoint, 0, sizeof(endpoint));
+    check_keyboard_idle(0, 0x81);
+    set_keyboard_idle(0, 2);
+    dcd_event_bus_signal(0, DCD_EVENT_SUSPEND, false);
+    service();
+    frames(40);
+    assert(!sof_enabled && !endpoint[0x81].pending);
+    dcd_event_bus_signal(0, DCD_EVENT_RESUME, false);
+    service();
+    drain();
+    frames(7);
+    assert(sof_enabled && !endpoint[0x81].pending);
+    frames(1);
+    assert(endpoint[0x81].pending && !memcmp(endpoint[0x81].data, (const uint8_t[8]){0}, 8));
+    complete(0x81);
+    set_keyboard_idle(0, 255);
     dcd_event_bus_signal(0, DCD_EVENT_UNPLUGGED, false);
     service();
+    assert(!sof_enabled);
     assert(usb().state == KVM_USB_DETACHED && usb().umounts == 2 && !tud_mounted());
     check_led(false, 0, led_reports+1);
     puts("PASS HID LED On -> suspend/resume On -> detach/remount Unknown -> acknowledged zero Off; "
@@ -758,6 +918,13 @@ int main(void)
            KVM_HID_ITF_COUNT);
 #if CONFIG_KVM_USB_MONITOR_EVAL
     monitor_session();
+#endif
+#if CONFIG_KVM_USB_GUD
+    gud_session();
+#endif
+#if CONFIG_KVM_USB_SCREENSHOT
+    assert(argc == 2);
+    screenshot_session(argv[1]);
 #endif
     return 0;
 }

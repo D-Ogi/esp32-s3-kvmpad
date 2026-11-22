@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+dependencies:
+  david-cermak/libssh:
+    version: "==0.12.2"
+    matches:
+      - if: "$CONFIG{KVM_SSH_BOARD} == True"

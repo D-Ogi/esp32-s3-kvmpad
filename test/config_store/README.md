@@ -18,7 +18,7 @@ The build directory is outside the repository. Flags: `-Wall -Wextra -Werror -Ws
 Expected result:
 
 ```text
-Test project O:/Praca/KVMpad/build-host-config
+Test project ../build-host-config
     Start 1: test_config_record
 1/2 Test #1: test_config_record ...............   Passed    0.10 sec
     Start 2: test_config_store

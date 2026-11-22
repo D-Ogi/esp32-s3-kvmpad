@@ -19,7 +19,7 @@ The build directory is outside the repository. Flags: `-Wall -Wextra -Werror -Ws
 Expected result:
 
 ```text
-Test project O:/Praca/KVMpad/build-host-ota
+Test project ../build-host-ota
     Start 1: test_update_image
 1/3 Test #1: test_update_image ................   Passed    0.14 sec
     Start 2: test_update_health

@@ -4,6 +4,8 @@
 #include "sdkconfig.h"
 #if CONFIG_KVM_USB_MONITOR_EVAL
 #include "pack_desktop_view.h"
+#include "pack_view.h"
+#include "app_config.h"
 #include "pack_keyboard_surface.h"
 #include "pack_touchpad_drawer.h"
 #include "monitor_viewport.h"
@@ -259,7 +261,7 @@ bool pack_desktop_viewport(lv_obj_t *parent,int width,lv_obj_t **image)
     lv_obj_center(label);
     lv_obj_align(button,LV_ALIGN_CENTER,0,26);
     static const ui_segment_t modes[]={{.label="640×480"},{.label="1024×600"}};
-    static const ui_segmented_desc_t desc={.segments=modes,.count=2,.height=44};
+    static const ui_segmented_desc_t desc={.segments=modes,.count=2,.height=44,.control_palette=true};
     static ui_segmented_sink_t sink={.fn=choose_resolution};
     lv_obj_t *resolution=ui_segmented_create(parent,&desc,&sink);
     if (!resolution) return false;
@@ -361,6 +363,21 @@ static bool hits_pad(lv_point_t point)
            lv_indev_search_obj(lv_display_get_screen_active(d),&point)==current_pad;
 }
 
+static void set_gesture_bounds(void)
+{
+    lv_area_t bounds;
+    lv_obj_get_coords(current_pad,&bounds);
+    if (portrait && lv_display_get_rotation(lv_obj_get_display(current_pad))==LV_DISPLAY_ROTATION_0) {
+        // The fallback rotates a parent object on a landscape display. Convert the
+        // inclusive corners into the same portrait coordinates as the raw contacts.
+        lv_point_t corners[]={{bounds.x1,bounds.y1},{bounds.x2,bounds.y2}};
+        lv_obj_transform_point_array(current_pad,corners,2,LV_OBJ_POINT_TRANSFORM_FLAG_RECURSIVE);
+        for (unsigned i=0;i<2;i++) pack_view_logical_point(true,&corners[i],&corners[i]);
+        bounds=(lv_area_t){corners[0].x,corners[0].y,corners[1].x,corners[1].y};
+    }
+    kvm_gesture_set_pad_bounds(&gesture,bounds.x1,bounds.y1,bounds.x2,bounds.y2);
+}
+
 bool pack_desktop_contacts(unsigned count,const lv_point_t points[2],const uint8_t ids[2],uint64_t timestamp)
 {
     if (pack_touchpad_drawer_active()) {
@@ -378,6 +395,8 @@ bool pack_desktop_contacts(unsigned count,const lv_point_t points[2],const uint8
             return false;
         }
         tracking=true;
+        app_config_apply_mouse(&gesture.cfg);
+        set_gesture_bounds();
     } else if (count==2 && previous_count==1) {
         unsigned added=ids[0]==first_id ? 1 : 0;
         if (!hits_pad(points[added])) {

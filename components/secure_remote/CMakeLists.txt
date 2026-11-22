@@ -21,6 +21,7 @@
 # esp_https_server header.
 idf_component_register(
     SRCS "src/kvm_srt.c"
+         "src/kvm_srt_ssh.c"
          "src/kvm_srt_auth.c"
          "src/kvm_srt_pair_json.c"
          "pairing/src/kvm_pairing_pake.c"
@@ -31,7 +32,11 @@ idf_component_register(
          "port/kvm_srt_mdns.c"
     INCLUDE_DIRS "include" "pairing/include"
     REQUIRES hid_core remote_protocol config_store
-    PRIV_REQUIRES mbedtls esp_https_server esp_timer esp_hw_support log freertos)
+    PRIV_REQUIRES mbedtls esp_https_server esp_timer esp_hw_support log freertos ssh_control)
+if(CONFIG_KVM_SSH_BOARD)
+    idf_component_optional_requires(PRIVATE david-cermak__libssh)
+    target_sources(${COMPONENT_LIB} PRIVATE "port/kvm_srt_ssh_listener.c")
+endif()
 
 # FR-723 is a convenience, not a precondition: without the managed `espressif/mdns` component the
 # adapter in port/kvm_srt_mdns.c compiles to stubs that report ESP_ERR_NOT_SUPPORTED, and pairing by

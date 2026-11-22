@@ -12,6 +12,7 @@
 #include "kvm_control_icons.h"
 #include "kvm_hid_intent.h"
 #include "ui_overlay.h"
+#include "ui_rate_slider.h"
 #include "ui_theme.h"
 #include "ui_tokens.h"
 
@@ -32,6 +33,8 @@ static const ui_action_key_desc_t k_drag = {.label = "Drag lock", .icon = LV_SYM
 #define HELP_W 72
 #define HELP_CARD_W 680
 #define HELP_CLOSE_W 168
+#define HELP_SCROLL_ROW 4
+#define HELP_HOLD_ROW 2
 
 // The gesture card. Thresholds as configured in gesture_engine (KVM_GESTURE_CFG_DEFAULT: 550 ms hold, 300 ms double
 // tap window, 10 s drag-lock idle); keep the wording in step when they change.
@@ -70,6 +73,24 @@ static bool host_mounted(const ui_view_mouse_t *m)
 static bool drag_lock_on(const ui_view_mouse_t *m)
 {
     return ui_store_get(m->store, UI_SUBJ_DRAG_LOCK) == 1;
+}
+
+static bool wheel_available(const ui_view_mouse_t *m)
+{
+    return host_mounted(m) && ui_store_get(m->store, UI_SUBJ_MOUSE_BOOT_PROTOCOL) == 0;
+}
+
+static const char *hold_help(const ui_view_mouse_t *m)
+{
+    return m->longpress_right_click ? k_help_result[HELP_HOLD_ROW] : "Hold to right-click is off";
+}
+
+static const char *scroll_help(const ui_view_mouse_t *m)
+{
+    if (host_mounted(m) && ui_store_get(m->store, UI_SUBJ_MOUSE_BOOT_PROTOCOL) == 1) {
+        return "Host boot protocol has no wheel";
+    }
+    return m->two_finger_scroll ? k_help_result[HELP_SCROLL_ROW] : "KVMpad scroll gesture is off";
 }
 
 static uint64_t now(const ui_view_mouse_t *m)
@@ -137,6 +158,17 @@ static void drag_clicked(lv_event_t *e)
     (void)submit(m, UI_ACT_DRAG_LOCK_REQUEST, UI_CTRL_MOUSE_DRAG_LOCK, drag_lock_on(m) ? 0u : 1u);
 }
 
+static void scroll_step(int direction, void *ctx)
+{
+    ui_view_mouse_t *m = ctx;
+    if (!wheel_available(m) || (m->router && ui_overlay_blocking(m->router))) {
+        ui_rate_slider_cancel(m->scroll_wheel);
+        return;
+    }
+    (void)submit(m, UI_ACT_MOUSE_WHEEL_STEP, direction > 0 ? UI_CTRL_MOUSE_SCROLL_UP : UI_CTRL_MOUSE_SCROLL_DOWN,
+                 direction > 0 ? UI_WHEEL_UP : UI_WHEEL_DOWN);
+}
+
 static void help_clicked(lv_event_t *e)
 {
     ui_view_mouse_t *m = lv_event_get_user_data(e);
@@ -188,7 +220,13 @@ static bool help_build(void *ctx, lv_obj_t *card)
         lv_obj_set_flex_align(line, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
         lv_obj_set_style_pad_column(line, UI_SPACE_M, LV_PART_MAIN);
         (void)text(line, k_help_gesture[i], UI_STYLE_TEXT_LABEL);
-        (void)text(line, k_help_result[i], UI_STYLE_TEXT_MUTED);
+        if (i == HELP_SCROLL_ROW) {
+            m->help_scroll_result = text(line, scroll_help(m), UI_STYLE_TEXT_MUTED);
+        } else if (i == HELP_HOLD_ROW) {
+            m->help_hold_result = text(line, hold_help(m), UI_STYLE_TEXT_MUTED);
+        } else {
+            (void)text(line, k_help_result[i], UI_STYLE_TEXT_MUTED);
+        }
     }
 
     lv_obj_t *foot = plain(card);
@@ -219,6 +257,8 @@ static void help_on_close(void *ctx)
 {
     ui_view_mouse_t *m = ctx;
     m->help_card = NULL;
+    m->help_scroll_result = NULL;
+    m->help_hold_result = NULL;
     m->c.help_closes++;
 }
 
@@ -248,6 +288,14 @@ static void refresh(ui_view_mouse_t *m)
     ui_action_key_set_enabled(m->btn_left, host);
     ui_action_key_set_enabled(m->btn_right, host);
     ui_action_key_set_enabled(m->btn_drag, host);
+    const bool wheel = wheel_available(m);
+    if (!wheel) ui_rate_slider_cancel(m->scroll_wheel);
+    lv_obj_set_disabled(m->scroll_wheel, !wheel);
+    const char *wheel_hint = m->two_finger_scroll ? "Slide two fingers, or hold the scroll wheel."
+                                                  : "Hold the scroll wheel. Move farther to scroll faster.";
+    lv_label_set_text_static(m->idle_sub, wheel ? wheel_hint : "One finger to move. Tap to click.");
+    if (m->help_scroll_result) lv_label_set_text_static(m->help_scroll_result, scroll_help(m));
+    if (m->help_hold_result) lv_label_set_text_static(m->help_hold_result, hold_help(m));
     m->leaving = false;
     ui_action_key_set_checked(m->btn_drag, drag);
     lv_label_set_text_static(m->drag_label, drag ? "Release" : "Drag lock"); // FR-107: a visible Release
@@ -297,10 +345,15 @@ static lv_obj_t *create_cb(void *ctx, lv_obj_t *slot)
     lv_obj_set_flex_flow(root, LV_FLEX_FLOW_COLUMN);
 
     // Touch surface: visual only (the bridge routes its touches to the gesture engine, 07 §6).
-    lv_obj_t *pad = plain(root);
+    lv_obj_t *row = plain(root);
+    lv_obj_set_width(row, lv_pct(100));
+    lv_obj_set_flex_grow(row, 1);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(row, UI_SPACE_M, LV_PART_MAIN);
+    lv_obj_t *pad = plain(row);
     ui_theme_apply(pad, UI_STYLE_CARD, LV_STATE_DEFAULT);
     ui_theme_touch_surface(pad);
-    lv_obj_set_width(pad, lv_pct(100));
+    lv_obj_set_height(pad, lv_pct(100));
     lv_obj_set_flex_grow(pad, 1);
 
     lv_obj_t *tag = text(pad, "Touchpad", UI_STYLE_TEXT_BODY);
@@ -335,6 +388,19 @@ static lv_obj_t *create_cb(void *ctx, lv_obj_t *slot)
     (void)text(m->offline, "Host disconnected", UI_STYLE_TEXT_HEADING);
     (void)text(m->offline, "Input will resume when the connection returns.", UI_STYLE_TEXT_MUTED);
 
+    lv_obj_t *rail = plain(row);
+    lv_obj_set_size(rail, 80, lv_pct(100));
+    lv_obj_set_flex_flow(rail, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(rail, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(rail, UI_SPACE_S, LV_PART_MAIN);
+    (void)text(rail, "Scroll", UI_STYLE_TEXT_LABEL);
+    m->scroll_wheel = ui_rate_wheel_create(rail, scroll_step, m);
+    if (!m->scroll_wheel) {
+        lv_obj_delete(root);
+        return NULL;
+    }
+    lv_obj_set_size(m->scroll_wheel, 64, lv_pct(78));
+
     lv_obj_t *foot = plain(root);
     lv_obj_set_size(foot, lv_pct(100), FOOT_H);
     lv_obj_set_flex_flow(foot, LV_FLEX_FLOW_ROW);
@@ -368,6 +434,11 @@ static lv_obj_t *create_cb(void *ctx, lv_obj_t *slot)
     ui_theme_apply(m->btn_left, UI_STYLE_MOUSE_KEY, LV_STATE_DEFAULT);
     ui_theme_apply(m->btn_right, UI_STYLE_MOUSE_KEY, LV_STATE_DEFAULT);
     ui_theme_apply(m->btn_drag, UI_STYLE_MOUSE_KEY, LV_STATE_DEFAULT);
+    lv_obj_t *footer_keys[] = {m->btn_left, m->btn_right, m->btn_drag};
+    for (size_t i = 0; i < sizeof(footer_keys) / sizeof(footer_keys[0]); ++i) {
+        lv_obj_set_width(footer_keys[i], lv_pct(20));
+        lv_obj_set_style_max_width(footer_keys[i], KEY_W, LV_PART_MAIN);
+    }
     m->drag_label = lv_obj_get_child(m->btn_drag, (int32_t)lv_obj_get_child_count(m->btn_drag) - 1);
     lv_obj_add_event_cb(m->btn_drag, drag_clicked, LV_EVENT_CLICKED, m);
 
@@ -375,6 +446,7 @@ static lv_obj_t *create_cb(void *ctx, lv_obj_t *slot)
     m->pad = pad;
     // Observers die with their object (AT-UIFW-09): bound to the root, so deleting the view detaches them.
     lv_subject_add_observer_obj(ui_store_subject(m->store, UI_SUBJ_HOST_USB), subject_cb, root, m);
+    lv_subject_add_observer_obj(ui_store_subject(m->store, UI_SUBJ_MOUSE_BOOT_PROTOCOL), subject_cb, root, m);
     lv_subject_add_observer_obj(ui_store_subject(m->store, UI_SUBJ_DRAG_LOCK), subject_cb, root, m);
     refresh(m);
     return root;
@@ -387,6 +459,8 @@ static void on_enter_cb(void *ctx)
 
 static void on_leave_cb(void *ctx)
 {
+    ui_view_mouse_t *m = ctx;
+    ui_rate_slider_cancel(m->scroll_wheel);
     release_held(ctx);
 }
 
@@ -397,6 +471,7 @@ static void destroy_cb(void *ctx)
     m->root = m->pad = m->live = m->offline = m->hint = NULL;
     m->idle_contact = m->idle_title = m->idle_sub = NULL;
     m->btn_left = m->btn_right = m->btn_drag = m->drag_label = m->btn_help = NULL;
+    m->scroll_wheel = NULL;
 }
 
 static lv_obj_t *pad_obj_cb(void *ctx)
@@ -408,6 +483,8 @@ static lv_obj_t *pad_obj_cb(void *ctx)
 void ui_view_mouse_init(ui_view_mouse_t *m, ui_store_t *store, ui_actions_t *actions, uint64_t (*now_us)(void))
 {
     memset(m, 0, sizeof(*m));
+    m->two_finger_scroll = true;
+    m->longpress_right_click = true;
     m->store = store;
     m->actions = actions;
     m->now_us = now_us;
@@ -435,6 +512,14 @@ void ui_view_mouse_bind_router(ui_view_mouse_t *m, ui_router_t *router)
     if (m != NULL) {
         m->router = router;
     }
+}
+
+void ui_view_mouse_set_gestures(ui_view_mouse_t *m, bool two_finger_scroll, bool longpress_right_click)
+{
+    if (m->two_finger_scroll == two_finger_scroll && m->longpress_right_click == longpress_right_click) return;
+    m->two_finger_scroll = two_finger_scroll;
+    m->longpress_right_click = longpress_right_click;
+    refresh(m);
 }
 
 const ui_overlay_descriptor_t *ui_view_mouse_overlays(ui_view_mouse_t *m, uint8_t *n)

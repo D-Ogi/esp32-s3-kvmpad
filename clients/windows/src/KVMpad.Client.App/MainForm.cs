@@ -44,6 +44,8 @@ internal sealed class MainForm : Form
     private readonly Button _disconnect;
     private readonly Button _host;
     private readonly Button _requestControl;
+    private readonly Button _ssh;
+    private bool _preparingSsh;
     private readonly Button _releaseControl;
     private readonly Button _capture;
     private readonly TextBox _typeText;
@@ -114,6 +116,7 @@ internal sealed class MainForm : Form
             else if (SelectedId() is string id) await _controller.StartHostAsync(id);
         });
         _requestControl = MakeButton("Request control", async (_, _) => await _controller.RequestControlAsync().ConfigureAwait(true));
+        _ssh = MakeButton("SSH command…", async (_, _) => await PrepareSshAsync());
         _releaseControl = MakeButton("Release control", async (_, _) => await _controller.ReleaseControlAsync().ConfigureAwait(true));
         _capture = MakeButton("Start capture", (_, _) => _controller.ToggleCapture());
         _advanced = MakeButton("Advanced…", async (_, _) => await ShowAdvancedAsync().ConfigureAwait(true));
@@ -202,7 +205,7 @@ internal sealed class MainForm : Form
         input.Controls.Add(ActionRow(_shortcut, shortcutSend), 0, 1);
         input.Controls.Add(new Label { Text = "Type using the host keyboard layout. Press Esc to cancel.", AutoSize = true }, 0, 2);
         input.Controls.Add(_typeText, 0, 3);
-        input.Controls.Add(ActionRow(_typeSend, _typeCancel), 0, 4);
+        input.Controls.Add(ActionRow(_typeSend, _typeCancel, _ssh), 0, 4);
 
         var tools = AddPage(_pages, "Tools");
         tools.Controls.Add(ActionRow(display, studio, video, about), 0, 0);
@@ -503,6 +506,30 @@ internal sealed class MainForm : Form
 
     private string? SelectedId() => SelectedEntry?.DeviceId;
 
+    private async Task PrepareSshAsync()
+    {
+        var setup = _controller.Ssh;
+        if (_preparingSsh || setup?.Available != true) return;
+        using var pick = new OpenFileDialog { Title = "Select your OpenSSH public key",
+            Filter = "OpenSSH public keys (*.pub)|*.pub", CheckFileExists = true };
+        if (pick.ShowDialog(this) != DialogResult.OK || setup != _controller.Ssh || !setup.Available) return;
+        _preparingSsh = true;
+        UpdateButtons();
+        try
+        {
+            string command = await setup.PrepareAsync(pick.FileName, CancellationToken.None);
+            if (IsDisposed || Disposing || setup != _controller.Ssh || !setup.Available) return;
+            using var dialog = new SshCommandDialog(command);
+            dialog.ShowDialog(this);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or TimeoutException)
+        { if (!IsDisposed && !Disposing) ShowNotice(ex.Message); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or Win32Exception or OperationCanceledException)
+        { if (!IsDisposed && !Disposing) ShowNotice(ex.GetType() == typeof(IOException) ? ex.Message :
+            "Could not prepare the SSH command. Check the public key file, Windows OpenSSH Client and the paired connection."); }
+        finally { _preparingSsh = false; if (!IsDisposed && !Disposing) UpdateButtons(); }
+    }
+
     private void UpdateButtons()
     {
         bool hasSelection = _devices.SelectedItems.Count > 0;
@@ -518,6 +545,7 @@ internal sealed class MainForm : Form
             string.Equals(SelectedId(), _controller.ConnectedDeviceId, StringComparison.OrdinalIgnoreCase);
         _host.Text = _controller.HostRunning ? "Stop HOST" : "Start HOST";
         _requestControl.Enabled = _controller.Logic?.State == Core.Session.ClientSessionState.Connected;
+        _ssh.Enabled = !_preparingSsh && _controller.Ssh?.Available == true;
         _releaseControl.Enabled = controlling;
         _capture.Enabled = controlling;
         _capture.Text = _controller.IsCapturing ? "Stop capture" : "Start capture";

@@ -13,6 +13,7 @@
 // The remote core does not exist in this build (M7), so CLIENT is published as DISABLED; Wi-Fi comes from
 // net_status (TASK-080) and drag lock from the touch bridge's gesture FSM (TASK-060E).
 #include "text_glue.h"
+#include "app_config.h"
 #include "ui_glue.h"
 #include "pack_panel.h"
 #include "pack_keyboard_surface.h"
@@ -25,6 +26,8 @@
 #include "freertos/FreeRTOS.h"
 #include "board_pins.h"
 #include "hid_dispatch.h"
+#include "hid_keymap.h"
+#include "hid_keymap.h"
 #include "kvm_diag.h"
 #include "net_status.h"
 #include "remote_glue.h"
@@ -74,6 +77,7 @@ static void publish_cb(void *arg)
     usb_hid_device_get_status(&us);
     ui_hid_slice_t h = {
         .host_usb_state = (uint8_t)hs.host_usb,
+        .mouse_boot_protocol = us.protocol[KVM_HID_ITF_MOUSE] == KVM_HID_PROTOCOL_BOOT,
         .owner_kind = (uint8_t)hs.owner_kind,
         .owner_epoch = hs.owner_epoch,
         .modifiers_down = hs.modifiers_down,
@@ -156,6 +160,7 @@ static void touch_bridge_start(void)
         .h_res = BOARD_TOUCH_H_RES,
         .v_res = BOARD_TOUCH_V_RES,
         .sink = pad_hid_sink,
+        .apply_mouse_preferences = app_config_apply_mouse,
         .local_contacts = local_contacts,
 #if CONFIG_KVM_USB_MONITOR_EVAL
         .buffered_target = pack_keyboard_surface_buffered_target,
@@ -213,10 +218,16 @@ static bool domain_sink(void *ctx, const ui_action_t *a)
     in.timestamp_us = a->monotonic_us;
     switch (a->type) {
     case UI_ACT_KEY_DOWN:
-        err = hid_dispatch_ui_key_down((uint8_t)a->value);
-        break;
     case UI_ACT_KEY_UP:
-        err = hid_dispatch_ui_key_up((uint8_t)a->value);
+        if (kvm_usage_is_modifier((uint8_t)a->value)) {
+            // The compact field supplies paired modifier edges around its chord.
+            in.type = a->type == UI_ACT_KEY_DOWN ? KVM_HID_KEY_DOWN : KVM_HID_KEY_UP;
+            in.data.key.usage_id = (uint8_t)a->value;
+            err = hid_dispatch_local(&in);
+        } else {
+            err = a->type == UI_ACT_KEY_DOWN ? hid_dispatch_ui_key_down((uint8_t)a->value)
+                                             : hid_dispatch_ui_key_up((uint8_t)a->value);
+        }
         break;
     case UI_ACT_MODIFIER_TOGGLE:
         err = hid_dispatch_ui_modifier_tap((uint8_t)a->value);
@@ -230,6 +241,11 @@ static bool domain_sink(void *ctx, const ui_action_t *a)
     case UI_ACT_SHORTCUT_REQUEST:
         in.type = KVM_HID_CHORD;
         in.data.chord.chord_id = a->value;
+        err = hid_dispatch_local(&in);
+        break;
+    case UI_ACT_MOUSE_WHEEL_STEP:
+        in.type = KVM_HID_MOUSE_WHEEL;
+        in.data.wheel.vertical = a->value == UI_WHEEL_UP ? 1 : -1;
         err = hid_dispatch_local(&in);
         break;
     case UI_ACT_DRAG_LOCK_REQUEST: // the gesture engine owns drag lock; the UI learns the result from its slice

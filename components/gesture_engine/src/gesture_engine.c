@@ -121,8 +121,29 @@ static int16_t take_int(float *acc)
 }
 
 // Relative pointer from consecutive samples of the same finger (FR-111..113).
-static void pointer_move(kvm_gesture_t *g, kvm_gesture_out_t *out, int dx, int dy, uint64_t dt_us)
+static int edge_direction(int p, int low, int high)
 {
+    return (p > high) - (p < low);
+}
+
+static bool outside_pad(const kvm_gesture_cfg_t *cfg, kvm_gesture_pt_t p)
+{
+    return cfg->pad_x2 > cfg->pad_x1 && cfg->pad_y2 > cfg->pad_y1 &&
+           (p.x < cfg->pad_x1 || p.x > cfg->pad_x2 || p.y < cfg->pad_y1 || p.y > cfg->pad_y2);
+}
+
+void kvm_gesture_set_pad_bounds(kvm_gesture_t *g, int16_t x1, int16_t y1, int16_t x2, int16_t y2)
+{
+    g->cfg.pad_x1 = x1;
+    g->cfg.pad_y1 = y1;
+    g->cfg.pad_x2 = x2;
+    g->cfg.pad_y2 = y2;
+}
+
+static void pointer_move(kvm_gesture_t *g, kvm_gesture_out_t *out, kvm_gesture_pt_t from,
+                         kvm_gesture_pt_t to, uint64_t dt_us)
+{
+    int dx = to.x - from.x, dy = to.y - from.y;
     float dt_ms = (float)dt_us / 1000.0f;
     if (dt_ms < 1.0f) {
         dt_ms = 1.0f;
@@ -131,6 +152,21 @@ static void pointer_move(kvm_gesture_t *g, kvm_gesture_out_t *out, int dx, int d
     float gain = kvm_gesture_gain(g->cfg.speed, g->cfg.acceleration, v);
     g->accx += (float)dx * gain;
     g->accy += (float)dy * gain;
+    const kvm_gesture_cfg_t *cfg = &g->cfg;
+    if (outside_pad(cfg, to)) {
+        // Count only time spent beyond the same edge on two consecutive valid scans.
+        // This stops immediately on reentry and never replays time after a lift or stall.
+        int ex = edge_direction(to.x, cfg->pad_x1, cfg->pad_x2);
+        int ey = edge_direction(to.y, cfg->pad_y1, cfg->pad_y2);
+        if (ex != edge_direction(from.x, cfg->pad_x1, cfg->pad_x2)) ex = 0;
+        if (ey != edge_direction(from.y, cfg->pad_y1, cfg->pad_y2)) ey = 0;
+        const float edge_px_per_ms = 0.6f;
+        float travel = (float)dt_us / 1000.0f * edge_px_per_ms *
+                       kvm_gesture_gain(cfg->speed, cfg->acceleration, edge_px_per_ms);
+        if (ex && ey) travel *= 0.70710678f; // same speed along diagonals
+        g->accx += (float)ex * travel;
+        g->accy += (float)ey * travel;
+    }
     int16_t ix = take_int(&g->accx), iy = take_int(&g->accy);
     if (ix != 0 || iy != 0) {
         emit(g, out, KVM_HID_MOUSE_MOVE, ix, iy);
@@ -247,7 +283,8 @@ static bool sample_ok(const kvm_gesture_t *g, const kvm_touch_sample_t *s)
 
 static void fire_long_press(kvm_gesture_t *g, kvm_gesture_out_t *out, uint64_t now)
 {
-    if (g->state == KVM_GEST_ONE_PENDING && !g->left_held && now - g->start_us >= g->cfg.long_press_us &&
+    if (g->cfg.longpress_right_click && g->state == KVM_GEST_ONE_PENDING && !g->left_held &&
+        now - g->start_us >= g->cfg.long_press_us &&
         g->max_a <= g->cfg.long_press_max_move_px) {
         click(g, out, KVM_MOUSE_BTN_RIGHT); // FR-103: on the threshold, nothing on UP
         g->st.right_clicks++;
@@ -364,12 +401,12 @@ void kvm_gesture_feed(kvm_gesture_t *g, const kvm_touch_sample_t *s, kvm_gesture
         kvm_gesture_pt_t p = pt(&s->point[ia]);
         g->max_a = max16(g->max_a, cheb(p, g->a0));
         const uint16_t threshold = g->dtd_armed ? g->cfg.dtd_move_px : g->cfg.move_start_px;
-        if (cheb(p, g->a0) > threshold) {
+        if (cheb(p, g->a0) > threshold || outside_pad(&g->cfg, p)) {
             g->state = KVM_GEST_ONE_MOVING;
             if (g->dtd_armed || g->drag_lock) {
                 press_left(g, out); // FR-106: LEFT DOWN before the first MOVE delta
             }
-            pointer_move(g, out, p.x - g->a0.x, p.y - g->a0.y, ts - g->start_us);
+            pointer_move(g, out, g->a0, p, ts - g->start_us);
             g->a = p;
             break;
         }
@@ -396,7 +433,7 @@ void kvm_gesture_feed(kvm_gesture_t *g, const kvm_touch_sample_t *s, kvm_gesture
             break;
         }
         kvm_gesture_pt_t p = pt(&s->point[ia]);
-        pointer_move(g, out, p.x - g->a.x, p.y - g->a.y, ts - prev_ts);
+        pointer_move(g, out, g->a, p, ts - prev_ts);
         g->a = p;
         break;
     }
@@ -463,8 +500,12 @@ void kvm_gesture_feed(kvm_gesture_t *g, const kvm_touch_sample_t *s, kvm_gesture
             tx = tx < 0 ? -tx : tx;
             ty = ty < 0 ? -ty : ty;
             if ((tx > ty ? tx : ty) > 2 * (int32_t)g->cfg.scroll_start_px) {
-                g->state = KVM_GEST_TWO_SCROLLING; // FR-105: blocks both clicks
                 g->two_tap_ok = false;
+                if (!g->cfg.scroll_enabled) {
+                    g->state = KVM_GEST_WAIT_RELEASE;
+                    break;
+                }
+                g->state = KVM_GEST_TWO_SCROLLING; // FR-105: blocks both clicks
                 scroll_by(g, out, cx - g->cx0, cy - g->cy0);
                 g->cx = cx;
                 g->cy = cy;

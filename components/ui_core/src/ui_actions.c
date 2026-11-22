@@ -58,6 +58,8 @@ bool ui_action_valid(ui_action_type_t type, uint16_t value)
     }
     case UI_ACT_TEXT_CANCEL:
         return value == 0;
+    case UI_ACT_MOUSE_WHEEL_STEP:
+        return value == UI_WHEEL_UP || value == UI_WHEEL_DOWN;
     case UI_ACT_COUNT:
         break;
     }
@@ -106,7 +108,7 @@ const char *ui_action_name(ui_action_type_t type)
     static const char *const names[UI_ACT_COUNT] = {
         "NAVIGATE", "OPEN_HOST_DETAILS", "OPEN_CLIENT_DETAILS", "OPEN_SETTINGS", "DISMISS_OVERLAY", "KEY_DOWN",
         "KEY_UP", "SHORTCUT_REQUEST", "MOUSE_BUTTON_DOWN", "MOUSE_BUTTON_UP", "MODIFIER_TOGGLE",
-        "DRAG_LOCK_REQUEST", "TEXT_CHAR", "TEXT_KEY", "TEXT_CANCEL",
+        "DRAG_LOCK_REQUEST", "TEXT_CHAR", "TEXT_KEY", "TEXT_CANCEL", "MOUSE_WHEEL_STEP",
     };
     return (unsigned)type < UI_ACT_COUNT ? names[type] : "?";
 }

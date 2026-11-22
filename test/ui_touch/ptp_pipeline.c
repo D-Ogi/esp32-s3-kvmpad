@@ -23,6 +23,19 @@ static bool inflight[4], pump;
 static uint64_t clock_us;
 static uint32_t sequence, generation;
 static unsigned frames, mouse;
+static int wheel_total;
+static bool scroll_enabled=true, scroll_natural;
+static kvm_gesture_speed_t speed = KVM_GEST_SPEED_NORMAL;
+static bool hold_right = true;
+static int travel_x;
+static unsigned right_down;
+static void apply_mouse(kvm_gesture_cfg_t *gesture)
+{
+    gesture->scroll_enabled = scroll_enabled;
+    gesture->scroll_natural = scroll_natural;
+    gesture->speed = speed;
+    gesture->longpress_right_click = hold_right;
+}
 static uint8_t last[HPE_PTP_WIRE];
 static hpe_features_t features = {.selective=3};
 
@@ -93,6 +106,10 @@ bool usb_hid_device_send(uint8_t i, const uint8_t *bytes, uint8_t len)
         memcpy(last, bytes, len);
         ++frames;
     } else if (i == KVM_HID_ITF_MOUSE) {
+        assert(len==KVM_HID_MOUSE_REPORT_LEN);
+        wheel_total+=(int8_t)bytes[3];
+        travel_x += (int8_t)bytes[1];
+        if (bytes[0] & 2) ++right_down;
         for (unsigned k = 0; k < len; ++k) if (bytes[k]) { ++mouse; break; }
     }
     return true;
@@ -146,8 +163,8 @@ static void expect_contact(finger_t p, bool tip)
 {
     const uint8_t *c=slot(p.id);
     assert(c[0] == (tip ? 3 : 2));
-    assert(word(c+2) == (((unsigned)p.x-20)*32767+491)/983);
-    assert(word(c+4) == (((unsigned)p.y-88)*32767+203)/407);
+    assert(word(c+2) == ((unsigned)p.x*32767+511)/1023);
+    assert(word(c+4) == ((unsigned)p.y*32767+299)/599);
 }
 
 static unsigned pairs;
@@ -162,7 +179,8 @@ static bool local_pair(unsigned count, const kvm_touch_point_t points[2], uint64
 
 int main(void)
 {
-    const ui_touch_bridge_cfg_t cfg = {.h_res=1024,.v_res=600,.sink=sink,.hid_enabled=true,.local_contacts=local_pair};
+    const ui_touch_bridge_cfg_t cfg = {.h_res=1024,.v_res=600,.sink=sink,.hid_enabled=true,.local_contacts=local_pair,
+                                       .apply_mouse_preferences=apply_mouse};
     assert(hid_dispatch_start()==ESP_OK && ui_touch_bridge_start(&cfg)==ESP_OK);
     ui_touch_bridge_set_pad(&(touch_rect_t){20,88,1003,495},true);
     step_bridge();
@@ -264,6 +282,16 @@ int main(void)
     hid_dispatch_set_profile(HPE_MOUSE_PROFILE); drain();
     clock_us+=10000; sensor(five,1); drain(); expect_contact(five[0],true);
     clock_us+=10000; sensor(NULL,0); drain(); expect_contact(five[0],false);
+    // One captured ID crosses each side and keeps moving beyond the pad, through lift.
+    const finger_t stroke[]={{3,500,250},{3,500,80},{3,500,40},{3,1010,40},{3,1023,0},
+                             {3,1018,510},{3,1018,599},{3,12,550},{3,0,550}};
+    for (unsigned i=0;i<sizeof(stroke)/sizeof(stroke[0]);i++) {
+        clock_us+=10000; sensor(&stroke[i],1); drain();
+        assert(last[33]==1);
+        expect_contact(stroke[i],true);
+    }
+    clock_us+=10000; sensor(NULL,0); drain();
+    expect_contact(stroke[sizeof(stroke)/sizeof(stroke[0])-1],false);
     before=frames;
     unsigned wraps=0;
     unsigned prev_scan=word(last+31);
@@ -297,6 +325,68 @@ int main(void)
     }
     clock_us+=10000; sensor(NULL,0); drain();
     assert(mouse>0 && frames==before);
+    // Same GT911 ID, resting on the side rail: repeat mouse motion until reentry or lift.
+    finger_t edge={6,24,250};
+    clock_us+=10000; sensor(&edge,1); drain();
+    edge.x=10;
+    clock_us+=10000; sensor(&edge,1); drain();
+    for (unsigned i=0;i<4;i++) {
+        int previous_x=travel_x;
+        clock_us+=20000; sensor(&edge,1); drain();
+        assert(travel_x<previous_x);
+    }
+    edge.x=40;
+    clock_us+=10000; sensor(&edge,1); drain();
+    unsigned resting=mouse;
+    clock_us+=20000; sensor(&edge,1); drain();
+    clock_us+=10000; sensor(NULL,0); drain();
+    assert(mouse==resting && frames==before);
+    // Beginning a new software gesture samples both preferences. Changes mid-swipe
+    // must neither reverse that swipe nor turn the lift into a click.
+    for (unsigned mode=0; mode<3; ++mode) {
+        finger_t contact[2]={{1,200,200},{2,300,200}};
+        int prior_wheel=wheel_total;
+        unsigned prior_mouse=mouse;
+        clock_us+=10000; sensor(contact,2); drain();
+        if (mode==0) scroll_natural=true;
+        if (mode==1) scroll_enabled=false;
+        contact[0].y+=48; contact[1].y+=48;
+        clock_us+=10000; sensor(contact,2); drain();
+        clock_us+=10000; sensor(NULL,0); drain();
+        assert(wheel_total-prior_wheel==(mode==0 ? -2 : mode==1 ? 2 : 0));
+        if (mode==2) assert(prior_mouse==mouse);
+    }
+    // Slow, normal and fast must produce different wire deltas for an identical swipe.
+    int distance[3];
+    for (unsigned mode = 0; mode < 3; ++mode) {
+        speed = (kvm_gesture_speed_t)mode;
+        finger_t finger = {1,200,200};
+        int start_x = travel_x;
+        clock_us += 10000; sensor(&finger,1); drain();
+        speed = KVM_GEST_SPEED_FAST; // applies after the next full lift
+        for (unsigned i = 0; i < 5; ++i) {
+            finger.x += 12;
+            clock_us += 50000; sensor(&finger,1); drain();
+        }
+        clock_us += 10000; sensor(NULL,0); drain();
+        distance[mode] = travel_x - start_x;
+    }
+    assert(distance[0] > 0 && distance[0] < distance[1] && distance[1] < distance[2]);
+    for (unsigned mode = 0; mode < 2; ++mode) {
+        finger_t finger = {1,200,200};
+        const unsigned start_right = right_down, start_mouse = mouse;
+        hold_right = mode != 0;
+        clock_us += 10000; sensor(&finger,1); drain();
+        hold_right = !hold_right;
+        for (unsigned i = 0; i < 12; ++i) {
+            clock_us += 50000; sensor(&finger,1); drain();
+        }
+        clock_us += 10000; sensor(NULL,0); drain();
+        assert(right_down - start_right == mode);
+        if (!mode) assert(mouse == start_mouse);
+    }
+    printf("Software mouse: slow/normal/fast X deltas %d/%d/%d, hold right-click off/on verified.\n",
+           distance[0], distance[1], distance[2]);
     assert(pairs==0);
     ui_touch_bridge_set_pad(NULL,false); step_bridge();
     ui_touch_bridge_set_hid_enabled(false); step_bridge();

@@ -1,20 +1,13 @@
 # `ui_components`
 
-> **Status:** `IMPLEMENTED_SW` (TASK-060D) — host tests pass against real LVGL 9.6; not yet built
-> into the firmware image and not yet seen on the panel (`NOT_RUN_HW`).
-
 **Role:** Ready-made LVGL components of the product (without USB/network logic).
 
-| | |
-|---|---|
-| Tasks | TASK-060D |
-| Specification | 07 §7 |
-| Tests | `test/ui_components` (host, real LVGL): observer lifecycle, geometry, hit boxes, snapshots |
+**Tests.** `test/ui_components` (host, real LVGL): observer lifecycle, geometry, hit boxes, snapshots
 
-**Files:** `include/ui_components.h` (umbrella) and one header plus one source per component:
+The umbrella header is `include/ui_components.h`. Core controls include
 `ui_status_item`, `ui_topbar`, `ui_action_key`, `ui_segmented`, `ui_modal`, `ui_toast`.
 
-## The six components
+## Core controls
 
 | Component | 07 §7 row | What it is |
 |---|---|---|
@@ -31,16 +24,16 @@ FR-003 makes each tab a touch target in its own right. It is a separate componen
 code inside `ui_topbar` because the router, not the bar, owns the mode (07 §5): a tap only
 reports `control_id` and index, and the selection moves when the bound subject changes.
 
+For a signed rate control, use `ui_rate_slider_create()`. The Mouse view uses `ui_rate_wheel_create()` to render the same interaction as a ridged scroll wheel. Both controls call the supplied step function and can be stopped with `ui_rate_slider_cancel()`.
+
 ## Contracts that the tests enforce
 
 - **No HID, ever.** A component reports a typed `control_id` through a caller-owned sink. It does
-  not include `tusb.h` or `tinyusb.h` and it does not decide what the HOST receives
-  (AGENTS.md prohibition 2, AGENTS-UI MUST 4).
+  not include `tusb.h` or `tinyusb.h` and it does not decide what the HOST receives.
 - **No stuck keys.** `ui_action_key` emits exactly one `pressed=false` for every `pressed=true`,
-  on release, on press-lost (a finger that slides off), on disable and on delete
-  (AGENTS.md prohibition 3).
+  on release, on press-lost (a finger that slides off), on disable and on delete.
 - **Not the source of truth.** Every state comes from a bound `lv_subject_t`. A zero-initialized
-  or unbound projection reads "Unknown", never "ok" (AGENTS-UI MUST 5, 07 §12 item 2).
+  or unbound projection reads "Unknown", never "ok".
 - **The bar never grows.** Each topbar slot has a fixed width from `ui_tokens.h` and every label
   clips with `LV_LABEL_LONG_MODE_DOTS` pinned to one line, so a 200-character status string
   changes nothing about the layout (07 §7).
@@ -56,13 +49,10 @@ if you must, but do not dereference. The headers state this per function.
 
 **Rules (MUST):**
 
-- Dependency exclusively: `ui_components → ui_theme` (+ LVGL).
-- Factory functions of 10–50 lines, descriptor tables.
-- Code written by hand in C/LVGL — without EEZ Studio, LVGL Pro Editor, XML/JSON DSL (ADR-014).
+- Widgets use LVGL and share colors, fonts and spacing through `ui_theme`.
+- Code written by hand in C/LVGL — without EEZ Studio, LVGL Pro Editor, XML/JSON DSL.
 
-**Extensions (`docs/EXTENSIONS.md`):**
+## Product behavior
 
-- ADR-020: Keep awake indicator in the topbar — text + icon (FR-712). It is hidden unless its
+- Keep awake indicator in the topbar — text + icon (FR-712). It is hidden unless its
   subject reads exactly 1, so an unknown value never claims the feature is on.
-
-Governing documents: `AGENTS.md`, `AGENTS-UI.md`.

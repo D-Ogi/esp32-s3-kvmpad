@@ -6,6 +6,10 @@
 #include "tusb.h"
 
 #define CONFIG_KVM_PTP_WIDTH_TENTH_MM 0
+#if CONFIG_KVM_USB_SCREENSHOT
+#define portMAX_DELAY UINT32_MAX
+#define ESP_FAIL (-1)
+#endif
 #define CONFIG_KVM_PTP_HEIGHT_TENTH_MM 0
 #define ESP_LOGE ESP_LOGI
 typedef void *TaskHandle_t;

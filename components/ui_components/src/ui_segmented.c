@@ -94,6 +94,7 @@ static void add_tab(lv_obj_t *seg, const ui_segment_t *row, int32_t width, ui_se
     }
     lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(tab, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    if (desc_of(seg)->control_palette) ui_theme_control_button(tab);
     if (row->icon && lv_image_src_get_type(row->icon) == LV_IMAGE_SRC_VARIABLE) {
         ui_theme_control_button(tab);
         ui_theme_apply(tab, UI_STYLE_NAV_TAB, LV_STATE_DEFAULT);
@@ -105,6 +106,7 @@ static void add_tab(lv_obj_t *seg, const ui_segment_t *row, int32_t width, ui_se
     }
     if (row->label) {
         lv_obj_t *label = lv_label_create(tab);
+        if (desc_of(seg)->control_palette) lv_obj_remove_style_all(label);
         lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
         lv_label_set_text(label, row->label);
         lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);

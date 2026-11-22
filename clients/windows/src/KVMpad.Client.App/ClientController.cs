@@ -50,6 +50,7 @@ internal sealed class ClientController : IDisposable
     public ICredentialStore Store => _store;
 
     public SessionLogic? Logic => _logic;
+    public SshControlSetup? Ssh { get; private set; }
 
     public CaptureController? Capture => _capture;
 
@@ -199,6 +200,7 @@ internal sealed class ClientController : IDisposable
         };
         _logic = new SessionLogic(SystemClock.Instance, options, _ledger);
         var transport = new ClientWebSocketTransport(device.ToEndpoint());
+        Ssh = new SshControlSetup(_logic, transport.BoardHost);
         ConnectedDeviceId = device.DeviceId;
         var session = new RemoteSession(transport, _logic);
         _session = session;
@@ -295,6 +297,7 @@ internal sealed class ClientController : IDisposable
         ConnectedDeviceId = null;
         _capture = null;
         _logic = null;
+        Ssh = null;
         SetStatus();
     }
 

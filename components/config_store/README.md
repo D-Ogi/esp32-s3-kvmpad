@@ -1,16 +1,8 @@
 # `config_store`
 
-> **Status:** `IMPLEMENTED_SW` (TASK-090) — core and NVS backend written, host suite green,
-> `NOT_RUN_HW`. The integrator still has to remove `config_store` from `EXCLUDE_COMPONENTS` in the
-> root `CMakeLists.txt` and call `config_store_nvs_init()` from the firmware start-up path.
-
 **Role:** NVS: `schema_version`, CRC/validation, migrators, defaults, write debounce, pairing erase.
 
-| | |
-|---|---|
-| Tasks | TASK-090 |
-| Specification | 02 §9 (TECH-050), 01 §8 |
-| Tests | AT-FAULT-02/03/10, AT-SEC-08, AT-EXT-18 (host half in `test/config_store`) |
+**Tests.** AT-FAULT-02/03/10, AT-SEC-08, AT-EXT-18 (host half in `test/config_store`)
 
 **Rules (MUST):**
 
@@ -45,7 +37,7 @@ without a second table.
 | `mouse.natural_scroll` | bool | off | on / off | FR-502 |
 | `mouse.longpress_right_click` | bool | on | on / off | FR-503 |
 | `mouse.two_finger_scroll` | bool | on | on / off | FR-504 |
-| `mouse.scroll_speed` | u8 | 3 | 1..10 | TASK-090 |
+| `mouse.scroll_speed` | u8 | 3 | 1..10 | `config_record.c` |
 | `display.brightness` | u8 % | 80 | 10..100 | FR-505 |
 | `remote.enabled` | bool | off | on / off | FR-506, TECH-040 |
 | `diag.overlay` | bool | off | on / off | FR-509 |
@@ -53,21 +45,20 @@ without a second table.
 | `control.approval` | enum (policy) | **`always`** | `auto` / `trusted` / `always` | FR-733 |
 | `shortcuts.confirm_alt_f4` | bool (policy) | off | on / off | FR-734 |
 | `keepawake.enabled` | bool | off | on / off | FR-711 |
-| `keepawake.interval_s` | u16 s | 30 | 10..300 | ADR-020 |
+| `keepawake.interval_s` | u16 s | 30 | 10..300 | FR-711 |
 | `kbd.unicode_mode` | enum | `host-ime` | `host-ime` / `linux` / `macos` / `windows-hex` / `wincompose` | FR-747 |
 | `kbd.host_layout` | id, ≤ 15 chars | `us` | `[a-z0-9_-]+` with an optional `(variant)` | FR-508, FR-741 |
-| `kbd.lang_ko` | bool | off | on / off | FR-746, ADR-037 |
-| `kbd.lang_zh` | bool | off | on / off | FR-746, ADR-037 |
-| `kbd.lang_ja` | bool | off | on / off | FR-746, ADR-037 |
-| HOST-layout favorites | up to 8 ids | `us` | each id as `kbd.host_layout`, never empty | FR-741, ADR-039 |
-| HOST-layout recents | up to 5 ids | empty | each id as `kbd.host_layout` | FR-741, ADR-039 |
+| `kbd.lang_ko` | bool | off | on / off | FR-746 |
+| `kbd.lang_zh` | bool | off | on / off | FR-746 |
+| `kbd.lang_ja` | bool | off | on / off | FR-746 |
+| HOST-layout favorites | up to 8 ids | `us` | each id as `kbd.host_layout`, never empty | FR-741 |
+| HOST-layout recents | up to 5 ids | empty | each id as `kbd.host_layout` | FR-741 |
 | `wifi` cache | BSSID + channel | absent | channel 1..14, a unicast BSSID | TECH-071 |
 | pairing register | up to 8 clients | empty | name ≤ 23 printable ASCII, 32-byte digest, date, `trusted` | FR-726, FR-733 |
 
-`local.takeover` (FR-507) is **not** a setting: ADR-023 lists local priority among the hard
-invariants, so it has no key and no toggle.
+`local.takeover` (FR-507) is **not** a setting: local input always has priority, so it has no key and no toggle.
 
-### HOST-layout lists (ADR-039)
+### HOST-layout lists
 
 `kvm_config_store_set_favorites()` and `kvm_config_store_set_recents()` replace a whole list in one
 step. They check that every entry is a well-formed id and that the count fits the list, and refuse
@@ -110,9 +101,9 @@ A record is 266 bytes with no paired clients and 810 bytes with all eight. The C
 suite flips each of the bits of a full record one at a time and each flip ends in the factory
 defaults (AT-FAULT-02). Schema 1 is a synthetic eight-byte legacy payload kept so the migration
 path is exercised by a test before a real schema bump. Schema 3 is the previous real layout: the
-same fixed part without the two ADR-039 lists, so a schema-3 record is read with its pairing entries
+same fixed part without the two lists, so a schema-3 record is read with its pairing entries
 210 bytes earlier and the two lists at their defaults. Schema 2 is schema 3 without the three
-ADR-037 language bytes at offsets 41..43, so it is read with its pairing entries 213 bytes earlier
+language bytes at offsets 41..43, so it is read with its pairing entries 213 bytes earlier
 and the three languages at their default (off) as well.
 
 ## Write policy (TECH-050)
@@ -164,13 +155,9 @@ BSSID and a channel, never the passphrase (TECH-071).
 The firmware keeps one store behind a mutex (the component itself is not thread-safe). A writer task
 (priority 2, core 0, internal stack because it writes flash) sleeps until
 `kvm_config_store_ms_until_write()` says a write is due or a mutation wakes it. `net_status` gets the
-ADR-017 cache hooks from it; `reboot` flushes a pending record first. The console `config` command prints
+cache hooks from it; `reboot` flushes a pending record first. The console `config` command prints
 the load status, the write counters and the scalar settings; it never prints the BSSID or a pairing entry.
 
 ## Tests
 
-`test/config_store` (host, clang, ASan and UBSan). See that directory's `README.md` for the
-commands and the test-to-requirement map. Hardware halves of AT-FAULT-02/03/10 and AT-EXT-18 are
-`NOT_RUN_HW`.
-
-Governing documents: `AGENTS.md`.
+`test/config_store` (host, clang, ASan and UBSan). See the [host test guide](../../test/config_store/README.md) for commands and coverage. Hardware halves of AT-FAULT-02/03/10 and AT-EXT-18 require a board.

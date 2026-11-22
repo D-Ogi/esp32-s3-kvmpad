@@ -43,9 +43,32 @@ static unsigned monitor_chart_matches;
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#if CONFIG_KVM_USB_SCREENSHOT
+#include "preboot_capture.h"
+#include "src/misc/cache/instance/lv_image_cache.h"
+static preboot_picture_t capture_picture;
+static lv_image_dsc_t capture_descriptor;
+
+static void discard_capture_picture(void)
+{
+    if (capture_picture.pixels) {
+        lv_image_cache_drop(&capture_descriptor);
+        heap_caps_free(capture_picture.pixels);
+        capture_picture = (preboot_picture_t){0};
+        capture_descriptor.data = NULL;
+    }
+}
+#endif
+#ifdef KVM_GUD_PANEL_CHECK
+#include "gud_panel.h"
+#include "gud_receiver.h"
+#endif
 
 typedef enum {
     WATCH, SCAN, INSPECT_MOVIE, SELECT_ITEM, RECEIVE, ACTIVATE, ENABLE_PROFILE, DISABLE_PROFILE, UNINSTALL, PLAY,
+#if CONFIG_KVM_USB_SCREENSHOT
+    CAPTURE_EXPORT, CAPTURE_READ,
+#endif
 #ifdef KVM_MEDIA_PAGED_GUEST
     PLAY_PAGED,
 #endif
@@ -66,10 +89,16 @@ typedef struct {
 #endif
 } command_t;
 typedef enum { LIST, READY, PRESENT_TRIAL, ACTIVE, ROLLED_BACK, DISABLED, MOVIE_INFO, MOVIE_DONE, ERROR,
+#if CONFIG_KVM_USB_SCREENSHOT
+               CAPTURE_SHARED, CAPTURE_PICTURE,
+#endif
                CARD_MOUNT_ERROR, CARD_UNAVAILABLE, CLOSED } reply_type_t;
 typedef enum { CARD_SOURCE_NONE, CARD_SOURCE_NATIVE, CARD_SOURCE_COMPANION, CARD_SOURCE_PAGED } card_source_t;
 typedef struct {
     reply_type_t type;
+#if CONFIG_KVM_USB_SCREENSHOT
+    preboot_picture_t capture;
+#endif
     esp_err_t error;
     pack_scene_t *scene;
     pack_review_t review;
@@ -393,12 +422,27 @@ static void worker(void *arg)
     pack_candidate_t candidate = {0};
     pack_review_t baseline = {0};
     bool mounted = false;
+#if CONFIG_KVM_USB_SCREENSHOT
+    FILE *capture_image = NULL;
+#endif
     unsigned item = 0;
     uint32_t received_epoch = 0;
     while (!atomic_load(&closing)) {
         command_t cmd;
         bool have_command = xQueueReceive(commands, &cmd, pdMS_TO_TICKS(250));
-        if (mounted && !pack_card_present()) {
+#if CONFIG_KVM_USB_SCREENSHOT
+        bool lost = mounted && !(capture_image ? usb_hid_device_screenshot_present(pack_card_present) : pack_card_present());
+#else
+        bool lost = mounted && !pack_card_present();
+#endif
+        if (lost) {
+#if CONFIG_KVM_USB_SCREENSHOT
+            if (capture_image) {
+                usb_hid_device_screenshot_end();
+                fclose(capture_image);
+                capture_image = NULL;
+            }
+#endif
             // A queued tap can arrive before the next idle poll. Retire the
             // old list and wait for Home to detach the scene before disposal.
             reply(CARD_UNAVAILABLE, ESP_ERR_NOT_FOUND, NULL);
@@ -409,6 +453,32 @@ static void worker(void *arg)
         if (!have_command) continue;
         esp_err_t e = ESP_OK;
         switch (cmd.type) {
+#if CONFIG_KVM_USB_SCREENSHOT
+        case CAPTURE_EXPORT: {
+            if (!mounted) mounted = pack_card_mount() == ESP_OK;
+            if (!mounted || capture_image) { e = ESP_ERR_INVALID_STATE; break; }
+            e = preboot_volume_open(&capture_image);
+            if (e == ESP_OK && !card_worker_stopped())
+                e = usb_hid_device_screenshot_begin(capture_image);
+            else if (e == ESP_OK) e = ESP_ERR_INVALID_STATE;
+            if (e != ESP_OK && capture_image) { fclose(capture_image); capture_image = NULL; }
+            reply(CAPTURE_SHARED, e, NULL);
+            e = ESP_OK;
+            break;
+        }
+        case CAPTURE_READ: {
+            reply_t result = {.type = CAPTURE_PICTURE, .error = ESP_ERR_INVALID_STATE};
+            if (capture_image) {
+                result.error = usb_hid_device_screenshot_end();
+                if (result.error == ESP_OK)
+                    result.error = preboot_read_latest(capture_image, &result.capture);
+                fclose(capture_image);
+                capture_image = NULL;
+            }
+            xQueueSend(replies, &result, portMAX_DELAY);
+            break;
+        }
+#endif
         case WATCH:
             mounted = pack_card_mount() == ESP_OK;
             break;
@@ -565,6 +635,12 @@ static void worker(void *arg)
     }
     if (received_epoch)
         pack_receive_finish(received_epoch, false);
+#if CONFIG_KVM_USB_SCREENSHOT
+    if (capture_image) {
+        usb_hid_device_screenshot_end();
+        fclose(capture_image);
+    }
+#endif
     pack_dispose(&candidate);
     pack_card_close();
     reply(CLOSED, ESP_OK, NULL);
@@ -614,6 +690,9 @@ static void reset_body(const char *message)
 #endif
     clear_movie_detail();
     lv_obj_clean(body);
+#if CONFIG_KVM_USB_SCREENSHOT
+    discard_capture_picture();
+#endif
     if (message)
         text_row(body, message, 12);
 }
@@ -736,6 +815,86 @@ static void choose_monitor_size(lv_event_t *event)
                                      "USB monitor could not start.", 4000);
 }
 
+#if CONFIG_KVM_USB_GUD
+static bool select_gud(bool active)
+{
+    return usb_hid_device_set_gud(active) == ESP_OK;
+}
+
+bool pack_panel_open_gud_monitor(void)
+{
+    return menu && lv_screen_active() == menu && monitor_page != MONITOR_UNAVAILABLE &&
+           usb_monitor_gud_open(pack_panel_leave, select_gud);
+}
+
+static void open_gud(lv_event_t *event)
+{
+    (void)event;
+    if (!pack_panel_open_gud_monitor())
+        ui_toast_show(menu, "Monochrome display could not start.", 4000);
+}
+#endif
+
+#if CONFIG_KVM_USB_SCREENSHOT
+static void capture_start(lv_event_t *event)
+{
+    (void)event;
+    if (request(CAPTURE_EXPORT, 0)) reset_body("Preparing the 32 MiB USB capture volume on microSD...");
+}
+
+static void capture_read(lv_event_t *event)
+{
+    (void)event;
+    if (request(CAPTURE_READ, 0)) reset_body("Opening the latest BIOS screenshot...");
+}
+
+static void capture_key(lv_event_t *event)
+{
+    uint8_t usage = (uintptr_t)lv_event_get_user_data(event);
+    const kvm_hid_burst_step_t steps[] = {{usage, true}, {usage, false}};
+    if (hid_dispatch_burst_start(steps, 2, NULL, 0) != ESP_OK)
+        ui_toast_show(menu, "USB keyboard is busy.", 2000);
+}
+
+static void capture_ready(void)
+{
+    reset_body("In BIOS Setup, press F12 and save to KVMPADSHOT.");
+    text_row(body, "After the BIOS confirms the save, choose View latest.", 70);
+    const struct { const char *text; uint8_t usage; } keys[] = {
+        {"Left", 0x50}, {"Up", 0x52}, {"Down", 0x51}, {"Right", 0x4f}, {"Enter", 0x28}, {"Esc", 0x29}
+    };
+    for (unsigned i = 0; i < sizeof(keys)/sizeof(keys[0]); ++i)
+        button(body, keys[i].text, 24 + 151 * i, 196, 140, 70, capture_key, (void *)(uintptr_t)keys[i].usage);
+    button(body, "F12  /  Capture", 24, 304, 445, 82, capture_key, (void *)(uintptr_t)0x45);
+    button(body, "View latest", 490, 304, 445, 82, capture_read, NULL);
+    if (library_button) lv_obj_add_state(library_button, LV_STATE_DISABLED);
+}
+
+static void capture_result(reply_t *result)
+{
+    const char *msg = result->error == ESP_ERR_NOT_FOUND ? "No BMP screenshot on the capture volume yet." :
+                      result->error == ESP_ERR_NOT_SUPPORTED ? "Unsupported BMP format." :
+                      result->error == ESP_ERR_NO_MEM ? "Not enough memory to open this screenshot." :
+                                                       "Could not read the BIOS capture volume.";
+    reset_body(result->error == ESP_OK ? NULL : msg);
+    if (result->capture.pixels) {
+        capture_picture = result->capture;
+        capture_descriptor = (lv_image_dsc_t){
+            .header = {.magic = LV_IMAGE_HEADER_MAGIC, .cf = LV_COLOR_FORMAT_RGB565,
+                       .w = capture_picture.width, .h = capture_picture.height, .stride = capture_picture.width * 2},
+            .data_size = capture_picture.width * capture_picture.height * 2,
+            .data = (const uint8_t *)capture_picture.pixels};
+        lv_obj_t *img = lv_image_create(body);
+        if (img) {
+            lv_image_set_src(img, &capture_descriptor);
+            lv_obj_align(img, LV_ALIGN_TOP_MID, 0, 0);
+        }
+        text_row(body, capture_picture.name, 452);
+    }
+    button(body, "Start another capture", 602, 440, 328, 66, capture_start, NULL);
+}
+#endif
+
 static void open_usb_monitor(lv_event_t *event)
 {
     (void)event;
@@ -744,11 +903,86 @@ static void open_usb_monitor(lv_event_t *event)
     if (library_button) lv_obj_set_hidden(library_button, false);
     lv_obj_t *heading = text_row(body, "USB monitor", UI_SPACE_XL);
     lv_obj_set_style_text_font(heading, ui_theme_font(UI_FONT_TITLE), 0);
-    text_row(body, "Set the resolution in Windows Display settings, or choose a fixed size.", 62);
+    text_row(body, "Choose a display mode. Home returns to the keyboard and mouse.", 62);
     button(body, "Choose in Windows", 24, 112, 916, 82, choose_monitor_size, (void *)(uintptr_t)2);
     button(body, "640 x 480", 24, 210, 448, 88, choose_monitor_size, NULL);
     button(body, "1024 x 600  /  Native", 492, 210, 448, 88, choose_monitor_size, (void *)(uintptr_t)1);
+#if CONFIG_KVM_USB_GUD
+    button(body, "Monochrome  /  Linux GUD", 24, 318, 916, 82, open_gud, NULL);
+#endif
+#if CONFIG_KVM_USB_SCREENSHOT
+    button(body, "BIOS screenshots  /  USB drive", 24, 422, 916, 72, capture_start, NULL);
+#endif
 }
+#ifdef KVM_GUD_PANEL_CHECK
+#if CONFIG_KVM_USB_GUD
+static bool case_button(const char *caption);
+#endif
+// Synthetic frames exercise the receiver and LVGL image without re-enumerating.
+static bool gud_fixture_link(bool active)
+{
+    (void)active;
+    return true;
+}
+
+static bool gud_fixture_pixels(bool edge)
+{
+    const unsigned x0 = edge ? 616 : 0, y0 = edge ? 471 : 0;
+    const uint32_t box[6] = {x0, y0, GUD_WIDTH - x0, GUD_HEIGHT - y0,
+                             (GUD_WIDTH - x0) / 8 * (GUD_HEIGHT - y0), 0};
+    uint8_t setup[25] = {0};
+    memcpy(setup, box, 20); // ESP32-S3 is little endian.
+    if (!gud_panel_set(0x60, 0, setup, sizeof(setup))) return false;
+    for (unsigned y = y0; y < GUD_HEIGHT; ++y) {
+        uint8_t row[GUD_WIDTH / 8] = {0};
+        for (unsigned x = x0; x < GUD_WIDTH; ++x) {
+            bool white = (x / 13 + y / 11) % 2;
+            if (edge && x >= 619) white = !white;
+            if (white) row[(x - x0) / 8] |= 0x80u >> ((x - x0) % 8);
+        }
+        if (!gud_panel_bulk(row, (GUD_WIDTH - x0) / 8)) return false;
+    }
+    return true;
+}
+
+bool pack_panel_gud_check(const char *phase)
+{
+    static bool fixture;
+#if CONFIG_KVM_USB_GUD
+    if (!strcmp(phase, "usb")) {
+        if (monitor_page != MONITOR_SIZES && !case_button("USB monitor")) return false;
+        return case_button("Monochrome  /  Linux GUD");
+    }
+    if (!fixture && !strcmp(phase, "close") && usb_monitor_gud_active()) {
+        pack_panel_leave();
+        return true;
+    }
+#endif
+    if (!usb_monitor_gud_active()) fixture = false;
+    if (fixture && !strcmp(phase, "close")) {
+        pack_panel_leave();
+        fixture = false;
+        return true;
+    }
+    if (fixture && !strcmp(phase, "edge")) return gud_fixture_pixels(true);
+    if (fixture && !strcmp(phase, "reset")) {
+        gud_panel_reset();
+        return true;
+    }
+    if (strcmp(phase, "full") || !menu || lv_screen_active() != menu ||
+        !usb_monitor_gud_open(pack_panel_leave, gud_fixture_link)) return false;
+    fixture = true;
+    uint8_t mode[26] = {0}, enabled = 1;
+    mode[24] = 1;
+    if (gud_panel_get(0x55, 0, mode, 24) == 24 &&
+        gud_panel_set(0x61, 0, mode, sizeof(mode)) && gud_panel_set(0x62, 0, NULL, 0) &&
+        gud_panel_set(0x63, 0, &enabled, 1) && gud_panel_set(0x64, 0, &enabled, 1) &&
+        gud_fixture_pixels(false)) return true;
+    usb_monitor_gud_close();
+    fixture = false;
+    return false;
+}
+#endif
 #endif
 
 bool pack_panel_remote_monitor_mode(bool native)
@@ -912,7 +1146,7 @@ static void play_paged_movie(lv_event_t *e)
 }
 #endif
 
-#ifdef KVM_MEDIA_SYNTHETIC_DIAG
+#if defined(KVM_MEDIA_SYNTHETIC_DIAG) || defined(KVM_PREBOOT_CAPTURE_CHECK) || (defined(KVM_GUD_PANEL_CHECK) && CONFIG_KVM_USB_GUD)
 static bool click_case_button(lv_obj_t *parent, const char *caption)
 {
     for (uint32_t i = 0; i < lv_obj_get_child_count(parent); i++) {
@@ -939,7 +1173,20 @@ static bool case_button(const char *caption)
 {
     return body && lv_screen_active() == menu && click_case_button(body, caption);
 }
+#endif
 
+#ifdef KVM_PREBOOT_CAPTURE_CHECK
+bool pack_panel_capture_check(bool read)
+{
+    if (read) return case_button("View latest");
+    if (menu && body && lv_screen_active() == menu && monitor_page == MONITOR_SIZES)
+        return case_button("BIOS screenshots  /  USB drive");
+    if (!case_button("USB monitor")) return false;
+    return case_button("BIOS screenshots  /  USB drive");
+}
+#endif
+
+#ifdef KVM_MEDIA_SYNTHETIC_DIAG
 #if CONFIG_KVM_USB_MONITOR_EVAL
 bool pack_panel_usb_monitor_test(usb_monitor_trial_t trial)
 {
@@ -1807,8 +2054,27 @@ static void poll(lv_timer_t *t)
             timer = NULL;
             return;
         }
-        if (atomic_load(&closing))
+        if (atomic_load(&closing)) {
+#if CONFIG_KVM_USB_SCREENSHOT
+            if (r.type == CAPTURE_PICTURE) heap_caps_free(r.capture.pixels);
+#endif
             continue;
+        }
+#if CONFIG_KVM_USB_SCREENSHOT
+        if (r.type == CAPTURE_SHARED) {
+            if (r.error == ESP_OK) capture_ready();
+            else {
+                reset_body("Could not open the private capture volume. Check microSD space.");
+                button(body, "Retry", 24, 96, 200, 64, capture_start, NULL);
+            }
+            continue;
+        }
+        if (r.type == CAPTURE_PICTURE) {
+            if (library_button) lv_obj_remove_state(library_button, LV_STATE_DISABLED);
+            capture_result(&r);
+            continue;
+        }
+#endif
         if (r.type == MOVIE_INFO) {
             if (movie_heading && r.epoch == atomic_load(&movie_detail_epoch)) {
                 const kvm_h264_source_info_t *info = &r.movie_info;
@@ -1828,6 +2094,9 @@ static void poll(lv_timer_t *t)
 #if CONFIG_KVM_USB_MONITOR_EVAL
         // The built-in USB monitor has no dependency on the removable card.
         if (r.type == CARD_UNAVAILABLE && usb_monitor_view_active()) continue;
+#ifdef KVM_GUD_PANEL
+        if (r.type == CARD_UNAVAILABLE && usb_monitor_gud_active()) continue;
+#endif
 #endif
         if (library_button) {
             lv_obj_remove_state(library_button, LV_STATE_DISABLED);
@@ -2046,6 +2315,15 @@ void pack_panel_leave(void)
     if (!busy || atomic_load(&closing))
         return;
     clear_movie_detail();
+#if CONFIG_KVM_USB_SCREENSHOT
+    if (capture_picture.pixels && body) {
+        lv_obj_clean(body);
+        discard_capture_picture();
+    }
+#endif
+#ifdef KVM_GUD_PANEL
+    usb_monitor_gud_close();
+#endif
 #if CONFIG_KVM_USB_MONITOR_EVAL
 #if defined(KVM_MEDIA_SYNTHETIC_DIAG) && defined(KVM_USB_PICTURE_CHECK)
     usb_monitor_picture_t chart_picture = {"absent", "absent", 0};

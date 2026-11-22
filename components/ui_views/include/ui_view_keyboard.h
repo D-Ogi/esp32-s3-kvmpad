@@ -246,8 +246,13 @@ typedef struct {
     lv_obj_t *root;
     ui_kbd_workspace_t workspace;
     lv_obj_t *field;
+    lv_obj_t *compact;
+    const kbd_layout_t *compact_layout;
+    int compact_width, compact_height;
     lv_obj_t *hybrid_panel;
     lv_obj_t *hybrid_pad;
+    lv_obj_t *hybrid_scroll_hint;
+    bool two_finger_scroll;
     lv_obj_t *hybrid_tools;
     lv_obj_t *hybrid_rail;
     lv_obj_t *rail_body;
@@ -382,6 +387,8 @@ void ui_view_keyboard_set_conv_engine(ui_view_keyboard_t *k, uint8_t layer, cons
 
 /** ui_view_keyboard_set_conv_engine(k, UI_KBD_LAYER_ZH, engine). */
 void ui_view_keyboard_set_zh_engine(ui_view_keyboard_t *k, const ui_kbd_conv_engine_t *engine);
+
+void ui_view_keyboard_set_scrolling(ui_view_keyboard_t *k, bool two_finger_scroll);
 
 /** The router that shows the language picker and owns the toast layer. Call after ui_view_keyboard_init(). */
 void ui_view_keyboard_bind_router(ui_view_keyboard_t *k, ui_router_t *router);

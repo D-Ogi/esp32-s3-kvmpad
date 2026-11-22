@@ -36,6 +36,7 @@ PALETTE = {
     "StatusChip": (180, 52, {"label": "Status", "status": "neutral"}),
     "TouchArea": (200, 100, {"label": "Touch area"}),
     "AxisPad": (200, 180, {"title": "Axis pad", "axes": ["X", "Y"], "spring_center": True}),
+    "RateSlider": (64, 160, {}),
     "Dial": (144, 160, {"label": "Dial", "min": 0, "max": 100, "value": 0}),
     "GaugeNeedle": (154, 144, {"title": "Gauge", "min": 0, "max": 100}),
     "GaugeArc": (154, 144, {"title": "Gauge", "min": 0, "max": 100}),
@@ -56,6 +57,7 @@ PALETTE = {
 SURFACE_LABELS = {"MonitorViewport": "USB desktop", "KeyboardSurface": "Keyboard", "TouchpadSurface": "Touchpad"}
 WIDGET_EVENTS = {
     "Button": ("tap", "press", "release"), "TouchArea": ("tap", "drag", "long_press"),
+    "RateSlider": ("step_up", "step_down"),
     "Dial": ("rotate",), "TabStrip": ("change",), "AxisPad": ("change",), "Slider": ("change",),
 }
 
@@ -462,8 +464,10 @@ class Editor:
             members, archive = kvmpack.read_package(path, verify_key)
         project = Project(members, archive if verify_key is not None else None)
         try:
+            root = project.doc("ui.json")["root"]
             kvmpack.check_memory_budget(members, project.manifest["limits"]["max_memory_kib"],
-                                        kvmpack.button_icons(project.doc("ui.json")["root"]))
+                                        kvmpack.button_icons(root), kvmpack.chart_assets(root),
+                                        sum(n["type"] == "KeyboardSurface" for n in walk(root)))
         except kvmpack.ProfileBudgetError as error:
             status = f"Opened for editing. {error}"
         else:
@@ -543,7 +547,7 @@ class Editor:
         if name:
             node = self.nodes[name]
             props = node.get("props", {})
-            displays_label = node["type"] not in kvmpack.CONTAINERS | kvmpack.USB_SURFACES.keys() | {"Spacer", "StreamViewport", "TabStrip", "ChartViewer", "AutopilotPanel", "RadioPanel"}
+            displays_label = node["type"] not in kvmpack.CONTAINERS | kvmpack.USB_SURFACES.keys() | {"Spacer", "StreamViewport", "TabStrip", "ChartViewer", "AutopilotPanel", "RadioPanel", "RateSlider"}
             self.label_entry.config(state="normal" if displays_label else "disabled")
             chip = node["type"] == "StatusChip"
             button = node["type"] == "Button"
@@ -562,7 +566,8 @@ class Editor:
             bindings = self.current.doc("bindings.json")
             actions = bindings["actions"]
             if node["type"] in kvmpack.LOCAL_CONTROLS:
-                actions = [a for a in actions if a["type"] == "state.set"]
+                allowed = ("state.set", "state.adjust") if node["type"] == "RateSlider" else ("state.set",)
+                actions = [a for a in actions if a["type"] in allowed]
             self.combos["action"].config(values=[""] + [a["id"] for a in actions])
             self.combos["source"].config(
                 values=[""] + [s["id"] for s in bindings["sources"] + bindings["state"]]
@@ -630,6 +635,14 @@ class Editor:
             if container:
                 continue
             p = node.get("props", {})
+            if node["type"] == "RateSlider":
+                mid_x, mid_y = (left + rect[2]) / 2, (top + rect[3]) / 2
+                reach = .36 * b["h"] * s
+                c.create_line(mid_x, mid_y-reach, mid_x, mid_y+reach, width=max(1, round(10*s)),
+                              fill=colors.edge, capstyle="round", tags=(tag,))
+                c.create_line(mid_x-10*s, mid_y, mid_x+10*s, mid_y, width=max(1, round(12*s)),
+                              fill=ink, capstyle="round", tags=(tag,))
+                continue
             chip = node["type"] == "StatusChip"
             caption = p.get("text") or p.get("label") or p.get("title") or SURFACE_LABELS.get(node["type"], name)
             if node["type"] == "Button" and p.get("icon") and b["w"] >= 64 and b["h"] >= 40:

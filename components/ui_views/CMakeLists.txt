@@ -4,7 +4,7 @@
 #
 # Screens (TASK-070A..C) and the shell composition ui_app (07 §5), shared with the simulator. No TinyUSB here (AGENTS-UI §4): hid_core only for its public enums.
 # A view's source joins the build as soon as it exists (TASK-070B/C land in parallel with 070A).
-set(srcs "src/ui_app.c" "src/ui_view_mouse.c")
+set(srcs "src/ui_keyboard_surface.c" "src/ui_app.c" "src/ui_view_mouse.c")
 foreach(v ui_view_keyboard ui_view_shortcuts ui_view_status ui_remote_view ui_view_settings)
     if(EXISTS ${CMAKE_CURRENT_LIST_DIR}/src/${v}.c)
         list(APPEND srcs "src/${v}.c")

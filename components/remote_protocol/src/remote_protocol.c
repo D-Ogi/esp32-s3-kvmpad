@@ -1267,6 +1267,15 @@ kvm_rp_err_t kvm_rp_on_frame(kvm_rp_t *rp, uint64_t session_id, const char *fram
     }
     if (s->pack_only && strcmp(type, "session.close") != 0)
         return reject_abuse(rp, s, KVM_RP_ERR_CONTROL_DENIED, (uint64_t)seq);
+    if (strcmp(type, "ssh.key.bind") == 0 && rp->hooks.ssh_bind_key) {
+        if (!s->authenticated || !s->operator_role || rp->maintenance)
+            return reject(rp, s, KVM_RP_ERR_CONTROL_DENIED, (uint64_t)seq);
+        kvm_rp_err_t result = rp->hooks.ssh_bind_key(rp->hooks.ctx, s->id, d, pl);
+        if (result != KVM_RP_OK)
+            return reject(rp, s, result, (uint64_t)seq);
+        kvm_rp_send_ack(rp, s, "ssh.key.bound", (uint64_t)seq);
+        return KVM_RP_OK;
+    }
     if (strcmp(type, "display.profile.request") == 0 && rp->hooks.display_profile) {
         if (!s->authenticated || !s->operator_role || rp->maintenance || rp->owner_session || s->approval_pending)
             return reject(rp, s, KVM_RP_ERR_CONTROL_DENIED, (uint64_t)seq);

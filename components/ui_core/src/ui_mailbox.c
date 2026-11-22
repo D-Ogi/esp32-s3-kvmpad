@@ -72,9 +72,10 @@ ui_pub_result_t ui_mailbox_publish_hid(ui_mailbox_t *mb, const ui_hid_slice_t *s
                        st->modifiers_down != s->modifiers_down || st->mods_armed != s->mods_armed ||
                        st->mods_locked != s->mods_locked || st->caps_led_known != s->caps_led_known ||
                        st->caps_led_active != s->caps_led_active || st->maintenance != s->maintenance ||
-                       st->error_code != s->error_code;
+                       st->error_code != s->error_code || st->mouse_boot_protocol != s->mouse_boot_protocol;
         st->sources |= UI_SRC_HID;
         st->host_usb_state = s->host_usb_state;
+        st->mouse_boot_protocol = s->mouse_boot_protocol;
         st->owner_kind = s->owner_kind;
         st->owner_epoch = s->owner_epoch;
         st->modifiers_down = s->modifiers_down;

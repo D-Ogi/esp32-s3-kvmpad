@@ -13,6 +13,8 @@
 #include "pack_panel.h"
 #include "kvmbridge.h"
 #include "hid_dispatch.h"
+#include "ui_rate_slider.h"
+#include "ui_segmented.h"
 #include "hpe_reports.h"
 #include "esp_heap_caps.h"
 #include "ui_theme.h"
@@ -221,6 +223,23 @@ static void local_event(unsigned idx,pack_event_t event,int value,int x,int y)
     if (a && within_budget() && pack_scene_set(scene,a,value,x,y)) local_bindings(a->state);
 }
 
+static void rate_step(int direction, void *ctx)
+{
+    unsigned idx=(unsigned)(uintptr_t)ctx;
+    if (direction && scene && visible() && idx<scene->widgets && lv_obj_is_visible(controls[idx].obj))
+        local_event(idx,direction>0 ? PACK_STEP_UP : PACK_STEP_DOWN,0,0,0);
+}
+
+static void cancel_rate_sliders(int page)
+{
+    for (unsigned i=0;i<scene->widgets;i++) {
+        if (scene->widget[i].kind!=PACK_RATE_SLIDER || !controls[i].obj) continue;
+        int ancestor=scene->widget[i].parent;
+        while (ancestor>=0 && ancestor!=page) ancestor=scene->widget[ancestor].parent;
+        if (ancestor==page) ui_rate_slider_cancel(controls[i].obj);
+    }
+}
+
 static void touch_event(lv_event_t *e)
 {
     unsigned idx=(unsigned)(uintptr_t)lv_event_get_user_data(e);
@@ -295,24 +314,56 @@ static void show_tabs(unsigned idx)
 {
     const pack_widget_t *w=&scene->widget[idx];
     control_t *c=&controls[idx];
+    ui_segmented_set_active(c->obj,c->selected);
     for (unsigned tab=0; tab<w->tab_count;tab++) {
-        lv_obj_t *button=lv_obj_get_child(c->obj,tab);
         bool selected=(int)tab==c->selected;
-        lv_obj_set_state(button,LV_STATE_CHECKED,selected);
         int page=scene->tab[w->tab_first+tab].page;
-        if (page>=0) lv_obj_set_hidden(controls[page].obj,!selected);
+        if (page>=0 && controls[page].obj && lv_obj_has_flag(controls[page].obj,LV_OBJ_FLAG_HIDDEN)==selected) {
+            if (!selected) cancel_rate_sliders(page);
+            lv_obj_set_hidden(controls[page].obj,!selected);
+        }
     }
 }
 
-static void tab_event(lv_event_t *e)
+static void tab_selected(uint16_t idx,uint16_t tab,void *ctx)
 {
-    unsigned key=(unsigned)(uintptr_t)lv_event_get_user_data(e), idx=key/4, tab=key%4;
+    (void)ctx;
     if (!scene || !visible() || idx>=scene->widgets || !lv_obj_is_visible(controls[idx].obj) ||
-        tab>=scene->widget[idx].tab_count || controls[idx].selected==(int)tab ||
-        lv_event_get_target_obj(e)!=lv_obj_get_child(controls[idx].obj,tab)) return;
+        tab>=scene->widget[idx].tab_count || controls[idx].selected==(int)tab) return;
     controls[idx].selected=tab;
     show_tabs(idx);
     local_event(idx,PACK_CHANGE,tab,0,0);
+}
+
+typedef struct {
+    ui_segmented_desc_t desc;
+    ui_segment_t tabs[];
+} pack_tab_strip_t;
+
+static void free_tab_strip(lv_event_t *event)
+{
+    lv_free(lv_event_get_user_data(event));
+}
+
+static lv_obj_t *create_tab_strip(lv_obj_t *parent,const pack_widget_t *w,unsigned idx)
+{
+    static ui_segmented_sink_t sink={.fn=tab_selected};
+    pack_tab_strip_t *strip=lv_calloc(1,sizeof(*strip)+w->tab_count*sizeof(*strip->tabs));
+    if (!strip) return NULL;
+    for (unsigned j=0;j<w->tab_count;j++) {
+        strip->tabs[j].label=scene->tab[w->tab_first+j].label;
+        strip->tabs[j].control_id=(uint16_t)idx;
+    }
+    strip->desc=(ui_segmented_desc_t){.segments=strip->tabs,.count=w->tab_count,.width=w->w,.height=w->h,
+                                     .control_palette=true};
+    lv_obj_t *obj=ui_segmented_create(parent,&strip->desc,&sink);
+    if (!obj || !lv_obj_add_event_cb(obj,free_tab_strip,LV_EVENT_DELETE,strip)) {
+        if (obj) lv_obj_delete(obj);
+        lv_free(strip);
+        return NULL;
+    }
+    lv_obj_set_pos(obj,w->x,w->y);
+    return obj;
 }
 
 static void widget_event(lv_event_t *e)
@@ -458,6 +509,7 @@ static void choose_screen(lv_event_t *event)
 
 static void show_screen_picker(void)
 {
+    cancel_rate_sliders(-1);
 #if CONFIG_KVM_USB_MONITOR_EVAL
     if (permissions & PACK_PERM_MONITOR) pack_desktop_select(NULL,NULL,scene->portrait);
 #endif
@@ -568,11 +620,23 @@ static bool create_control(unsigned idx)
     const pack_widget_t *w=&scene->widget[idx];
     lv_obj_t *parent=w->parent<0 ? viewport : controls[w->parent].obj;
     control_t *c=&controls[idx];
+    if (w->kind==PACK_TABS) {
+        c->selected=w->initial;
+        c->obj=create_tab_strip(parent,w,idx);
+        return c->obj!=NULL;
+    }
+    if (w->kind==PACK_RATE_SLIDER) {
+        c->obj=ui_rate_slider_create(parent,rate_step,(void *)(uintptr_t)idx);
+        if (!c->obj) return false;
+        lv_obj_set_pos(c->obj,w->x,w->y);
+        lv_obj_set_size(c->obj,w->w,w->h);
+        return true;
+    }
     c->obj=w->kind==PACK_BUTTON ? lv_button_create(parent) : lv_obj_create(parent);
     if (!c->obj) return false;
     if (w->kind==PACK_BUTTON) ui_theme_control_button(c->obj);
     bool container=w->kind==PACK_CONTAINER || w->kind==PACK_SPACER;
-    if (container || w->kind==PACK_TABS || w->kind==PACK_TEXT) plain(c->obj);
+    if (container || w->kind==PACK_TEXT) plain(c->obj);
     bool input_face=w->kind==PACK_TOUCH || w->kind==PACK_AXIS || w->kind==PACK_SLIDER || w->kind==PACK_DIAL;
     if (input_face) {
         ui_theme_apply(c->obj,UI_STYLE_SCREEN,LV_PART_MAIN);
@@ -593,24 +657,6 @@ static bool create_control(unsigned idx)
     if (w->kind==PACK_CHART) return pack_chart_view_open(c->obj,scene,w,chart_storage);
     if (w->kind==PACK_AUTOPILOT) return pack_autopilot_view_open(c->obj,w->w,w->h);
     if (w->kind==PACK_RADIO) return pack_radio_view_open(c->obj,w->w,w->h);
-    if (w->kind==PACK_TABS) {
-        c->selected=w->initial;
-        for (unsigned j=0;j<w->tab_count;j++) {
-            int x=w->w*j/w->tab_count;
-            lv_obj_t *button=lv_button_create(c->obj);
-            if (!button) return false;
-            ui_theme_control_button(button);
-            lv_obj_set_pos(button,x,0);
-            lv_obj_set_size(button,w->w*(j+1)/w->tab_count-x-2,w->h);
-            lv_obj_t *label=lv_label_create(button);
-            if (!label) return false;
-            lv_obj_remove_style_all(label); // inherit the button's active palette and state
-            lv_label_set_text(label,scene->tab[w->tab_first+j].label);
-            lv_obj_center(label);
-            lv_obj_add_event_cb(button,tab_event,LV_EVENT_CLICKED,(void *)(uintptr_t)(idx*4+j));
-        }
-        return true;
-    }
     c->label=lv_label_create(c->obj);
     if (!c->label) return false;
     if (w->kind==PACK_BUTTON || w->kind==PACK_TEXT) lv_obj_remove_style_all(c->label);
@@ -873,7 +919,7 @@ bool pack_view_open(lv_obj_t *content, pack_scene_t *s, unsigned granted)
         // A plain text face owns a container and one label. A tab strip's buttons
         // and captions are already budgeted individually above.
         charge += (w->kind==PACK_CONTAINER || w->kind==PACK_SPACER || w->kind==PACK_TABS) ? 1024 :
-                  w->kind==PACK_TEXT ? 1536 :
+                  w->kind==PACK_TEXT ? 1536 : w->kind==PACK_KEYBOARD ? 48u*1024u :
                   (w->kind>=PACK_GAUGE_ARC && w->kind<=PACK_HORIZON) ? 6144 : 3072;
     }
     if (s->screen_count) charge+=(s->screen_count+4u)*1536u;
@@ -934,6 +980,7 @@ void pack_view_enter_magnifier(void)
 void pack_view_close(void)
 {
     if (!scene) return;
+    cancel_rate_sliders(-1);
 #if CONFIG_KVM_USB_MONITOR_EVAL
     if (permissions & PACK_PERM_MONITOR) pack_desktop_close();
 #endif

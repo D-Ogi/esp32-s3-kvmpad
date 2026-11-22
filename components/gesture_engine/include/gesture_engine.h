@@ -42,7 +42,7 @@ typedef enum {
 } kvm_gesture_cancel_t;
 
 /** Thresholds: 01 §3.1 starting UX values (not hardware facts; tuned only through an ADR). */
-typedef struct {
+typedef struct kvm_gesture_cfg {
     uint16_t h_res, v_res;           // coordinate bounds of the samples
     uint16_t move_start_px;          // 6: ONE_PENDING -> ONE_MOVING
     uint16_t tap_max_move_px;        // 8: FR-102
@@ -60,9 +60,12 @@ typedef struct {
     uint32_t drag_lock_idle_us;      // 10 s, capped at 60 s (FR-115)
     uint16_t scroll_px_per_step;     // centroid travel per wheel step
     bool scroll_natural;             // true: fingers down -> content follows (wheel +)
+    bool scroll_enabled;             // FR-504: affects wheel gestures only; a stationary two-finger tap still clicks
+    bool longpress_right_click;      // FR-503: affects the single-finger hold only
     bool two_finger_enabled;         // false = degraded multi-touch (FR-116): 2 fingers cancel
     kvm_gesture_speed_t speed;       // FR-112 Slow / Normal / Fast
     bool acceleration;               // FR-112 speed curve; false = constant gain
+    int16_t pad_x1, pad_y1, pad_x2, pad_y2; // inclusive; zero-size disables continuous edge motion
 } kvm_gesture_cfg_t;
 
 #define KVM_GESTURE_CFG_DEFAULT                                                                              \
@@ -71,8 +74,8 @@ typedef struct {
         .two_max_move_px = 10, .scroll_start_px = 10, .dtd_max_dist_px = 32, .dtd_move_px = 8,               \
         .tap_max_us = 220000u, .long_press_us = 550000u, .two_join_us = 100000u, .two_tap_max_us = 250000u,  \
         .dtd_window_us = 300000u, .gap_cancel_us = 120000u, .drag_lock_idle_us = 10000000u,                  \
-        .scroll_px_per_step = 24, .scroll_natural = true, .two_finger_enabled = true,                        \
-        .speed = KVM_GEST_SPEED_NORMAL, .acceleration = true,                                                \
+        .scroll_px_per_step = 24, .scroll_natural = false, .scroll_enabled = true, .two_finger_enabled = true, \
+        .speed = KVM_GEST_SPEED_NORMAL, .acceleration = true, .longpress_right_click = true,                 \
     }
 
 #define KVM_GESTURE_MAX_OUT 6
@@ -139,6 +142,9 @@ typedef struct {
 } kvm_gesture_t;
 
 void kvm_gesture_init(kvm_gesture_t *g, const kvm_gesture_cfg_t *cfg);
+
+/** Bounds in the same coordinate space as captured finger samples. */
+void kvm_gesture_set_pad_bounds(kvm_gesture_t *g, int16_t x1, int16_t y1, int16_t x2, int16_t y2);
 
 /** Feed one sample (empty frames included: point_count = 0 is the release information). */
 void kvm_gesture_feed(kvm_gesture_t *g, const kvm_touch_sample_t *s, kvm_gesture_out_t *out);

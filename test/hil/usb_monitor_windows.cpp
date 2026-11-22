@@ -272,6 +272,7 @@ struct pattern_run {
     std::wstring board;
     pattern_target target;
     bool stopped = false, painted = false, marker = false;
+    bool desktop_unavailable = false;
     bool final_requested = false, final_painted = false;
     bool latency = false;
     pattern_size size{};
@@ -385,10 +386,18 @@ static int display_modes(const std::wstring &board_id, DWORD width, DWORD height
     return width && !accepted ? 1 : 0;
 }
 
-static bool target_still_valid(const pattern_run &run)
+static bool target_still_valid(pattern_run &run)
 {
+    if (!on_input_desktop()) {
+        if (!run.desktop_unavailable) {
+            std::puts("PATTERN_UNAVAILABLE input_desktop");
+            std::fflush(stdout);
+        }
+        run.desktop_unavailable = true;
+        return false;
+    }
     pattern_target current;
-    return on_input_desktop() && inspect_desktop(run.board, &current, false, run.latency ? &run.size : nullptr) == 0 &&
+    return inspect_desktop(run.board, &current, false, run.latency ? &run.size : nullptr) == 0 &&
            same_target(current, run.target);
 }
 
@@ -510,13 +519,13 @@ static int show_pattern(const std::wstring &board, bool final_mode, bool latency
     if (latency && (!QueryPerformanceFrequency(&run.frequency) || run.frequency.QuadPart <= 0)) return 1;
     if (!on_input_desktop()) {
         std::puts("PATTERN_UNAVAILABLE input_desktop");
-        return 1;
+        return 3;
     }
     if (!use_physical_coordinates() || inspect_desktop(board, &run.target, false, latency ? &size : nullptr) != 0) return 1;
     const ULONGLONG start = GetTickCount64();
     do {
         Sleep(200);
-        if (!target_still_valid(run)) return 1;
+        if (!target_still_valid(run)) return run.desktop_unavailable ? 3 : 1;
     } while (GetTickCount64() - start < 2000);
 
     WNDCLASSW cls{};
@@ -584,6 +593,7 @@ static int show_pattern(const std::wstring &board, bool final_mode, bool latency
     bool complete = shown && run.painted && !run.stopped && (!controlled || runner_finished) && target_still_valid(run);
     if (window) DestroyWindow(window);
     UnregisterClassW(cls.lpszClassName, cls.hInstance);
+    if (run.desktop_unavailable) return 3;
     return complete ? 0 : 1;
 }
 

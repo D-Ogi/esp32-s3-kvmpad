@@ -80,6 +80,15 @@ static int cmd_info(int argc, char **argv)
            ci.cores, ci.features);
     printf("INFO flash=%" PRIu32 " B psram=%u B idf=%s app=%s ver=%s\n", flash, (unsigned)esp_psram_get_size(),
            esp_get_idf_version(), app->project_name, app->version);
+    static const char hex[] = "0123456789abcdef";
+    char elf_digest[2 * sizeof(app->app_elf_sha256) + 1];
+    for (size_t i = 0; i < sizeof(app->app_elf_sha256); ++i) {
+        const uint8_t byte = app->app_elf_sha256[i];
+        elf_digest[2 * i] = hex[byte >> 4];
+        elf_digest[2 * i + 1] = hex[byte & 15];
+    }
+    elf_digest[sizeof(elf_digest) - 1] = '\0';
+    printf("INFO app_elf_sha256=%s\n", elf_digest);
     printf("INFO heap internal free=%u min=%u | psram free=%u min=%u largest=%u\n",
            (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
            (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
@@ -288,8 +297,12 @@ static int cmd_usb(int argc, char **argv)
     printf("USB state=%s epoch=%" PRIu32 " mounts=%" PRIu32 " umounts=%" PRIu32 " suspends=%" PRIu32
            " resumes=%" PRIu32 "\n",
            usb_hid_state_name(u.state), u.usb_epoch, u.mounts, u.umounts, u.suspends, u.resumes);
+    const char *consumer_protocol = "absent";
+#if KVM_HID_ITF_COUNT > 2
+    consumer_protocol = u.protocol[KVM_HID_ITF_CONSUMER] ? "REPORT" : "BOOT";
+#endif
     printf("USB protocol kbd=%s mouse=%s consumer=%s set_protocol=%" PRIu32 " led=0x%02X led_reports=%" PRIu32 " led_known=%u\n",
-           u.protocol[0] ? "REPORT" : "BOOT", u.protocol[1] ? "REPORT" : "BOOT", u.protocol[2] ? "REPORT" : "BOOT",
+           u.protocol[0] ? "REPORT" : "BOOT", u.protocol[1] ? "REPORT" : "BOOT", consumer_protocol,
            u.set_protocol_count, u.led_state, u.led_reports, (unsigned)u.led_known);
     printf("USB neutral_sent=%" PRIu32 " neutral_failed=%" PRIu32 " complete=%" PRIu32 " failed=%" PRIu32
            " get_report=%" PRIu32 " remote_wakeup_enabled=%d\n",
@@ -365,6 +378,10 @@ static int cmd_gesture(int argc, char **argv)
 {
     if (argc < 2 || strcmp(argv[1], "replay") != 0) {
         kvm_gesture_cfg_t c = KVM_GESTURE_CFG_DEFAULT;
+        app_config_apply_mouse(&c);
+        printf("GESTURE_MOUSE speed=%u hold_right=%u two_finger_scroll=%u natural_scroll=%u\n",
+               (unsigned)c.speed, (unsigned)c.longpress_right_click, (unsigned)c.scroll_enabled,
+               (unsigned)c.scroll_natural);
         printf("gesture engine (TASK-040): thresholds move>%u tap<=%u long<=%u two<=%u scroll>%u px; tap %" PRIu32
                " long %" PRIu32 " join %" PRIu32 " two-tap %" PRIu32 " dtd %" PRIu32 " gap %" PRIu32 " ms; drag-lock idle %" PRIu32
                " s\n",
@@ -621,6 +638,24 @@ static int cmd_ui(int argc, char **argv)
                s.presented, s.superseded, s.input_slots, (unsigned)(link == KVM_USB_SUSPENDED), s.accelerated, s.duplicate_jpegs);
         return 0;
     }
+#ifdef KVM_GUD_PANEL_CHECK
+    if (argc == 3 && !strcmp(argv[1], "gud-check")) {
+        if (!ui_platform_lock(500)) return 1;
+        bool ok = pack_panel_gud_check(argv[2]);
+        ui_platform_unlock();
+        printf("GUD_CHECK ok=%u\n", (unsigned)ok);
+        return ok ? 0 : 1;
+    }
+#endif
+#ifdef KVM_PREBOOT_CAPTURE_CHECK
+    if (argc == 3 && !strcmp(argv[1], "capture-check") && (!strcmp(argv[2], "start") || !strcmp(argv[2], "read"))) {
+        if (!ui_platform_lock(500)) return 1;
+        bool ok = pack_panel_capture_check(!strcmp(argv[2], "read"));
+        ui_platform_unlock();
+        printf("CAPTURE_CHECK queued=%u\n", (unsigned)ok);
+        return ok ? 0 : 1;
+    }
+#endif
 #ifdef KVM_MEDIA_SYNTHETIC_DIAG
     if (argc == 2 && (!strcmp(argv[1], "usb-monitor-test") || !strcmp(argv[1], "usb-monitor-link-test") ||
                       !strcmp(argv[1], "usb-monitor-desktop-test"))) {
@@ -837,9 +872,21 @@ static int cmd_ui(int argc, char **argv)
             }
 #if CONFIG_KVM_USB_MONITOR_EVAL
             if (!strcmp(n, "usb-monitor")) {
+#if CONFIG_KVM_USB_GUD
+                if (argc == 4 && !strcmp(argv[3], "linux")) {
+                    if (!ui_platform_lock(1500)) return 1;
+                    bool started = pack_panel_open_gud_monitor();
+                    ui_platform_unlock();
+                    printf("USB_MONITOR_OPEN size=linux started=%u\n", (unsigned)started);
+                    return started ? 0 : 1;
+                }
+#endif
                 bool controls = argc == 5 && !strcmp(argv[4], "controls");
                 if ((argc != 4 && !controls) || (strcmp(argv[3], "640x480") && strcmp(argv[3], "1024x600") && strcmp(argv[3], "windows"))) {
                     printf("usage: ui open usb-monitor <windows|640x480|1024x600> [controls] from Extensions\n");
+#if CONFIG_KVM_USB_GUD
+                    puts("       ui open usb-monitor linux");
+#endif
                     return 1;
                 }
                 if (!ui_platform_lock(1500)) return 1;
@@ -1402,9 +1449,13 @@ static int cmd_hid(int argc, char **argv)
            c.accepted, c.reports_sent, c.send_refused, c.completion_timeouts, c.release_all, c.queue_overflows,
            c.stale_dropped, c.rejected_offline, c.rejected_suspended, c.rejected_usage, c.keepalive_sent,
            c.keepalive_rejected, c.queue_high_water);
+    uint32_t consumer_timeouts = 0;
+#if KVM_HID_ITF_COUNT > 2
+    consumer_timeouts = c.completion_timeouts_itf[KVM_HID_ITF_CONSUMER];
+#endif
     printf("HID completion_timeouts kbd=%" PRIu32 " mouse=%" PRIu32 " consumer=%" PRIu32 "\n",
            c.completion_timeouts_itf[KVM_HID_ITF_KEYBOARD], c.completion_timeouts_itf[KVM_HID_ITF_MOUSE],
-           c.completion_timeouts_itf[KVM_HID_ITF_CONSUMER]);
+           consumer_timeouts);
     printf("HID release_by_reason:");
     for (int r = 0; r < KVM_RA_COUNT; r++) {
         if (c.release_by_reason[r] != 0) {

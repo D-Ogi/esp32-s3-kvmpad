@@ -12,8 +12,8 @@ enum { PACK_PERM_UI = 1, PACK_PERM_JOYSTICK = 2, PACK_PERM_TELEMETRY = 4, PACK_P
 typedef enum { PACK_CONTAINER, PACK_TEXT, PACK_BUTTON, PACK_SPACER, PACK_AXIS, PACK_SLIDER,
                PACK_GAUGE_ARC, PACK_GAUGE_NEEDLE, PACK_HORIZON, PACK_VALUE, PACK_STREAM,
                PACK_TOUCH, PACK_DIAL, PACK_TABS, PACK_CHIP, PACK_CHART, PACK_AUTOPILOT, PACK_RADIO,
-               PACK_MONITOR, PACK_KEYBOARD, PACK_TOUCHPAD } pack_widget_kind_t;
-typedef enum { PACK_TAP, PACK_CHANGE, PACK_PRESS, PACK_RELEASE, PACK_DRAG, PACK_ROTATE, PACK_LONG_PRESS } pack_event_t;
+               PACK_RATE_SLIDER, PACK_MONITOR, PACK_KEYBOARD, PACK_TOUCHPAD } pack_widget_kind_t;
+typedef enum { PACK_TAP, PACK_CHANGE, PACK_PRESS, PACK_RELEASE, PACK_DRAG, PACK_ROTATE, PACK_LONG_PRESS, PACK_STEP_UP, PACK_STEP_DOWN } pack_event_t;
 typedef enum { PACK_STATE, PACK_AXES, PACK_BUTTON_BIT, PACK_START_STREAM, PACK_STOP_STREAM, PACK_HAT } pack_action_kind_t;
 typedef enum { PACK_BIND_TEXT, PACK_BIND_VALUE, PACK_BIND_PITCH, PACK_BIND_ROLL, PACK_BIND_SELECTED } pack_field_t;
 enum { PACK_X = 1, PACK_Y = 2, PACK_Z = 4, PACK_RZ = 8 };
@@ -68,7 +68,7 @@ typedef struct {
     uint8_t enum_start, enum_count;
     bool local, seeded;
 } pack_binding_t;
-typedef enum { PACK_LITERAL, PACK_EVENT_VALUE, PACK_EVENT_X, PACK_EVENT_Y, PACK_MODE_STATE } pack_argument_t;
+typedef enum { PACK_LITERAL, PACK_EVENT_VALUE, PACK_EVENT_X, PACK_EVENT_Y, PACK_MODE_STATE, PACK_ADJUST } pack_argument_t;
 typedef struct {
     char id[97];
     pack_argument_t argument;

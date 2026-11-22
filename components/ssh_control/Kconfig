@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+config KVM_SSH_BOARD
+    bool "Paired SSH keyboard and mouse on the device"
+    depends on VFS_SUPPORT_IO
+    select VFS_SUPPORT_TERMIOS
+    default n
+    help
+        Enable the direct SSH endpoint with the existing paired TLS session and
+        LCD control approval. Intended for board qualification.

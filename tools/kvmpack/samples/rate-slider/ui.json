@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "root": {
+    "id": "panel",
+    "type": "Column",
+    "bounds": {
+      "x": 0,
+      "y": 0,
+      "w": 360,
+      "h": 250
+    },
+    "children": [
+      {
+        "id": "altitude_label",
+        "type": "Text",
+        "bounds": {
+          "x": 84,
+          "y": 8,
+          "w": 256,
+          "h": 44
+        },
+        "props": {
+          "text": "Selected altitude (ft)"
+        }
+      },
+      {
+        "id": "altitude_value",
+        "type": "Text",
+        "bounds": {
+          "x": 84,
+          "y": 60,
+          "w": 256,
+          "h": 64
+        },
+        "props": {
+          "text": "1000"
+        }
+      },
+      {
+        "id": "wheel",
+        "type": "RateSlider",
+        "bounds": {
+          "x": 12,
+          "y": 12,
+          "w": 64,
+          "h": 160
+        },
+        "events": {
+          "step_up": "increase",
+          "step_down": "decrease"
+        }
+      }
+    ]
+  }
+}

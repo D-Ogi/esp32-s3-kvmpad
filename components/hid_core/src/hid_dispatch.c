@@ -320,12 +320,38 @@ static void on_state(void *ctx, kvm_usb_state_t state, uint32_t usb_epoch)
     publish();
 }
 
+static size_t get_input_report(void *ctx, uint8_t itf, uint8_t protocol, uint8_t report[8])
+{
+    (void)ctx;
+    // The host may poll EP0 while the interrupt endpoint is still busy.
+    // Relative movement belongs to its single interrupt transfer.
+    switch (itf) {
+    case KVM_HID_ITF_KEYBOARD:
+        return kvm_hid_build_keyboard(report, s_core.modifiers, s_core.keys);
+    case KVM_HID_ITF_MOUSE:
+        return kvm_hid_build_mouse(report, protocol, s_core.buttons, 0, 0, 0, 0);
+#if KVM_HID_ITF_COUNT == 3
+    case KVM_HID_ITF_CONSUMER:
+        return kvm_hid_build_consumer(report, s_core.consumer);
+#endif
+    default:
+        return 0;
+    }
+}
+
 static void on_complete(void *ctx, uint8_t itf)
 {
     (void)ctx;
     kvm_hid_core_on_report_complete(&s_core, itf);
     kvm_hid_core_poll(&s_core, (uint64_t)esp_timer_get_time()); // next phase / next report without waiting for a tick
     publish();
+}
+
+static void repeat_keyboard(void *ctx)
+{
+    // Apply any queued release, owner change or key transition before a duplicate.
+    pump(ctx);
+    if (!uxQueueMessagesWaiting(s_q)) kvm_hid_core_repeat_keyboard(&s_core);
 }
 
 static void on_failed(void *ctx, uint8_t itf)
@@ -420,9 +446,22 @@ static esp_err_t post(const msg_t *m)
     return ESP_OK;
 }
 
+// Return a synchronous refusal before publishing a command the USB profile cannot complete.
+static bool supports_intent(const kvm_hid_intent_t *intent)
+{
+    if (KVM_HID_ITFS > 2) return true;
+    if (intent->type == KVM_HID_CONSUMER_DOWN || intent->type == KVM_HID_CONSUMER_UP) return false;
+    if (intent->type == KVM_HID_CHORD) {
+        const kvm_chord_t *chord = kvm_chord_get(intent->data.chord.chord_id);
+        if (chord && chord->kind == KVM_CHORD_KIND_CONSUMER) return false;
+    }
+    return true;
+}
+
 esp_err_t hid_dispatch_local(const kvm_hid_intent_t *intent)
 {
     ESP_RETURN_ON_FALSE(intent != NULL, ESP_ERR_INVALID_ARG, TAG, "intent");
+    if (!supports_intent(intent)) return ESP_ERR_NOT_SUPPORTED;
     if (intent->type == KVM_HID_RELEASE_ALL) {
         hid_dispatch_release_all(KVM_RA_REQUEST);
         return ESP_OK;
@@ -527,6 +566,7 @@ esp_err_t hid_dispatch_set_keepalive(bool enabled, uint32_t interval_s)
 esp_err_t hid_dispatch_remote(uint64_t session_id, uint32_t lease_epoch, const kvm_hid_intent_t *intent)
 {
     ESP_RETURN_ON_FALSE(intent != NULL, ESP_ERR_INVALID_ARG, TAG, "intent");
+    if (!supports_intent(intent)) return ESP_ERR_NOT_SUPPORTED;
     if (intent->type == KVM_HID_RELEASE_ALL) {
         hid_dispatch_release_all(KVM_RA_REQUEST);
         return ESP_OK;
@@ -654,6 +694,7 @@ esp_err_t hid_dispatch_start(void)
 #if KVM_HID_HAS_HPE
         .on_ptp_route = on_ptp_route, .on_studio_output = on_studio, .get_profile = on_profile,
 #endif
+        .get_input_report = get_input_report, .repeat_keyboard = repeat_keyboard,
         .on_failed = on_failed, .ctx = NULL};
     ESP_RETURN_ON_ERROR(usb_hid_device_set_transport(&tr), TAG, "transport");
     const esp_timer_create_args_t targs = {

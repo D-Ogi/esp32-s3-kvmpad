@@ -15,6 +15,8 @@
 
 #include "usb_hid_reports.h"
 
+_Static_assert(KVM_HID_ITFS == KVM_HID_ITF_COUNT, "scheduler and USB interfaces must match");
+
 enum {
     Q_KEY_DOWN = 1, // a = usage, b = extra modifier mask pressed in the same report (ADR-016 one-shot)
     Q_KEY_UP,       // a = usage
@@ -168,6 +170,12 @@ static void stage_keyboard(kvm_hid_core_t *core)
     try_send(core, KVM_HID_ITF_KEYBOARD);
 }
 
+void kvm_hid_core_repeat_keyboard(kvm_hid_core_t *core)
+{
+    if (core->usb == KVM_HOST_USB_MOUNTED && !core->neutral_barrier &&
+        !itf_busy(core, KVM_HID_ITF_KEYBOARD)) stage_keyboard(core);
+}
+
 static void stage_mouse(kvm_hid_core_t *core, int8_t dx, int8_t dy, int8_t wheel, int8_t pan)
 {
     staged_t *s = staged(core, KVM_HID_ITF_MOUSE);
@@ -179,6 +187,7 @@ static void stage_mouse(kvm_hid_core_t *core, int8_t dx, int8_t dy, int8_t wheel
 
 static void stage_consumer(kvm_hid_core_t *core)
 {
+#if KVM_HID_ITF_COUNT > 2
     staged_t *s = staged(core, KVM_HID_ITF_CONSUMER);
 #if KVM_HID_HAS_HPE
     s->buf[0] = HPE_CONSUMER;
@@ -188,6 +197,9 @@ static void stage_consumer(kvm_hid_core_t *core)
 #endif
     s->pending = true;
     try_send(core, KVM_HID_ITF_CONSUMER);
+#else
+    (void)core; // Rejected by validate() before enqueueing in the boot-only profile.
+#endif
 }
 
 static void stage_neutral(kvm_hid_core_t *core, uint8_t itf)
@@ -389,6 +401,10 @@ static void chord_step(kvm_hid_core_t *core)
 {
     const kvm_chord_t *ch = kvm_chord_get(core->chord_id);
     uint8_t itf = chord_itf(core);
+    if (itf >= core->interface_count) {
+        chord_finish(core, false);
+        return;
+    }
     staged_t *s = staged(core, itf);
     if (ch == NULL || core->in_flight[itf] || core->neutral_pending[itf] || s->pending) {
         return;
@@ -452,7 +468,8 @@ static bool process_head(kvm_hid_core_t *core)
         return false;
     }
     kvm_hid_qentry_t *e = q_at(core, 0);
-    if (e->epoch != core->owner.epoch) {
+    uint8_t itf = entry_itf(core, e);
+    if (e->epoch != core->owner.epoch || itf >= core->interface_count) {
         core->c.stale_dropped++; // INV-002: old queued intents are rejected after an epoch change
         if (e->kind == Q_CHORD) {
             core->c.chords_aborted++;
@@ -461,7 +478,6 @@ static bool process_head(kvm_hid_core_t *core)
         q_pop(core);
         return true;
     }
-    uint8_t itf = entry_itf(core, e);
     if (itf_busy(core, itf)) {
         return false;
     }
@@ -1000,6 +1016,7 @@ void kvm_hid_core_release_all(kvm_hid_core_t *core, kvm_release_reason_t reason)
         }
     }
     ledger_clear(core);
+    core->neutral_barrier = true;
     kvm_kbd_init(&core->kbd);
     core->q_head = 0;
     core->q_count = 0;
@@ -1037,8 +1054,8 @@ void kvm_hid_core_set_usb(kvm_hid_core_t *core, kvm_host_usb_t state, uint32_t u
                     core->in_flight[i] = false;
                 }
             }
-#if KVM_HID_HAS_HPE
             core->neutral_barrier = true;
+#if KVM_HID_HAS_HPE
             core->control_neutral_phase = 0;
             if (usb_epoch != core->usb_epoch) {
                 core->ptp_generation++;
@@ -1150,13 +1167,17 @@ void kvm_hid_core_poll(kvm_hid_core_t *core, uint64_t now_us)
             stage_neutral(core, i);
         }
     }
-#if KVM_HID_HAS_HPE
     if (core->neutral_barrier) {
-        for (unsigned i=0; i<core->interface_count; i++)
-            if (core->neutral_pending[i] || core->staged[i].pending || core->in_flight[i]) return;
         core->neutral_barrier = false;
+        for (unsigned i=0; i<core->interface_count; i++) {
+            if (core->neutral_pending[i] || core->staged[i].pending || core->in_flight[i]) {
+                core->neutral_barrier = true;
+                break;
+            }
+        }
+        // The legacy three-interface scheduler allows independent endpoints to proceed.
+        if (core->neutral_barrier && KVM_HID_HAS_NEUTRAL_BARRIER) return;
     }
-#endif
     if (core->chord_active) {
         chord_step(core);
     }
@@ -1439,12 +1460,12 @@ void kvm_hid_core_snapshot(const kvm_hid_core_t *core, kvm_hid_snapshot_t *out)
 {
     memset(out, 0, sizeof(*out));
     out->host_usb = core->usb;
-#if KVM_HID_HAS_HPE
     out->release_generation = core->c.release_all;
+    out->neutralizing = core->neutral_barrier;
+#if KVM_HID_HAS_HPE
     out->pad_generation = core->ptp_generation;
     out->pad_native_requested = core->ptp_native;
     out->pad_surface_enabled = core->ptp_surface;
-    out->neutralizing = core->neutral_barrier;
 #endif
     out->owner_kind = core->owner.kind;
     out->owner_epoch = core->owner.epoch;

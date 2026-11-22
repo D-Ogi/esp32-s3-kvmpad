@@ -16,6 +16,18 @@ from threading import Timer
 import time
 import uuid
 
+class DesktopUnavailable(ValueError):
+    def __init__(self):
+        super().__init__("The pattern requires the active Windows desktop. The session may be locked or inaccessible.")
+
+
+def pattern_output(process):
+    for line in process.stdout:
+        if line.strip() == b"PATTERN_UNAVAILABLE input_desktop":
+            raise DesktopUnavailable()
+        yield line
+
+
 def verify_pixels(size, pixel_at, order="RGBW", viewport="640x480", *, portrait_console=False):
     sizes = {(1024, 600): 1, (512, 300): 2, (256, 150): 4, (64, 37): 16}
     if size not in sizes:
@@ -197,9 +209,7 @@ def check_live(probe, serial, port_name, final_result=None):
             watchdog = Timer(130 if final_frame else 45, pattern.kill)
             watchdog.start()
             try:
-                for line in pattern.stdout:
-                    if line.strip() == b"PATTERN_UNAVAILABLE input_desktop":
-                        raise ValueError("The test window needs the active Windows desktop. No pattern was displayed.")
+                for line in pattern_output(pattern):
                     if line.strip() == b"PATTERN_READY 640x480 RGBW":
                         break
                 else:
@@ -211,7 +221,7 @@ def check_live(probe, serial, port_name, final_result=None):
                     initial = presented(port)
                     pattern.stdin.write(b"FINAL\n")
                     pattern.stdin.flush()
-                    if not any(line.strip() == b"PATTERN_FINAL 640x480 WRGB" for line in pattern.stdout):
+                    if not any(line.strip() == b"PATTERN_FINAL 640x480 WRGB" for line in pattern_output(pattern)):
                         raise ValueError("Windows did not paint the final WRGB picture")
                     # Let the previously animated pictures drain. Windows keeps the final layout static.
                     time.sleep(2)
@@ -249,6 +259,10 @@ def check_live(probe, serial, port_name, final_result=None):
                 if pattern.wait(timeout=5 if final_frame else 35) != 0:
                     raise ValueError("Windows could not maintain the target throughout the test")
                 return counts
+            except (ValueError, OSError) as exc:
+                if pattern.poll() == 3 and not isinstance(exc, DesktopUnavailable):
+                    raise DesktopUnavailable() from exc
+                raise
             finally:
                 watchdog.cancel()
                 if pattern.poll() is None:
@@ -292,9 +306,9 @@ if __name__ == "__main__":
                 print("PASS final static USB picture WRGB, verified again after holding for five seconds.",
                       "Additional board presentations:", phases["hold_presentations"], flush=True)
         except (KeyboardInterrupt, OSError, ValueError, subprocess.TimeoutExpired) as exc:
-            result["status"] = "FAIL"
+            result["status"] = "INCONCLUSIVE" if isinstance(exc, DesktopUnavailable) else "FAIL"
             result["error"] = "Test interrupted" if isinstance(exc, KeyboardInterrupt) else " ".join(str(exc).split())[:384]
-            print("USB monitor test failed:", result["error"], file=sys.stderr, flush=True)
+            print(result["status"], result["error"], file=sys.stderr, flush=True)
         result["finished_utc"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         try:
             save_result(args.result, result)

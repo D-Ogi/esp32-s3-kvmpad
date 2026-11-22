@@ -186,6 +186,26 @@ static void long_press_moved_is_no_right(void)
     expect_clean();
 }
 
+static void hold_disabled_then_move(void)
+{
+    kvm_gesture_cfg_t c = KVM_GESTURE_CFG_DEFAULT;
+    c.longpress_right_click = false;
+    gh_init(&h, &c);
+    for (unsigned ms = 0; ms <= 600; ms += 50) {
+        gh_sample(&h, ms, 1, 1, 300, 300);
+    }
+    CHECK_EQ(h.n, 0);
+    gh_sample(&h, 650, 1, 1, 320, 300);
+    gh_sample(&h, 700, 0);
+    CHECK(h.moves > 0);
+    CHECK_EQ(gh_count(&h, KVM_HID_MOUSE_BTN_DOWN, 0), 0);
+    gh_sample(&h, 800, 2, 1, 300, 300, 2, 370, 300);
+    gh_sample(&h, 850, 0);
+    CHECK_EQ(gh_count(&h, KVM_HID_MOUSE_BTN_DOWN, KVM_MOUSE_BTN_RIGHT), 1);
+    CHECK_EQ(gh_count(&h, KVM_HID_MOUSE_BTN_UP, KVM_MOUSE_BTN_RIGHT), 1);
+    expect_clean();
+}
+
 static void vec002_two_finger_scroll_staggered(void)
 {
     // AT-GEST-05
@@ -197,21 +217,21 @@ static void vec002_two_finger_scroll_staggered(void)
     gh_sample(&h, 140, 0);
     gh_idle(&h, 1000);
     CHECK(h.wheels >= 1);
-    CHECK(h.sum_wheel > 0); // fingers down, natural scrolling (default): content follows
+    CHECK(h.sum_wheel < 0); // FR-502: conventional wheel direction on a fresh device
     CHECK_EQ(h.sum_pan, 0);
     CHECK_EQ(h.moves, 0);
     CHECK_EQ(gh_count(&h, KVM_HID_MOUSE_BTN_DOWN, 0), 0);
     expect_clean();
     // The opposite setting inverts the sign.
     kvm_gesture_cfg_t c = KVM_GESTURE_CFG_DEFAULT;
-    c.scroll_natural = false;
+    c.scroll_natural = true;
     gh_init(&h, &c);
     gh_sample(&h, 0, 1, 1, 200, 180);
     gh_sample(&h, 45, 2, 1, 200, 180, 9, 400, 190);
     gh_sample(&h, 75, 2, 1, 200, 201, 9, 400, 211);
     gh_sample(&h, 95, 2, 1, 200, 225, 9, 400, 235);
     gh_sample(&h, 140, 0);
-    CHECK(h.sum_wheel < 0);
+    CHECK(h.sum_wheel > 0);
 }
 
 static void scroll_axis_does_not_flip_on_reversal(void)
@@ -238,7 +258,7 @@ static void scroll_axis_does_not_flip_on_reversal(void)
         gh_sample(&h, (uint32_t)(i * 10), 2, 1, 200 + i * 10, 200, 2, 300 + i * 10, 201);
     }
     gh_sample(&h, 120, 0);
-    CHECK(h.sum_pan < 0); // fingers right, natural: pan left
+    CHECK(h.sum_pan > 0); // fingers right with conventional scrolling
     CHECK_EQ(h.sum_wheel, 0);
     expect_clean();
 }
@@ -280,7 +300,7 @@ static void vec003_track_ids_swap_order(void)
     gh_sample(&h, 30, 2, 2, 101, 125, 9, 301, 125);
     gh_sample(&h, 45, 0);
     CHECK_EQ(h.moves, 0);
-    CHECK(h.sum_wheel >= 0 && h.sum_wheel <= 2); // 25 px of centroid travel, never a 200 px jump
+    CHECK(h.sum_wheel <= 0 && h.sum_wheel >= -2); // 25 px of centroid travel, never a 200 px jump
     CHECK_EQ(h.sum_pan, 0);
     CHECK_EQ(gh_count(&h, KVM_HID_MOUSE_BTN_DOWN, 0), 0);
     expect_clean();
@@ -531,6 +551,23 @@ static void degraded_multitouch_fallback(void)
     expect_clean();
 }
 
+static void scroll_disabled_preserves_two_finger_tap(void)
+{
+    kvm_gesture_cfg_t c = KVM_GESTURE_CFG_DEFAULT;
+    c.scroll_enabled = false;
+    gh_init(&h, &c);
+    gh_sample(&h, 0, 2, 1, 200, 200, 2, 300, 200);
+    gh_sample(&h, 30, 2, 1, 250, 240, 2, 350, 240);
+    gh_sample(&h, 60, 1, 2, 300, 200);
+    gh_sample(&h, 80, 0);
+    CHECK_EQ(h.n, 0);
+    gh_sample(&h, 100, 2, 1, 200, 200, 2, 300, 200);
+    gh_sample(&h, 150, 0);
+    CHECK_EQ(gh_count(&h, KVM_HID_MOUSE_BTN_DOWN, KVM_MOUSE_BTN_RIGHT), 1);
+    CHECK_EQ(h.wheels, 0);
+    expect_clean();
+}
+
 static void old_sequence_rejected(void)
 {
     gh_init(&h, NULL);
@@ -553,6 +590,7 @@ int main(void)
     RUN(long_press_right_click);
     RUN(long_press_without_samples_fires_on_tick);
     RUN(long_press_moved_is_no_right);
+    RUN(hold_disabled_then_move);
     RUN(vec002_two_finger_scroll_staggered);
     RUN(scroll_axis_does_not_flip_on_reversal);
     RUN(two_finger_tap_is_right_click);
@@ -564,6 +602,7 @@ int main(void)
     RUN(gap_and_invalid_cancel);
     RUN(drag_lock_paths);
     RUN(degraded_multitouch_fallback);
+    RUN(scroll_disabled_preserves_two_finger_tap);
     RUN(old_sequence_rejected);
     TEST_MAIN_END("gesture_test_vectors");
 }

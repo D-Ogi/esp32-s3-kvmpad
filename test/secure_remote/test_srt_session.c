@@ -899,14 +899,14 @@ static unsigned display_requests;
 static bool request_display(uint64_t session, const char *serial, bool native)
 {
     CHECK_EQ(session, 12);
-    if (strcmp(serial, "441BF6C9229C") || !native) return false;
+    if (strcmp(serial, "02000000ABCD") || !native) return false;
     ++display_requests;
     return true;
 }
 
 static void t_display_profile_needs_one_paired_operator_and_matching_serial(void)
 {
-    const char *valid = "'usb_serial':'441BF6C9229C','mode':'1024x600'";
+    const char *valid = "'usb_serial':'02000000ABCD','mode':'1024x600'";
     CHECK_EQ(sh_init(&h, 0x6au), KVM_PAIR_OK);
     kvm_srt_hooks_t hooks = h.srt.hooks;
     kvm_srt_shutdown(&h.srt, sh_now_us());
@@ -926,7 +926,7 @@ static void t_display_profile_needs_one_paired_operator_and_matching_serial(void
     sh_cmd(&h, &c, "display.profile.request", "'usb_serial':'441BF6C92290','mode':'1024x600'");
     CHECK(sh_sent_contains(&h, "ERR_CONTROL_DENIED"));
     sh_clear_wire(&h);
-    sh_cmd(&h, &c, "display.profile.request", "'usb_serial':'441BF6C9229C','mode':'1600x900'");
+    sh_cmd(&h, &c, "display.profile.request", "'usb_serial':'02000000ABCD','mode':'1600x900'");
     CHECK(sh_sent_contains(&h, "ERR_BAD_FRAME"));
     CHECK_EQ(display_requests, 0);
     sh_clear_wire(&h);
@@ -1138,6 +1138,166 @@ static void t_init_fails_closed(void)
     CHECK_EQ(kvm_srt_clients_count(&bad.srt), 0);
 }
 
+static int ssh_open_count;
+static bool count_ssh_open(void)
+{
+    ++ssh_open_count;
+    return true;
+}
+
+static void t_ssh_key_follows_paired_tls_connection(void)
+{
+    const char *key_a = "'sha256':'1212121212121212121212121212121212121212121212121212121212121212'";
+    const char *key_b = "'sha256':'2323232323232323232323232323232323232323232323232323232323232323'";
+    uint8_t a[32], b[32];
+    memset(a, 0x12, sizeof(a));
+    memset(b, 0x23, sizeof(b));
+    CHECK_EQ(sh_init(&h, 0x73u), KVM_PAIR_OK);
+    char token[80];
+    snprintf(token, sizeof(token), "%s", seed_client(&h, "Operator", 0xb8u));
+    sh_online(&h);
+    sh_cli_t one, two;
+    CHECK(sh_cli_open(&h, &one, token, 12));
+    CHECK(!sh_sent_contains(&h, "ssh_key_binding"));
+    sh_cmd(&h, &one, "ssh.key.bind", key_a);
+    CHECK_EQ(kvm_srt_ssh_sponsor(&h.srt, a), 0);
+
+    kvm_srt_hooks_t hooks = h.srt.hooks;
+    hooks.ssh_listen = count_ssh_open;
+    ssh_open_count = 0;
+    kvm_srt_shutdown(&h.srt, sh_now_us());
+    memset(h.cfg.ssh_host_key_sha256, 0x45, KVM_PAIR_SHA256_LEN);
+    CHECK_EQ(kvm_srt_init(&h.srt, &h.cfg, &hooks), KVM_PAIR_OK);
+    sh_online(&h);
+    // An admitted TLS connection without an observed IPv4 peer (IPv6-only,
+    // or peer-address lookup unavailable) cannot sponsor the IPv4 SSH port.
+    kvm_srt_admission_t adm;
+    CHECK_EQ(kvm_srt_admit(&h.srt, KVM_SRT_CONN_CONTROL, token, sh_now_us(), &adm), KVM_SRT_ADMIT_OK);
+    CHECK(!adm.peer_ipv4[0]);
+    sh_cli_t ipv6 = {.id = 19, .q = 1};
+    CHECK(kvm_srt_conn_open(&h.srt, ipv6.id, &adm, sh_now_us()) >= 0);
+    sh_frame(&h, ipv6.id, sh_jf("{'v':1,'type':'hello','seq':1,'payload':{'client_name':'V6','capabilities':['hid_v1']}}"));
+    snprintf(ipv6.label, sizeof(ipv6.label), "%s", kvm_rp_session_label(&h.srt.rp, ipv6.id));
+    sh_clear_wire(&h);
+    sh_cmd(&h, &ipv6, "ssh.key.bind", key_a);
+    CHECK(sh_sent_contains(&h, "ERR_CONTROL_DENIED"));
+    CHECK_EQ(kvm_srt_ssh_sponsor(&h.srt, a), 0);
+    CHECK_EQ(ssh_open_count, 0);
+    kvm_srt_conn_close(&h.srt, ipv6.id, KVM_SRT_LOSS_SOCKET, sh_now_us());
+    CHECK(sh_cli_open(&h, &one, token, 20));
+    CHECK(sh_sent_contains(&h, "ssh_key_binding"));
+    CHECK(sh_sent_contains(&h, "\"ssh_host_key_sha256\":\"4545454545454545454545454545454545454545454545454545454545454545\""));
+    CHECK(sh_cli_open(&h, &two, token, 21));
+    sh_cmd(&h, &one, "ssh.key.bind", key_a);
+    CHECK_EQ(strcmp(sh_last_type(&h), "ssh.key.bound"), 0);
+    CHECK_EQ(ssh_open_count, 1);
+    CHECK_EQ(kvm_srt_ssh_sponsor(&h.srt, a), one.id);
+    sh_clear_wire(&h);
+    sh_cmd(&h, &two, "ssh.key.bind", key_a);
+    CHECK(sh_sent_contains(&h, "ERR_CONTROL_DENIED"));
+    sh_clear_wire(&h);
+    sh_cmd(&h, &one, "ssh.key.bind", "'sha256':'1234'");
+    CHECK(sh_sent_contains(&h, "ERR_BAD_FRAME"));
+    CHECK_EQ(kvm_srt_ssh_sponsor(&h.srt, a), one.id);
+    sh_cmd(&h, &one, "ssh.key.bind", key_b);
+    CHECK_EQ(kvm_srt_ssh_sponsor(&h.srt, a), 0);
+    CHECK_EQ(kvm_srt_ssh_sponsor(&h.srt, b), one.id);
+    kvm_srt_conn_close(&h.srt, one.id, KVM_SRT_LOSS_SOCKET, sh_now_us());
+    CHECK_EQ(kvm_srt_ssh_sponsor(&h.srt, b), 0);
+    sh_cmd(&h, &two, "ssh.key.bind", key_b);
+    CHECK_EQ(kvm_srt_ssh_sponsor(&h.srt, b), two.id);
+    kvm_srt_set_host(&h.srt, KVM_HOST_USB_MOUNTED, true, true, sh_now_us());
+    CHECK_EQ(kvm_srt_ssh_sponsor(&h.srt, b), 0);
+    kvm_srt_set_host(&h.srt, KVM_HOST_USB_MOUNTED, false, true, sh_now_us());
+    CHECK_EQ(kvm_srt_ssh_sponsor(&h.srt, b), 0);
+    sh_cmd(&h, &two, "ssh.key.bind", key_b);
+    CHECK_EQ(kvm_srt_ssh_sponsor(&h.srt, b), two.id);
+    CHECK(kvm_srt_clients_remove(&h.srt, 0, sh_now_us()));
+    CHECK_EQ(kvm_srt_ssh_sponsor(&h.srt, b), 0);
+    CHECK_EQ(h.nintents, 0);
+    CHECK_EQ(h.napproval_begin, 0);
+    kvm_srt_shutdown(&h.srt, sh_now_us());
+}
+
+static void t_ssh_lease_uses_control_arbiter(void)
+{
+    uint8_t key[32];
+    memset(key, 0x12, sizeof(key));
+    CHECK_EQ(sh_init(&h, 0xefu), KVM_PAIR_OK);
+    kvm_srt_hooks_t hooks = h.srt.hooks;
+    kvm_srt_shutdown(&h.srt, sh_now_us());
+    h.cfg.ssh_host_key_sha256[0] = 0xf2;
+    h.cfg.control_approval = KVM_CONTROL_APPROVAL_AUTO;
+    CHECK_EQ(kvm_srt_init(&h.srt, &h.cfg, &hooks), KVM_PAIR_OK);
+    sh_online(&h);
+    sh_cli_t c;
+    const char *token = seed_client(&h, "Operator", 0xb8u);
+    const char *binding = "'sha256':'1212121212121212121212121212121212121212121212121212121212121212'";
+    CHECK(sh_cli_open(&h, &c, token, 51));
+    sh_cmd(&h, &c, "ssh.key.bind", binding);
+    const uint64_t now = sh_now_us();
+    CHECK(!kvm_srt_ssh_begin(&h.srt, 52, 50, key, now));
+    CHECK(kvm_srt_ssh_begin(&h.srt, 52, c.id, key, now));
+    CHECK_EQ(h.napproval_begin, 1); // also requires consent under WSS auto-approval
+    CHECK(!kvm_srt_ssh_begin(&h.srt, 53, c.id, key, now));
+    CHECK_EQ(kvm_srt_ssh_state(&h.srt, 52, now), KVM_SSH_PENDING);
+    kvm_hid_intent_t press = {.type = KVM_HID_KEY_DOWN, .data.key.usage_id = 4};
+    kvm_hid_intent_t left = {.type = KVM_HID_MOUSE_BTN_DOWN, .data.mouse_button.button_id = KVM_MOUSE_BTN_LEFT};
+    kvm_hid_intent_t neutral = {.type = KVM_HID_RELEASE_ALL};
+    CHECK(!kvm_srt_ssh_input(&h.srt, 52, &press, now));
+    CHECK_EQ(h.nintents, 0);
+    kvm_srt_approval_result(&h.srt, 52, false, now);
+    CHECK_EQ(kvm_srt_ssh_state(&h.srt, 52, now), KVM_SSH_DENIED);
+    CHECK(kvm_srt_ssh_begin(&h.srt, 53, c.id, key, now));
+    kvm_srt_approval_result(&h.srt, 53, true, now);
+    CHECK(kvm_srt_ssh_input(&h.srt, 53, &press, now));
+    CHECK(kvm_srt_ssh_input(&h.srt, 53, &left, now));
+    CHECK_EQ(h.nintents, 2);
+    CHECK_EQ(h.intent_session[0], 53);
+    CHECK_EQ(h.intent_epoch[0], h.epoch);
+    CHECK(kvm_srt_ssh_input(&h.srt, 53, &neutral, now));
+    CHECK_EQ(h.nintents, 4);
+    CHECK_EQ(h.intents[2].type, KVM_HID_KEY_UP);
+    CHECK_EQ(h.intents[3].type, KVM_HID_MOUSE_BTN_UP);
+    CHECK(kvm_srt_ssh_input(&h.srt, 53, &press, now));
+    kvm_srt_conn_close(&h.srt, c.id, KVM_SRT_LOSS_SOCKET, now);
+    CHECK_EQ(h.nreleases, 1);
+    CHECK_EQ(h.owner_session, 0);
+    CHECK(!kvm_srt_ssh_input(&h.srt, 53, &left, now));
+    CHECK_EQ(h.nintents, 5);
+    kvm_srt_ssh_end(&h.srt, 53, KVM_SRT_LOSS_SOCKET, now);
+    CHECK_EQ(h.nreleases, 1); // late SSH socket teardown after lost TLS
+    CHECK(sh_cli_open(&h, &c, token, 61));
+    sh_cmd(&h, &c, "ssh.key.bind", binding);
+    CHECK(kvm_srt_ssh_begin(&h.srt, 62, c.id, key, now));
+    kvm_srt_approval_result(&h.srt, 62, true, now);
+    CHECK(kvm_srt_ssh_input(&h.srt, 62, &press, now));
+    det_clock_advance(2000);
+    CHECK(kvm_srt_ssh_ping(&h.srt, 62, sh_now_us()));
+    det_clock_advance(2000);
+    CHECK_EQ(kvm_srt_ssh_state(&h.srt, 62, sh_now_us()), KVM_SSH_GRANTED);
+    det_clock_advance(1000);
+    kvm_srt_tick(&h.srt, sh_now_us());
+    CHECK_EQ(h.owner_session, 0);
+    CHECK_EQ(h.nreleases, 2);
+    CHECK(!kvm_srt_ssh_ping(&h.srt, 62, sh_now_us())); // a late heartbeat cannot restore a lease
+    CHECK(kvm_srt_ssh_begin(&h.srt, 63, c.id, key, sh_now_us()));
+    kvm_srt_approval_result(&h.srt, 63, true, sh_now_us());
+    CHECK(kvm_srt_ssh_input(&h.srt, 63, &left, sh_now_us()));
+    kvm_srt_set_host(&h.srt, KVM_HOST_USB_DETACHED, false, true, sh_now_us());
+    CHECK_EQ(h.nreleases, 3);
+    CHECK(!kvm_srt_ssh_input(&h.srt, 63, &left, sh_now_us()));
+    kvm_srt_set_host(&h.srt, KVM_HOST_USB_MOUNTED, false, true, sh_now_us());
+    CHECK(kvm_srt_ssh_begin(&h.srt, 64, c.id, key, sh_now_us()));
+    kvm_srt_approval_result(&h.srt, 64, true, sh_now_us());
+    CHECK(kvm_srt_ssh_input(&h.srt, 64, &press, sh_now_us()));
+    // Local override originates in the arbiter, which has already neutralized the reports.
+    kvm_srt_notify_revoked(&h.srt, 64, KVM_RP_REVOKE_LOCAL_OVERRIDE, ++h.epoch, sh_now_us());
+    CHECK(!kvm_srt_ssh_input(&h.srt, 64, &press, sh_now_us()));
+    CHECK_EQ(h.nreleases, 3);
+    kvm_srt_shutdown(&h.srt, sh_now_us());
+}
+
 int main(void)
 {
     RUN(t_pairing_full_run);
@@ -1151,6 +1311,8 @@ int main(void)
     RUN(t_admission);
     RUN(t_admission_cooldown);
     RUN(t_control_session);
+    RUN(t_ssh_key_follows_paired_tls_connection);
+    RUN(t_ssh_lease_uses_control_arbiter);
     RUN(t_loss_reasons);
     RUN(t_remote_switched_off);
     RUN(t_drop_all_release_all);

@@ -13,13 +13,17 @@
 
 static kvm_hid_core_t core;
 static bool in_flight[KVM_HID_ITF_COUNT];
-static unsigned keys, media, requests, transmissions;
-static unsigned radial_moves, radial_down, radial_up, mouse_buttons;
+static unsigned keys, mouse_buttons;
+#if KVM_HID_HAS_HPE
+static unsigned media, requests, transmissions;
+static unsigned radial_moves, radial_down, radial_up;
 static int radial_sum;
 static bool dial_pressed;
 static uint32_t request_id;
+static bool consumer_neutral;
+#endif
 static uint8_t last_key, last_mods;
-static bool keyboard_neutral, consumer_neutral;
+static bool keyboard_neutral;
 static lv_obj_t *base;
 
 static uint64_t now_us(void) { return (uint64_t)lv_tick_get() * 1000; }
@@ -36,6 +40,7 @@ static bool send_report(void *ctx, uint8_t itf, const uint8_t *p, uint8_t n)
         if (p[2]) { keys++; last_key = p[2]; last_mods = p[0]; }
     } else if (itf == KVM_HID_ITF_MOUSE) {
         if (p[0]) mouse_buttons++;
+#if KVM_HID_HAS_HPE
     } else if (itf == KVM_HID_ITF_CONSUMER && p[0] == HPE_RADIAL) {
         assert(n == 3);
         int payload = p[1] | (p[2] << 8);
@@ -62,6 +67,10 @@ static bool send_report(void *ctx, uint8_t itf, const uint8_t *p, uint8_t n)
             if (id != request_id) { requests++; request_id = id; }
             transmissions++;
         }
+#else
+    } else {
+        assert(KVM_HID_ITF_COUNT == 3 && itf == KVM_HID_ITF_CONSUMER && n == 2 && !p[0] && !p[1]);
+#endif
     }
     return true;
 }
@@ -76,8 +85,10 @@ static void pump(lv_timer_t *unused)
     kvm_hid_core_poll(&core, now_us());
 }
 
+#if KVM_HID_HAS_HPE
 void hid_dispatch_set_profile(uint8_t profile) { core.active_profile = profile; }
 void hid_dispatch_studio_status(hpe_studio_status_t *out) { *out = core.studio.status; }
+#endif
 void hid_dispatch_get_snapshot(kvm_hid_snapshot_t *s, uint32_t *seq)
 {
     kvm_hid_core_snapshot(&core, s);
@@ -90,12 +101,13 @@ esp_err_t hid_dispatch_burst_start(const kvm_hid_burst_step_t *v, uint16_t n,
 {
     return kvm_hid_core_burst_start(&core, v, n, cancel, nc, now_us());
 }
+static hpe_access_timing_t saved = {.scan_ms=600, .dwell_ms=600, .debounce_ms=40, .cooldown_ms=1000};
 bool app_config_access_read(hpe_access_timing_t *t)
 {
-    *t = (hpe_access_timing_t){.scan_ms=600, .dwell_ms=600, .debounce_ms=40, .cooldown_ms=1000};
+    *t = saved;
     return true;
 }
-bool app_config_access_save(hpe_access_timing_t t) { (void)t; assert(0); return false; }
+bool app_config_access_save(hpe_access_timing_t t) { assert(hpe_access_valid(t)); saved=t; return true; }
 
 static void wait_ms(unsigned ms) { lv_test_wait(ms); }
 static void tap(int x, int y) { sim_press_point(x, y); sim_release(); }
@@ -113,6 +125,7 @@ static void usb(kvm_host_usb_t state, uint32_t epoch)
     wait_ms(80);
 }
 
+#if KVM_HID_HAS_HPE
 static void move(int x, int y)
 {
     lv_test_mouse_move_to(x, y);
@@ -207,6 +220,8 @@ static void bank(uint8_t peer)
     wait_ms(80);
 }
 
+#endif
+
 int main(void)
 {
     size_t baseline = sim_env_start();
@@ -217,6 +232,7 @@ int main(void)
     usb(KVM_HOST_USB_MOUNTED, 1);
     assert(hpe_panel_open(home));
     wait_ms(100);
+#if KVM_HID_HAS_HPE
     dial_trajectory();
     tap(630,568); // Studio Basic
     kvm_hid_intent_t late={.type=KVM_HID_RADIAL,.data.radial={.pressed=true,.delta=120}};
@@ -248,6 +264,11 @@ int main(void)
     assert(requests == 1 && core.studio.status.peer_nonce == 10);
     tap(885,568); // Access
     wait_ms(100);
+#else
+    assert(shows(lv_screen_active(), "Direct input"));
+    assert(!shows(lv_screen_active(), "Dial") && !shows(lv_screen_active(), "Studio Basic"));
+    assert(!shows(lv_screen_active(), "OBS bank"));
+#endif
     usb(KVM_HOST_USB_DETACHED, 2);
     sim_press_point(90,130);
     usb(KVM_HOST_USB_MOUNTED, 3);
@@ -255,59 +276,84 @@ int main(void)
     assert(!keys);
     tap(90,130);
     assert(keys == 1 && last_key == KVM_KEY_TAB && keyboard_neutral);
+    tap(520,415);
+    tap(90,130);
+    assert(keys == 2 && last_key == KVM_KEY_TAB && last_mods == KVM_MOD_BIT(KVM_KEY_LEFT_CTRL) &&
+           keyboard_neutral);
     tap(520,415); // Arm one-shot Ctrl locally.
     usb(KVM_HOST_USB_DETACHED, 3);
     usb(KVM_HOST_USB_MOUNTED, 4);
     tap(90,130);
-    assert(keys == 2 && last_mods == 0 && keyboard_neutral);
+    assert(keys == 3 && last_mods == 0 && keyboard_neutral);
 
     tap(365,415); // Dwell on.
     sim_press_point(90,130);
     wait_ms(620);
     sim_release();
-    assert(keys == 3);
+    assert(keys == 4);
     sim_press_point(475,130); // Press during cooldown, hold well beyond it.
     wait_ms(1300);
     sim_release();
-    assert(keys == 3);
+    assert(keys == 4);
     sim_press_point(475,130);
     wait_ms(5000);
     lv_test_mouse_move_to(90,130);
     wait_ms(1200); // Dwell cannot rearm on a different key without lifting.
     sim_release();
-    assert(keys == 4 && last_key == KVM_KEY_ENTER && keyboard_neutral);
+    assert(keys == 5 && last_key == KVM_KEY_ENTER && keyboard_neutral);
     sim_press_point(90,130);
     lv_test_mouse_move_to(740,310);
     wait_ms(1400);
     sim_release();
-    assert(keys == 4);
+    assert(keys == 5);
 
     tap(80,415); // Scan at 600ms, cooldown 1000ms.
     tap(900,480); // Far edge of the enlarged on-screen switch.
-    assert(keys == 5 && last_key == KVM_KEY_TAB);
+    assert(keys == 6 && last_key == KVM_KEY_TAB);
     wait_ms(740);
     assert(shows(lv_screen_active(), "Scanning 1 of 6: Tab"));
     sim_press_point(900,480); // A press begun during cooldown cannot send, but can Stop.
     wait_ms(2100);
     sim_release();
     wait_ms(1200);
-    assert(keys == 5 && shows(lv_screen_active(), "Scan paused"));
+    assert(keys == 6 && shows(lv_screen_active(), "Scan paused"));
     tap(80,415);
     tap(900,480);
     wait_ms(1150);
-    assert(keys == 6 && shows(lv_screen_active(), "Scanning 1 of 6: Tab"));
+    assert(keys == 7 && shows(lv_screen_active(), "Scanning 1 of 6: Tab"));
     wait_ms(620);
     assert(shows(lv_screen_active(), "Scanning 2 of 6: Enter"));
     tap(900,480);
-    assert(keys == 7 && last_key == KVM_KEY_ENTER);
-    assert(keyboard_neutral && consumer_neutral && requests == 1);
+    assert(keys == 8 && last_key == KVM_KEY_ENTER);
+    assert(keyboard_neutral && !mouse_buttons);
+#if KVM_HID_HAS_HPE
+    assert(consumer_neutral && requests == 1 && transmissions >= requests);
+#endif
+    tap(900,20); // Access timing
+    wait_ms(80);
+    assert(shows(lv_screen_active(), "Dwell time"));
+    tap(800,180); // Increase dwell time by 100 ms
+    tap(820,460); // Apply
+    assert(saved.dwell_ms == 700 && shows(lv_screen_active(), "Timings applied"));
+    assert(keys == 8);
+    tap(108,568);
+    wait_ms(100);
+    assert(lv_screen_active() == base && hpe_panel_open(home));
+    wait_ms(100);
+#if KVM_HID_HAS_HPE
+    tap(885,568);
+#endif
+    tap(900,20);
+    assert(shows(lv_screen_active(), "700 ms"));
     tap(108,568);
     wait_ms(100);
     lv_timer_delete(scheduler);
     assert(lv_screen_active() == base);
+    kvm_hid_snapshot_t final;
+    kvm_hid_core_snapshot(&core,&final);
+    assert(final.ledger_empty && !final.neutralizing && !core.q_count);
     sim_env_stop(baseline);
-    printf("PASS: stale USB/agent contacts suppressed, consumer taps=%u, OBS requests=%u (%u transmissions), "
-           "keyboard taps=%u, cooldown=1000ms, hold=5000ms, scan=600ms, Stop persisted\n",
-           media, requests, transmissions, keys);
+    printf("PASS HID count %u: eight keyboard taps, one-shot Ctrl, stale press suppressed, dwell, scan, "
+           "cooldown, Stop, saved timing on reopen and neutral Home\n", (unsigned)KVM_HID_ITF_COUNT);
     return 0;
 }

@@ -12,6 +12,13 @@ idf_component_register(
                   esp_partition esp_psram esp_timer spi_flash esp_app_format log pack_runtime live_view kvmbridge usb_monitor)
 
 # The chart benchmark shares the same UART diagnostics switch as the built-in LVGL benchmark scenes.
+if(CONFIG_KVM_USB_SCREENSHOT)
+    idf_component_optional_requires(PRIVATE screenshot_volume fatfs)
+    target_sources(${COMPONENT_LIB} PRIVATE "preboot_capture.c")
+    if(KVM_PREBOOT_CAPTURE_CHECK)
+        target_compile_definitions(${COMPONENT_LIB} PRIVATE KVM_PREBOOT_CAPTURE_CHECK=1)
+    endif()
+endif()
 if(CONFIG_KVM_USB_MONITOR_EVAL)
     target_sources(${COMPONENT_LIB} PRIVATE "pack_desktop_view.c" "pack_touchpad_drawer.c")
     if(KVM_USB_MOTION_CHECK)

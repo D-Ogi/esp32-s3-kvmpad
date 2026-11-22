@@ -12,6 +12,15 @@ bool pack_panel_remote_monitor_mode(bool native);
 #if CONFIG_KVM_USB_MONITOR_EVAL
 bool pack_panel_open_monitor(bool native, bool controls);
 bool pack_panel_open_windows_monitor(bool controls);
+#if CONFIG_KVM_USB_GUD
+bool pack_panel_open_gud_monitor(void);
+#endif
+#ifdef KVM_PREBOOT_CAPTURE_CHECK
+bool pack_panel_capture_check(bool read);
+#endif
+#ifdef KVM_GUD_PANEL_CHECK
+bool pack_panel_gud_check(const char *phase);
+#endif
 #ifdef KVM_USB_MOTION_CHECK
 bool pack_panel_open_motion_fixture(bool native, bool (*fixture_link)(bool));
 #endif

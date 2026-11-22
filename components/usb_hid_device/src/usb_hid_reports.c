@@ -45,8 +45,10 @@ size_t kvm_hid_build_neutral(uint8_t itf, uint8_t protocol, uint8_t out[8])
         return kvm_hid_build_keyboard(out, 0, NULL);
     case KVM_HID_ITF_MOUSE:
         return kvm_hid_build_mouse(out, protocol, 0, 0, 0, 0, 0);
+#if KVM_HID_ITF_COUNT > 2
     case KVM_HID_ITF_CONSUMER:
         return kvm_hid_build_consumer(out, 0);
+#endif
     default:
         return 0;
     }

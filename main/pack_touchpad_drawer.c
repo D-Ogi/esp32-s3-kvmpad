@@ -2,6 +2,8 @@
 // Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
 // Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
 #include "pack_touchpad_drawer.h"
+#include "app_config.h"
+#include "gesture_engine.h"
 #include "pack_desktop_view.h"
 #include "hid_dispatch.h"
 #include "ui_theme.h"
@@ -110,9 +112,12 @@ void pack_touchpad_drawer_open(lv_obj_t *content)
     if (!title || !close) goto failed;
     lv_obj_align(title,LV_ALIGN_LEFT_MID,0,0);
     lv_obj_align(close,LV_ALIGN_RIGHT_MID,0,0);
-    static const char *const gestures[]={
+    kvm_gesture_cfg_t prefs = KVM_GESTURE_CFG_DEFAULT;
+    app_config_apply_mouse(&prefs);
+    const char *const gestures[]={
         "Slide to move the pointer.", "Tap to click. Tap with two fingers to right-click.",
-        "Slide two fingers to scroll.", "Tap twice and drag on the second touch. Lift to drop."
+        prefs.scroll_enabled ? "Slide two fingers to scroll." : "Two-finger scrolling is off in Settings.",
+        "Tap twice and drag on the second touch. Lift to drop."
     };
     for (unsigned i=0;i<4;i++) {
         lv_obj_t *line=text(panel,gestures[i],UI_FONT_BODY);

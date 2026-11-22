@@ -43,6 +43,9 @@
 #include "freertos/task.h"
 #include "kvm_srt_server.h"
 #include "sdkconfig.h"
+#if CONFIG_KVM_SSH_BOARD
+#include "kvm_srt_ssh_listener.h"
+#endif
 
 #if !CONFIG_HTTPD_WS_SUPPORT
 #error "secure_remote needs CONFIG_HTTPD_WS_SUPPORT=y"
@@ -138,6 +141,70 @@ static void unlock(void)
         (void)xSemaphoreGive(s_lock);
     }
 }
+
+#if CONFIG_KVM_SSH_BOARD
+// The observed LAN address limits expensive handshakes. The signature and TLS pairing bind
+// the identity. Every core operation, including release on disconnect, uses the WSS lock.
+static uint64_t ssh_sponsor_locked(const char *address, const uint8_t *key)
+{
+    if (s_stopping || !s_core_ready) return 0;
+    for (int i = 0; i < KVM_SRT_MAX_CONNS; ++i) {
+        const kvm_srt_conn_t *cn = &s_srt.conn[i];
+        if (cn->ssh_key_bound && (!address || strcmp(address, cn->peer_ipv4) == 0) &&
+            kvm_srt_ssh_sponsor(&s_srt, key ? key : cn->ssh_key_sha256) == cn->id)
+            return cn->id;
+    }
+    return 0;
+}
+
+uint64_t kvm_ssh_board_sponsor(const char *address, const uint8_t *key)
+{
+    if (!address || !lock_for(LOCK_WAIT_MS)) return 0;
+    uint64_t id = ssh_sponsor_locked(address, key);
+    unlock();
+    return id;
+}
+
+uint64_t kvm_ssh_board_begin(const char *address, const uint8_t key[32], uint64_t sponsor)
+{
+    if (!address || !key || !sponsor || !lock_for(LOCK_WAIT_MS)) return 0;
+    uint64_t id = s_next_conn_id++;
+    bool ok = ssh_sponsor_locked(address, key) == sponsor && kvm_srt_ssh_begin(&s_srt, id, sponsor, key, now_us());
+    unlock();
+    return ok ? id : 0;
+}
+
+kvm_srt_ssh_state_t kvm_ssh_board_state(uint64_t id)
+{
+    if (!lock_for(LOCK_WAIT_MS)) return KVM_SSH_DENIED;
+    kvm_srt_ssh_state_t state = kvm_srt_ssh_state(&s_srt, id, now_us());
+    unlock();
+    return state;
+}
+
+bool kvm_ssh_board_input(uint64_t id, const kvm_hid_intent_t *intent)
+{
+    if (!lock_for(LOCK_WAIT_MS)) return false;
+    bool ok = kvm_srt_ssh_input(&s_srt, id, intent, now_us());
+    unlock();
+    return ok;
+}
+
+bool kvm_ssh_board_ping(uint64_t id)
+{
+    if (!lock_for(LOCK_WAIT_MS)) return false;
+    bool ok = kvm_srt_ssh_ping(&s_srt, id, now_us());
+    unlock();
+    return ok;
+}
+
+void kvm_ssh_board_release(uint64_t id)
+{
+    if (!id || !lock_wait()) return;
+    kvm_srt_ssh_end(&s_srt, id, KVM_SRT_LOSS_SOCKET, now_us());
+    unlock();
+}
+#endif
 
 // ---- connection map ------------------------------------------------------------------------
 
@@ -515,6 +582,9 @@ static void tick_task(void *arg)
         }
         if (lock_wait()) {
             kvm_srt_tick(&s_srt, now_us());
+#if CONFIG_KVM_SSH_BOARD
+            if (s_srt.hooks.ssh_listen && !ssh_sponsor_locked(NULL, NULL)) kvm_ssh_listener_close_port();
+#endif
             unlock();
         }
     }
@@ -651,6 +721,24 @@ esp_err_t kvm_srt_server_start(const kvm_srt_server_config_t *cfg)
     return ESP_OK;
 }
 
+#if CONFIG_KVM_SSH_BOARD
+void kvm_srt_server_start_ssh(void)
+{
+    uint8_t pin[32];
+    if (!kvm_ssh_listener_start(pin)) {
+        ESP_LOGW(TAG, "SSH unavailable; paired WSS is running");
+        return;
+    }
+    if (!lock_wait()) {
+        kvm_ssh_listener_stop();
+        return;
+    }
+    s_srt.hooks.ssh_listen = kvm_ssh_listener_open;
+    kvm_srt_set_ssh_host_key(&s_srt, pin);
+    unlock();
+}
+#endif
+
 esp_err_t kvm_srt_server_stop(void)
 {
     if (s_server == NULL) {
@@ -661,6 +749,11 @@ esp_err_t kvm_srt_server_stop(void)
     // Tell the core first, so every lease is released and every RELEASE_ALL raised while the
     // sockets are still there to carry the last frame.
     if (lock_wait()) {
+#if CONFIG_KVM_SSH_BOARD
+        const uint8_t disabled[32] = {0};
+        kvm_srt_set_ssh_host_key(&s_srt, disabled);
+        s_srt.hooks.ssh_listen = NULL;
+#endif
         kvm_srt_drop_all(&s_srt, KVM_SRT_LOSS_SHUTDOWN, true, now_us());
         unlock();
     }
@@ -670,6 +763,9 @@ esp_err_t kvm_srt_server_stop(void)
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 
+#if CONFIG_KVM_SSH_BOARD
+    kvm_ssh_listener_stop();
+#endif
     esp_err_t err = httpd_ssl_stop(s_server);
     s_server = NULL;
     s_port = 0;

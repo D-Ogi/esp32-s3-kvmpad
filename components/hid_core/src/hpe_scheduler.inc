@@ -37,7 +37,6 @@ static void hpe_complete_ptp(kvm_hid_core_t *core)
 static void hpe_clear(kvm_hid_core_t *core)
 {
     hpe_studio_cancel(&core->studio);
-    core->neutral_barrier = true;
     core->control_neutral_phase = 0;
     core->radial_pressed = false;
     core->joystick_active = false;

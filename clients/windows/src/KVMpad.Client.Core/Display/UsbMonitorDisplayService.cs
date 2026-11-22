@@ -29,6 +29,21 @@ public sealed class UsbMonitorDisplay
         ? $"USB signal {size} is active. Windows is using a {Current} desktop and does not currently offer {size} at these display settings."
         : null;
 
+    public bool HasSameSource(UsbMonitorDisplay other) => Board.UsbId == other.Board.UsbId &&
+        Board.Source == other.Board.Source && Board.Target == other.Board.Target && SourceName == other.SourceName;
+
+    public string? ChangeSinceApply(UsbMonitorDisplay? applied)
+    {
+        if (applied == null || Board.UsbId != applied.Board.UsbId) return null;
+        bool reattached = !HasSameSource(applied);
+        if (Current != applied.Current || Signal != applied.Signal)
+        {
+            string change = reattached ? "Windows reconnected this display" : "Windows changed the display settings";
+            return $"{change} after you applied {applied.Current}. The desktop is now {Current}.";
+        }
+        return reattached ? $"Windows reconnected this display. The desktop is still {Current}." : null;
+    }
+
     internal UsbMonitorDisplay(DisplayPath board, DisplayPath[] paths, SourceMode current, DisplayResolution[] modes)
     {
         Board = board;

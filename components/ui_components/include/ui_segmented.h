@@ -45,6 +45,7 @@ typedef struct {
     uint16_t count;
     int32_t width;  // 0 => LV_PCT(100)
     int32_t height; // 0 => UI_SEGMENTED_H
+    bool control_palette; // use the control surface's normal, pressed and selected colors
 } ui_segmented_desc_t;
 
 /** Returns NULL if `parent`, `desc`, `count` or the theme is unavailable. `sink` may be NULL. */

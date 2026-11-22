@@ -1,0 +1,81 @@
+#!/bin/sh
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+export PATH=/bin
+/bin/busybox --install -s /bin
+mkdir -p /dev /proc /sys /tmp /ffs
+mount -t devtmpfs devtmpfs /dev
+mount -t sysfs sysfs /sys
+mount -t proc proc /proc
+exec </dev/console >/dev/console 2>&1
+finish() { poweroff -f; }
+trap finish EXIT
+set -e
+uname -a
+if [ -f /target ]; then
+    . /target
+    mkdir -p /lib/modules
+    ln -s /mods "/lib/modules/$(uname -r)"
+    depmod -a
+    [ "$VIRTUAL" = 0 ] || . /virtual-device
+    /physical-init
+    exit $?
+fi
+. /virtual-device
+# Verify automatic binding separately from protocol interoperability.
+D=/sys/bus/usb/devices/1-1
+I=/sys/bus/usb/devices/1-1:1.0
+for i in $(seq 1 100); do [ -e "$I" ] && break; sleep 0.1; done
+[ "$(cat "$D/idVendor")" = ffff ] && [ "$(cat "$D/idProduct")" = ffff ] || exit 1
+[ "$(cat "$I/bInterfaceClass")" = ff ]
+[ "$(cat "$D/speed")" = 12 ]
+[ ! -L "$I/driver" ] && [ ! -e /dev/dri/card0 ] || exit 1
+echo 'Unbound sentinel ffff:ffff, class ff, 12 Mbit/s on dummy_udc.0'
+printf 'ffff ffff ff\n' > /sys/bus/usb/drivers/gud/new_id
+for i in $(seq 1 100); do [ -e /sys/class/drm/card0-USB-1/status ] && break; sleep 0.1; done
+[ "$(basename "$(readlink "$I/driver")")" = gud ]
+[ "$(cat /sys/class/drm/card0-USB-1/status)" = connected ]
+echo 'Guest-only match attached gud and exposed connected card0-USB-1'
+/fixture check-console
+/fixture draw /dev/dri/card0
+disconnect_gadget() {
+    printf '\n' > "$G/UDC"
+    for i in $(seq 1 100); do
+        [ ! -e "$D" ] && [ ! -e /dev/dri/card0 ] && return 0
+        sleep 0.1
+    done
+    return 1
+}
+first_address=$(cat "$D/devnum")
+disconnect_gadget
+rm /pass1 /pass2
+printf '%s\n' "$UDC" > "$G/UDC"
+for i in $(seq 1 100); do [ -e /sys/class/drm/card0-USB-1/status ] && break; sleep 0.1; done
+[ "$(cat "$D/devnum")" != "$first_address" ]
+[ "$(basename "$(readlink "$I/driver")")" = gud ]
+[ "$(cat /sys/class/drm/card0-USB-1/status)" = connected ]
+/fixture draw /dev/dri/card0
+echo 'GUD_RECONNECT fresh enumeration, retained runtime match and verified pixels'
+/fixture draw-modes /dev/dri/card0
+disconnect_gadget
+rmmod gud
+insmod /mods/gud.ko
+printf '%s\n' "$UDC" > "$G/UDC"
+for i in $(seq 1 100); do [ -e "$I/modalias" ] && break; sleep 0.1; done
+[ "$(cat "$D/idVendor"):$(cat "$D/idProduct")" = ffff:ffff ]
+[ "$(cat "$I/bInterfaceClass")" = ff ]
+[ -d /sys/bus/usb/drivers/gud ]
+printf '%s\n' "${I##*/}" > /sys/bus/usb/drivers_probe
+[ ! -L "$I/driver" ] && [ ! -e /dev/dri/card0 ] || exit 1
+echo 'GUD_RELOAD fresh module leaves the sentinel unbound'
+disconnect_gadget
+touch /tmp/legacy-vga
+rm -f /pass1 /pass2
+printf '%s\n' "$UDC" > "$G/UDC"
+for i in $(seq 1 100); do [ -e "$I/modalias" ] && break; sleep 0.1; done
+printf 'ffff ffff ff\n' > /sys/bus/usb/drivers/gud/new_id
+for i in $(seq 1 100); do [ -c /dev/dri/card0 ] && break; sleep 0.1; done
+/fixture draw /dev/dri/card0
+echo 'GUD_LEGACY verified VGA-only offer, full and edge'
+echo 'PASS real Linux DRM GUD virtual USB, full frame and changed edge verified at receiver'

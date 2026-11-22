@@ -240,11 +240,11 @@ static kvm_rp_approval_t h_approval_begin(void *ctx, uint64_t session_id, const 
     // FR-733. `auto` grants without a prompt; `trusted` grants only for a register entry the user
     // marked trusted; `always` -- the default -- always prompts. The policy can relax the prompt,
     // never the lease, the epoch or the local override (ADR-023, SEC-107).
-    if (srt->cfg.control_approval == KVM_CONTROL_APPROVAL_AUTO) {
+    if (session_id != srt->ssh_session && srt->cfg.control_approval == KVM_CONTROL_APPROVAL_AUTO) {
         srt->c.approvals_auto++;
         return KVM_RP_APPROVAL_GRANTED;
     }
-    if (srt->cfg.control_approval == KVM_CONTROL_APPROVAL_TRUSTED) {
+    if (session_id != srt->ssh_session && srt->cfg.control_approval == KVM_CONTROL_APPROVAL_TRUSTED) {
         const int idx = client_index_of(srt, session_id);
         if (idx >= 0 && srt->hooks.client_trusted != NULL &&
             srt->hooks.client_trusted(srt->hooks.ctx, idx)) {
@@ -309,6 +309,9 @@ static void h_status_fill(void *ctx, kvm_rp_status_t *out)
     if (srt->hooks.status_fill != NULL) {
         srt->hooks.status_fill(srt->hooks.ctx, out);
     }
+    if (srt->rp.hooks.ssh_bind_key)
+        kvm_pair_hex_encode(srt->cfg.ssh_host_key_sha256, KVM_PAIR_SHA256_LEN,
+                            out->ssh_host_key_sha256, sizeof(out->ssh_host_key_sha256));
 }
 
 static bool h_pack(void *ctx, uint64_t session, const char *type, const kvm_json_doc_t *doc,
@@ -333,6 +336,63 @@ static bool h_display_profile(void *ctx, uint64_t session, const char *serial, b
     kvm_srt_t *srt = ctx;
     return srt->wifi_connected && client_index_of(srt, session) >= 0 && control_count(srt) == 1 &&
            srt->hooks.display_profile(session, serial, native);
+}
+
+static const kvm_srt_conn_t *ssh_binding(const kvm_srt_t *srt, const uint8_t fingerprint[KVM_PAIR_SHA256_LEN])
+{
+    for (int i = 0; i < KVM_SRT_MAX_CONNS; i++) {
+        const kvm_srt_conn_t *cn = &srt->conn[i];
+        if (cn->state && cn->kind == KVM_SRT_CONN_CONTROL && cn->client_index >= 0 &&
+            cn->ssh_key_bound && memcmp(cn->ssh_key_sha256, fingerprint, KVM_PAIR_SHA256_LEN) == 0)
+            return cn;
+    }
+    return NULL;
+}
+
+uint64_t kvm_srt_ssh_sponsor(const kvm_srt_t *srt, const uint8_t fingerprint[KVM_PAIR_SHA256_LEN])
+{
+    if (!srt || !fingerprint || !srt->rp.hooks.ssh_bind_key || !srt->pair_ready ||
+        !srt->remote_enabled || !srt->wifi_connected || srt->maintenance)
+        return 0;
+    const kvm_srt_conn_t *cn = ssh_binding(srt, fingerprint);
+    if (!cn) return 0;
+    int slot = kvm_rp_slot_of(&srt->rp, cn->id);
+    if (slot < 0 || srt->rp.s[slot].state != KVM_RP_SESS_READY || srt->rp.s[slot].pack_only || srt->rp.s[slot].stale)
+        return 0;
+    return cn->id;
+}
+
+static kvm_rp_err_t h_ssh_bind_key(void *ctx, uint64_t session, const kvm_json_doc_t *doc, int payload)
+{
+    kvm_srt_t *srt = ctx;
+    kvm_srt_conn_t *cn = conn_of(srt, session);
+    if (!cn || cn->client_index < 0 || !cn->peer_ipv4[0] ||
+        !srt->remote_enabled || !srt->wifi_connected || srt->maintenance)
+        return KVM_RP_ERR_CONTROL_DENIED;
+    char hex[KVM_PAIR_HEX32_CAP];
+    uint8_t fingerprint[KVM_PAIR_SHA256_LEN];
+    size_t length = 0;
+    if (payload < 0 || kvm_json_count(doc, payload) != 1 ||
+        kvm_json_str_copy(doc, kvm_json_member(doc, payload, "sha256"), hex, sizeof(hex)) != sizeof(hex) - 1 ||
+        !kvm_pair_hex_decode(hex, fingerprint, sizeof(fingerprint), &length) || length != sizeof(fingerprint))
+        return KVM_RP_ERR_BAD_FRAME;
+    const kvm_srt_conn_t *bound = ssh_binding(srt, fingerprint);
+    if (bound && bound != cn)
+        return KVM_RP_ERR_CONTROL_DENIED;
+    if (srt->ssh_sponsor == session && memcmp(fingerprint, srt->ssh_client_key, sizeof(fingerprint)) != 0)
+        return KVM_RP_ERR_CONTROL_DENIED; // end the active SSH channel before rotating its key
+    if (srt->hooks.ssh_listen && !srt->hooks.ssh_listen()) return KVM_RP_ERR_CONTROL_DENIED;
+    memcpy(cn->ssh_key_sha256, fingerprint, sizeof(fingerprint));
+    cn->ssh_key_bound = true;
+    return KVM_RP_OK;
+}
+
+void kvm_srt_set_ssh_host_key(kvm_srt_t *srt, const uint8_t fingerprint[KVM_PAIR_SHA256_LEN])
+{
+    static const uint8_t disabled[KVM_PAIR_SHA256_LEN];
+    if (!srt || !fingerprint) return;
+    memcpy(srt->cfg.ssh_host_key_sha256, fingerprint, sizeof(disabled));
+    srt->rp.hooks.ssh_bind_key = memcmp(fingerprint, disabled, sizeof(disabled)) ? h_ssh_bind_key : NULL;
 }
 
 static kvm_rp_err_t h_host_attach(void *ctx, uint64_t session, const kvm_json_doc_t *doc, int payload)
@@ -401,6 +461,7 @@ kvm_pair_err_t kvm_srt_init(kvm_srt_t *srt, const kvm_srt_config_t *cfg,
         .ctx = srt,
     };
     kvm_rp_init(&srt->rp, cfg->rp, &rph);
+    kvm_srt_set_ssh_host_key(srt, cfg->ssh_host_key_sha256);
 
     kvm_pair_config_t pcfg;
     memset(&pcfg, 0, sizeof(pcfg));
@@ -448,8 +509,13 @@ void kvm_srt_set_host(kvm_srt_t *srt, kvm_host_usb_t usb, bool maintenance, bool
     srt->host_usb = usb;
     srt->maintenance = maintenance;
     srt->wifi_connected = wifi_connected;
+    if (srt->ssh_session && (usb != KVM_HOST_USB_MOUNTED || maintenance || !wifi_connected))
+        kvm_srt_ssh_end(srt, srt->ssh_session, maintenance ? KVM_SRT_LOSS_MAINTENANCE : KVM_SRT_LOSS_SOCKET, now_us);
     if (maintenance || !wifi_connected) {
-        for (int i = 0; i < KVM_SRT_MAX_CONNS; ++i) detach_host(srt, &srt->conn[i]);
+        for (int i = 0; i < KVM_SRT_MAX_CONNS; ++i) {
+            srt->conn[i].ssh_key_bound = false;
+            detach_host(srt, &srt->conn[i]);
+        }
     }
     kvm_rp_set_host(&srt->rp, usb, maintenance, wifi_connected, now_us);
     enforce_pair_preconditions(srt);
@@ -536,6 +602,8 @@ void kvm_srt_notify_revoked(kvm_srt_t *srt, uint64_t session_id, kvm_rp_revoke_r
     srt->owner_session = 0u;
     srt->owner_epoch = new_epoch;
     kvm_rp_notify_revoked(&srt->rp, session_id, reason, new_epoch, now_us);
+    if (session_id == srt->ssh_session)
+        kvm_srt_ssh_end(srt, session_id, KVM_SRT_LOSS_CLIENT_CLOSE, now_us);
 }
 
 // ---- pairing frame handling -----------------------------------------------------------------
@@ -921,6 +989,15 @@ void kvm_srt_conn_close(kvm_srt_t *srt, uint64_t conn_id, kvm_srt_loss_t loss, u
     if (cn == NULL) {
         return;
     }
+    if (conn_id == srt->ssh_sponsor)
+        kvm_srt_ssh_end(srt, srt->ssh_session, loss, now_us);
+    if (conn_id == srt->ssh_session) {
+        srt->ssh_session = 0;
+        srt->ssh_sponsor = 0;
+        srt->ssh_granted = false;
+        srt->ssh_epoch = 0;
+        memset(srt->ssh_client_key, 0, sizeof(srt->ssh_client_key));
+    }
     const kvm_srt_conn_kind_t kind = (kvm_srt_conn_kind_t)cn->kind;
     detach_host(srt, cn);
     if (kind == KVM_SRT_CONN_CONTROL && srt->hooks.pack_disconnect)
@@ -1009,6 +1086,7 @@ void kvm_srt_tick(kvm_srt_t *srt, uint64_t now_us)
     }
     srt->now_us = now_us;
     kvm_rp_poll(&srt->rp, now_us);
+    if (srt->ssh_session) (void)kvm_srt_ssh_state(srt, srt->ssh_session, now_us);
     for (int i = 0; i < KVM_SRT_MAX_CONNS; ++i) {
         kvm_srt_conn_t *cn = &srt->conn[i];
         if (cn->host_attached && now_us - cn->host_last_frame_us >= srt->rp.cfg.heartbeat_stale_us)

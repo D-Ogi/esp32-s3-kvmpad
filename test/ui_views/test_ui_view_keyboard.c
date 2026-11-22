@@ -1041,6 +1041,38 @@ static void test_host_layout_slots_are_unique(void)
     CHECK_EQ(slotted, 55); // every slot except SPCE, which no layout changes
 }
 
+static void test_compact_host_keyboard(void)
+{
+    CHECK(start());
+    if (have_layouts()) {
+        lv_obj_set_width(s_kbd.root, 600);
+        ui_view_keyboard_set_host_layout(&s_kbd, "fr");
+        lv_test_wait(50);
+        CHECK(s_kbd.compact != NULL);
+        if (s_kbd.compact != NULL) {
+            CHECK(lv_obj_is_visible(s_kbd.compact));
+            CHECK(!lv_obj_is_visible(s_kbd.row_mid));
+            lv_obj_t *first = lv_obj_get_child(s_kbd.compact, 0);
+            CHECK(lv_obj_check_type(first, &lv_button_class));
+            CHECK(strcmp(lv_label_get_text(lv_obj_get_child(first, -1)), "a") == 0);
+            click_obj(first);
+            CHECK_EQ(s_rec_n, 2);
+            CHECK_EQ(s_rec[0].type, UI_ACT_KEY_DOWN);
+            CHECK_EQ(s_rec[0].value, 0x14); // French A is the physical US Q position.
+            ui_view_keyboard_set_host_layout(&s_kbd, "us");
+            first = lv_obj_get_child(s_kbd.compact, 0);
+            CHECK(strcmp(lv_label_get_text(lv_obj_get_child(first, -1)), "q") == 0);
+            press_obj(first);
+            lv_obj_set_width(s_kbd.root, SCR_W);
+            lv_test_wait(50);
+            release();
+            CHECK(s_kbd.compact == NULL);
+            CHECK(lv_obj_is_visible(s_kbd.row_mid));
+        }
+    }
+    stop();
+}
+
 static void test_host_layout_us(void)
 {
     CHECK(start());
@@ -2874,6 +2906,7 @@ int main(void)
     RUN(test_host_layout_slots_are_unique);
     RUN_MEM(test_host_layout_default_is_us_ansi);
     RUN_MEM(test_host_layout_us);
+    RUN_MEM(test_compact_host_keyboard);
     RUN_MEM(test_host_layout_iso);
     RUN_MEM(test_host_layout_altgr);
     RUN_MEM(test_host_layout_jis);

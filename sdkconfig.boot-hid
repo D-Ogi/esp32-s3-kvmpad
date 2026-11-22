@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+
+# The project applies this after sdkconfig.defaults in a fresh default build. The host enumerates
+# one boot keyboard and one boot mouse on the native OTG port. The monitor
+# receiver is available for explicit display sessions from the LCD.
+CONFIG_TINYUSB_HID_COUNT=2
+CONFIG_KVM_USB_MONITOR_EVAL=y
+CONFIG_TINYUSB_VENDOR_COUNT=1
+CONFIG_TINYUSB_VENDOR_RX_BUFSIZE=0
+CONFIG_TINYUSB_VENDOR_TX_BUFSIZE=0
+CONFIG_TINYUSB_VENDOR_EPSIZE=64

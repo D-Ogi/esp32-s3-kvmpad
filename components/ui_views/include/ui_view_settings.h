@@ -97,7 +97,7 @@ typedef enum {
     UI_SETTINGS_SEC_REMOTE = 0, // FR-506, FR-732, FR-733 and the pairing entry point
     UI_SETTINGS_SEC_CLIENTS,    // FR-726 register: trusted flag and Forget
     UI_SETTINGS_SEC_SHORTCUTS,  // FR-734
-    UI_SETTINGS_SEC_INPUT,      // ADR-020 keep awake
+    UI_SETTINGS_SEC_INPUT,      // mouse scrolling and ADR-020 keep awake
     UI_SETTINGS_SEC_KEYBOARD,   // ADR-037 input languages, FR-747 stepper, FR-741 (read-only until TASK-071)
     UI_SETTINGS_SEC_ABOUT,      // FR-751, TECH-084
     UI_SETTINGS_SEC_APPEARANCE, // global palette and panel backlight
@@ -159,6 +159,11 @@ typedef enum {
     UI_SETTING_HOST_FAV_TOGGLE,
     UI_SETTING_BRIGHTNESS, // FR-505, panel brightness in percent
     UI_SETTING_PALETTE, // ui_control_palette_t
+    UI_SETTING_TWO_FINGER_SCROLL, // FR-504, KVMpad mouse gestures
+    UI_SETTING_NATURAL_SCROLL,    // FR-502, direction of gesture scrolling
+    UI_SETTING_MOUSE_SENSITIVITY, // FR-501, 0 = slow, 1 = normal, 2 = fast
+    UI_SETTING_LONGPRESS_RIGHT_CLICK, // FR-503, hold the mouse pad for a right click
+    UI_SETTING_DIAG_OVERLAY, // FR-509, show device diagnostics on screen
     UI_SETTING_COUNT,
 } ui_setting_id_t;
 
@@ -247,6 +252,11 @@ typedef struct {
     uint8_t control_approval;    // ui_control_approval_t, FR-733
     bool confirm_alt_f4;         // FR-734
     bool keepawake_enabled;      // FR-711
+    bool two_finger_scroll;
+    bool natural_scroll;
+    uint8_t mouse_sensitivity;
+    bool longpress_right_click;
+    bool diag_overlay;
     uint16_t keepawake_interval_s;
     uint8_t brightness;
     uint8_t palette;
@@ -335,6 +345,9 @@ struct ui_view_settings_s {
     lv_obj_t *interval_value;
     lv_obj_t *interval_down;
     lv_obj_t *interval_up;
+    lv_obj_t *sensitivity_value;
+    lv_obj_t *sensitivity_down;
+    lv_obj_t *sensitivity_up;
     lv_obj_t *palette[UI_PALETTE_COUNT];
     lv_obj_t *brightness_value;
     lv_obj_t *brightness_down;

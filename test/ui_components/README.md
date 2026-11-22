@@ -17,7 +17,7 @@ Tools live in the workspace directory above the repository, never on `C:` and ne
 export PATH=../.tools/llvm-mingw-20261020-ucrt-x86_64/bin:../.tools/espressif/tools/ninja/1.12.1:../.tools/espressif/tools/cmake/4.0.3/bin:$PATH
 cmake -S test/ui_components -B ../build-host-uicomp -G Ninja \
       -DCMAKE_C_COMPILER=clang \
-      -DKVM_SNAPSHOT_DIR=O:/Praca/KVMpad/evidence/build/ui_components
+      -DKVM_SNAPSHOT_DIR="$(cd .. && pwd)/evidence/build/ui_components"
 cmake --build ../build-host-uicomp
 ctest --test-dir ../build-host-uicomp --output-on-failure
 ```

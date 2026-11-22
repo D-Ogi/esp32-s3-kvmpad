@@ -551,6 +551,9 @@ esp_err_t remote_glue_start(void)
         return ESP_ERR_NO_MEM;
     }
     s_started = true;
+#if CONFIG_KVM_SSH_BOARD
+    kvm_srt_server_start_ssh();
+#endif
     ESP_LOGI(TAG, "wss server on port %u, remote %s", (unsigned)kvm_srt_server_port(), pol.remote_enabled ? "on" : "off");
     return ESP_OK;
 }
@@ -669,6 +672,18 @@ static void print_status(void)
     }
     kvm_srt_counters_t c;
     kvm_srt_server_get_counters(&c);
+#if CONFIG_KVM_SSH_BOARD
+    kvm_srt_ssh_stats_t ssh;
+    kvm_ssh_listener_stats(&ssh);
+    printf("SSH sessions=%" PRIu32 " approvals=%" PRIu32 " grants=%" PRIu32
+           " commands=%" PRIu32 " stack_free_min=%" PRIu32
+           " kex=%" PRIu32 " query=%" PRIu32 " query_ok=%" PRIu32 " valid=%" PRIu32
+           " auth=%" PRIu32 " channel=%" PRIu32 " subsystem=%" PRIu32 " shell=%" PRIu32
+           " phase=%s end=%s kex_ms=%" PRIu32 " phase_after_kex_ms=%" PRIu32 " elapsed_ms=%" PRIu32 "\n",
+           ssh.sessions, ssh.approval_attempts, ssh.grants, ssh.accepted_commands, ssh.stack_free_min,
+           ssh.kex, ssh.queries, ssh.queries_accepted, ssh.signatures_valid, ssh.authenticated, ssh.channels,
+           ssh.subsystems, ssh.shells, ssh.phase, ssh.ended, ssh.kex_ms, ssh.phase_after_kex_ms, ssh.elapsed_ms);
+#endif
     printf("REMOTE admit ok_ctl=%" PRIu32 " ok_pair=%" PRIu32 " unauthorized=%" PRIu32 " forbidden=%" PRIu32
            " busy=%" PRIu32 " auth_absent=%" PRIu32 " auth_bad=%" PRIu32 " auth_unknown=%" PRIu32 " cooldowns=%" PRIu32 "\n",
            c.admit_ok[KVM_SRT_CONN_CONTROL], c.admit_ok[KVM_SRT_CONN_PAIRING], c.admit_unauthorized,

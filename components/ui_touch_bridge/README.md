@@ -1,16 +1,9 @@
 # `ui_touch_bridge`
 
-> **Status:** `IMPLEMENTED_SW` + on-board check (TASK-060E, 2026-11-02). Report:
-> `test/reports/2026-11-02_M5_TASK-060E_d36ab0a.yaml`.
-
 **Role:** router of a single GT911 sample stream: per-contact capture → the LVGL pointer indev **and** a filtered stream
 to the gesture FSM (`gesture_engine`), without contention.
 
-| | |
-|---|---|
-| Tasks | TASK-060E |
-| Specification | 07 §6; 03 §2 |
-| Tests | `test/ui_touch/` (host); AT-UIFW-04 (pad + tab bar without a phantom click) |
+**Tests.** `test/ui_touch/` (host); AT-UIFW-04 (pad + tab bar without a phantom click)
 
 ## Structure
 
@@ -44,8 +37,7 @@ void ui_touch_bridge_get_stats(ui_touch_bridge_stats_t *out);
 ```
 
 HID leaves the bridge only through the injected sink (`main/ui_glue.c` → `hid_dispatch_local()` → InputArbiter →
-HidScheduler). The component has no USB include. Until TASK-070A the firmware starts with pad → HID **off**; the console
-`ui pad on` enables it for a bench test.
+HidScheduler). The component has no USB include. The product shell supplies the active pad rectangle and enables the HID sink when it owns the screen. A contact that starts on the pad stays captured there until lift or cancellation.
 
 ## Firmware wiring (`main/`)
 
@@ -55,5 +47,3 @@ HidScheduler). The component has no USB include. Until TASK-070A the firmware st
 - Console: `ui touch` (counters + pad rectangle), `ui tap x y [ms]` (synthetic one-finger tap through the same path;
   refused while pad → HID is on), `ui pad on|off`, `ui drag on|off`. Every scene change calls `ui_touch_bridge_cancel()`
   first.
-
-Governing documents: `AGENTS.md`, `AGENTS-UI.md`.

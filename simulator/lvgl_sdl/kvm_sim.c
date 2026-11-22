@@ -293,6 +293,9 @@ static bool warm_up(void)
     sv.pair_require_accept = true;
     sv.control_approval = 2u; // UI_CONTROL_APPROVAL_ALWAYS
     sv.keepawake_interval_s = 30u;
+    sv.two_finger_scroll = true;
+    sv.mouse_sensitivity = 1u;
+    sv.longpress_right_click = true;
     sv.client_count = UI_SETTINGS_CLIENTS_MAX;
     for (uint8_t i = 0; i < UI_SETTINGS_CLIENTS_MAX; i++) {
         (void)snprintf(sv.client[i].name, sizeof(sv.client[i].name), "Warm client %u", (unsigned)i);

@@ -22,6 +22,22 @@ import paired_install
 
 
 class StudioTests(unittest.TestCase):
+    def test_rate_slider_authoring(self):
+        editor = self.editor
+        editor.open(SDK / "samples/rate-slider")
+        editor.select("wheel")
+        self.assertGreaterEqual(len(editor.canvas.find_withtag("node:wheel")), 3)
+        self.assertEqual(str(editor.label_entry["state"]), "disabled")
+        self.assertEqual(tuple(editor.combos["event"]["values"]), ("step_up", "step_down"))
+        self.assertIn("increase", editor.combos["action"]["values"])
+        self.assertIn("decrease", editor.combos["action"]["values"])
+        editor.select("panel")
+        editor.add("RateSlider")
+        node = editor.nodes[editor.selected]
+        self.assertEqual(node["type"], "RateSlider")
+        self.assertEqual((node["bounds"]["w"], node["bounds"]["h"]), (64, 160))
+        kvmpack.validate_scene(editor.current.members)
+
     def test_usb_console_open_and_edit(self):
         editor = self.editor
         editor.open(studio.USB_CONSOLE)

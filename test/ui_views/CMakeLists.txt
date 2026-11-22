@@ -59,6 +59,8 @@ add_library(ui_stack STATIC
     ${UI_THEME}/src/ui_icon_star.c
     ${UI_THEME}/src/kvm_control_icons.c
     ${UI_COMP}/src/ui_status_item.c ${UI_COMP}/src/ui_topbar.c ${UI_COMP}/src/ui_action_key.c
+    ${UI_COMP}/src/ui_rate_slider.c
+    ${UI_VIEWS}/src/ui_keyboard_surface.c
     ${UI_COMP}/src/ui_segmented.c ${UI_COMP}/src/ui_modal.c ${UI_COMP}/src/ui_toast.c
     ${REPO}/components/ime_engine/src/ime_hangul.c
     ${KVM_NOTICES_C})
@@ -121,6 +123,14 @@ endfunction()
 ui_view_test(ui_view_mouse)
 ui_view_test(ui_view_keyboard)
 ui_view_test(ui_view_shortcuts)
+foreach(count IN ITEMS 2 4)
+    set(target test_ui_view_shortcuts_hid${count})
+    add_executable(${target} test_ui_view_shortcuts.c ${UI_VIEWS}/src/ui_view_shortcuts.c)
+    target_compile_definitions(${target} PRIVATE CONFIG_TINYUSB_HID_COUNT=${count})
+    target_compile_options(${target} PRIVATE ${STRICT})
+    target_link_libraries(${target} PRIVATE ui_stack)
+    add_test(NAME ${target} COMMAND ${target})
+endforeach()
 ui_view_test(ui_view_status)
 ui_view_test(ui_remote_view)
 ui_view_test(ui_view_settings)
@@ -147,3 +157,11 @@ add_test(NAME test_pack_autopilot COMMAND test_pack_autopilot)
 add_executable(test_portrait_copy test_portrait_copy.c)
 target_compile_options(test_portrait_copy PRIVATE -UNDEBUG ${STRICT})
 add_test(NAME test_portrait_copy COMMAND test_portrait_copy)
+
+if(WIN32 AND MINGW AND KVM_SANITIZE)
+    # CTest may run from a different shell than the compiler. LLVM-MinGW ships
+    # the sanitizer runtime DLL alongside clang.exe.
+    get_filename_component(compiler_bin "${CMAKE_C_COMPILER}" DIRECTORY)
+    get_property(ui_tests DIRECTORY PROPERTY TESTS)
+    set_tests_properties(${ui_tests} PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${compiler_bin}")
+endif()

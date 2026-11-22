@@ -9,6 +9,14 @@ computer the board is plugged into over USB, and the **CLIENT** is this applicat
 Stack, dependencies and the decisions behind them: `docs/ADR/ADR-028-windows-client-stack.md`.
 The pairing protocol itself is `docs/ADR/ADR-029-pairing-wire-format-and-pake.md`.
 
+## Direct SSH input
+
+Connect to the paired KVMpad in **Devices**, then open **Host input → SSH command…**. The action is available when the device advertises SSH over the authenticated connection. Choose your OpenSSH public key (`.pub`). CLIENT binds its public fingerprint, checks the board's SSH host key against the fingerprint supplied over paired TLS, and shows a PowerShell command.
+
+Keep CLIENT connected, copy the command into PowerShell and approve the SSH control request on KVMpad. Windows OpenSSH uses the private file next to the selected public key or a matching key loaded in your SSH agent. The command connects to the same device on TCP port 22 as user `kvmpad`, using the `kvmpad` subsystem. Each command is one line. Disconnecting CLIENT ends the binding.
+
+Windows OpenSSH Client supplies `ssh.exe` and `ssh-keyscan.exe`. The verified public host key is kept in its own file under `~/.ssh/kvmpad/`. The command uses that file for strict host verification.
+
 ## Layout
 
 | Path | Target | Contents |
@@ -35,10 +43,9 @@ and the llvm-mingw toolchain already in `../.tools/`; the CMake build directory 
 and the two DLLs land in `native/bin/`, which is gitignored.
 
 ```bash
-export PATH=/o/Praca/KVMpad/.tools/llvm-mingw-20261020-ucrt-x86_64/bin:$PATH
+export PATH="$(cd ../.tools && pwd)"/llvm-mingw-20261020-ucrt-x86_64/bin:$PATH
 cmake -S clients/windows/native -B ../build-win-pairing -G Ninja \
-      -DCMAKE_C_COMPILER=x86_64-w64-mingw32-clang \
-      -DMBEDTLS_ROOT=O:/Praca/KVMpad/.tools/esp-idf-v6.1/components/mbedtls/mbedtls
+      -DCMAKE_C_COMPILER=x86_64-w64-mingw32-clang
 cmake --build ../build-win-pairing
 ```
 
@@ -62,8 +69,8 @@ command rather than failing with a bare loader error.
 PowerShell:
 
 ```powershell
-$env:NUGET_PACKAGES = 'O:\Praca\KVMpad\.tools\nuget'
-$env:DOTNET_CLI_HOME = 'O:\Praca\KVMpad\.tools\dotnet-home'
+$env:NUGET_PACKAGES = [IO.Path]::GetFullPath('../.tools/nuget')
+$env:DOTNET_CLI_HOME = [IO.Path]::GetFullPath('../.tools/dotnet-home')
 $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1'
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 $env:DOTNET_NOLOGO = '1'
@@ -86,9 +93,9 @@ dotnet test clients/windows/test/KVMpad.Client.Core.Tests/bin/Release/net9.0/KVM
 
 For a USB extended desktop, start the USB monitor on the KVMpad, then open **Tools → USB display…** in CLIENT. This works over USB independently of the network connection. The dialog shows the desktop size and, when different, the active USB signal size. Select a resolution offered by Windows and choose **Apply**. The change applies to the current session. **Windows display settings** opens the system controls for choosing Extend or arranging the displays.
 
-When the USB signal is already 1024 × 600 and Windows still uses a 640 × 480 desktop, choose **Use 1024 × 600** if Windows offers it. After a signal change the dialog waits for Windows to list the new desktop mode. If it remains unavailable, the dialog shows both sizes. Choose **Refresh** to check the offer again.
+When the USB signal is already 1024 × 600 and Windows still uses a 640 × 480 desktop, choose **Use 1024 × 600** if Windows offers it. After a signal change the dialog waits for Windows to list the new desktop mode. If it remains unavailable, the dialog shows both sizes. Choose **Refresh** to check the offer again. After a successful **Apply**, the open dialog continues to read the active display. If Windows reconnects the KVMpad at a different size, the dialog shows the requested and current desktop sizes. Applying another change requires pressing **Apply** again.
 
-The signed driver offers one size per USB profile on unit 1. For either **640 × 480** or **1024 × 600** in the same dialog, connect CLIENT to the paired KVMpad with its USB monitor already active, then choose the size and **Apply**. CLIENT requests the signal size over the existing session, follows the same physical board across USB reconnection and applies the matching Windows desktop mode. Release remote input control before changing the signal. The feature works with the standalone USB monitor and the portrait USB Monitor Console extension.
+The fixed-size profiles were tested with xfz1986 1.2.25.2. This package failed signature verification. [Windows display compatibility](../../docs/COMPATIBILITY.md) For either **640 × 480** or **1024 × 600** in the same dialog, connect CLIENT to the paired KVMpad with its USB monitor already active, then choose the size and **Apply**. CLIENT requests the signal size over the existing session, follows the same physical board across USB reconnection and applies the matching Windows desktop mode. Release remote input control before changing the signal. The feature works with the standalone USB monitor and the portrait USB Monitor Console extension.
 
 When the KVMpad sits to the left of or above another monitor, CLIENT can keep their shared edge in place as the KVMpad desktop grows or shrinks. The other displays keep their positions. If the new size would still overlap a display or break the layout, the dialog links to Windows display settings.
 

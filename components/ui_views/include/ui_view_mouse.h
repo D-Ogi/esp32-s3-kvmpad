@@ -37,6 +37,8 @@ extern "C" {
 #define UI_CTRL_MOUSE_DRAG_LOCK 0x0102u
 #define UI_CTRL_MOUSE_HELP 0x0103u
 #define UI_CTRL_MOUSE_HELP_CLOSE 0x0104u
+#define UI_CTRL_MOUSE_SCROLL_UP 0x0105u
+#define UI_CTRL_MOUSE_SCROLL_DOWN 0x0106u
 
 #define UI_OVERLAY_GESTURE_HELP 0x0501u
 #define UI_MOUSE_OVERLAYS 1
@@ -77,12 +79,17 @@ typedef struct {
     lv_obj_t *btn_drag;
     lv_obj_t *drag_label;
     lv_obj_t *btn_help;
+    lv_obj_t *scroll_wheel;
 
     // created by the overlay (NULL while it is closed)
     lv_obj_t *help_card;
+    lv_obj_t *help_scroll_result;
+    lv_obj_t *help_hold_result;
 
     uint8_t held_mask; // bit (button id - 1): a DOWN was accepted and its UP is still owed
     bool leaving;      // inside on_leave / destroy: releases count as forced
+    bool two_finger_scroll;
+    bool longpress_right_click;
     ui_view_mouse_counters_t c;
 } ui_view_mouse_t;
 
@@ -91,6 +98,7 @@ void ui_view_mouse_init(ui_view_mouse_t *m, ui_store_t *store, ui_actions_t *act
 
 /** The router that shows and dismisses the gesture card. Call after ui_view_mouse_init(), before the card is used. */
 void ui_view_mouse_bind_router(ui_view_mouse_t *m, ui_router_t *router);
+void ui_view_mouse_set_gestures(ui_view_mouse_t *m, bool two_finger_scroll, bool longpress_right_click);
 
 /** The view's overlay descriptors (UI_MOUSE_OVERLAYS of them) for ui_router_init(). */
 const ui_overlay_descriptor_t *ui_view_mouse_overlays(ui_view_mouse_t *m, uint8_t *n);

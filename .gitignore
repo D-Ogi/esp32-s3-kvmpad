@@ -7,6 +7,12 @@ managed_components/
 sdkconfig
 sdkconfig.old
 
+# The implementation worklist stays with the full local specification package.
+/docs/spec/05-IMPLEMENTATION-PLAN.md
+/LEDGER.json
+/LEDGER.md
+/BACKLOG.md
+
 # --- Host / simulator builds ---
 simulator/**/build/
 test/**/build/
@@ -45,3 +51,13 @@ __pycache__/
 *.swp
 .DS_Store
 Thumbs.db
+
+# Local engineering notes and qualification records
+/docs/ADR/
+/docs/prior-art/
+/test/reports/
+/docs/ROADMAP.md
+/AGENTS.md
+/AGENTS-UI.md
+/docs/spec/README.md
+/docs/spec/06-DECISIONS-AND-RISKS.md

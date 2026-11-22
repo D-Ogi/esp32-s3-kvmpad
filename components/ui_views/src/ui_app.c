@@ -11,6 +11,7 @@
 #include "hid_core.h"
 #include "ui_contracts.h"
 #include "ui_overlay.h"
+#include "ui_present.h"
 #include "ui_status_item.h"
 #include "ui_theme.h"
 #include "ui_tokens.h"
@@ -400,6 +401,7 @@ void ui_app_deinit(ui_app_t *app)
         return;
     }
     ui_actions_set_local_sink(app->actions, NULL, NULL);
+    if (app->diagnostics) lv_obj_delete(app->diagnostics);
     ui_remote_view_close(&app->remote); // drop the outcome toast before its layer goes
     ui_router_deinit(&app->router);      // dismisses overlays, leaves and destroys the views
     lv_obj_delete(app->screen);     // the top bar and the switcher go with it
@@ -449,12 +451,53 @@ void ui_app_set_approval(ui_app_t *app, const ui_approval_view_t *v)
     ui_app_refresh_pad(app);
 }
 
+static void diagnostics_changed(lv_observer_t *observer, lv_subject_t *subject)
+{
+    (void)subject;
+    ui_app_t *app = lv_observer_get_user_data(observer);
+    int32_t usb = ui_store_get(app->store, UI_SUBJ_HOST_USB);
+    int32_t boot = ui_store_get(app->store, UI_SUBJ_MOUSE_BOOT_PROTOCOL);
+    int32_t touch = ui_store_get(app->store, UI_SUBJ_TOUCH_OK);
+    const char *mouse = ui_present_host(usb);
+    if (usb == KVM_HOST_USB_MOUNTED) {
+        mouse = boot == 1 ? "Boot" : boot == 0 ? "Report" : "Unknown";
+    }
+    lv_label_set_text_fmt(app->diagnostics, "Mouse HID  %s    Touch  %s", mouse,
+                          touch == 1 ? "Ready" : touch == 0 ? "Fault" : "Unknown");
+}
+
+static void set_diagnostics(ui_app_t *app, bool enabled)
+{
+    if (enabled == (app->diagnostics != NULL)) return;
+    if (!enabled) {
+        lv_obj_delete(app->diagnostics); // its subject observers are removed with it
+        app->diagnostics = NULL;
+        return;
+    }
+    lv_obj_t *layer = lv_display_get_layer_top(lv_obj_get_display(app->screen));
+    lv_obj_t *label = lv_label_create(layer);
+    if (!label) return;
+    app->diagnostics = label;
+    lv_obj_set_clickable(label, false);
+    lv_obj_set_scrollable(label, false);
+    ui_theme_apply(label, UI_STYLE_TEXT_LABEL, LV_STATE_DEFAULT);
+    ui_theme_apply(label, UI_STYLE_TOUCH_STATUS, LV_STATE_DEFAULT);
+    lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 0);
+    const ui_subject_id_t states[] = {UI_SUBJ_HOST_USB, UI_SUBJ_MOUSE_BOOT_PROTOCOL, UI_SUBJ_TOUCH_OK};
+    for (size_t i = 0; i < sizeof(states) / sizeof(states[0]); i++) {
+        lv_subject_add_observer_obj(ui_store_subject(app->store, states[i]), diagnostics_changed, label, app);
+    }
+}
+
 void ui_app_set_settings(ui_app_t *app, const ui_settings_view_t *v)
 {
     if (!app || !app->ready || !v) {
         return;
     }
     ui_view_settings_set(&app->settings, v);
+    set_diagnostics(app, v->seq != 0 && v->diag_overlay);
+    ui_view_mouse_set_gestures(&app->mouse, !v->seq || v->two_finger_scroll, !v->seq || v->longpress_right_click);
+    ui_view_keyboard_set_scrolling(&app->keyboard, !v->seq || v->two_finger_scroll);
     lv_obj_t *awake = ui_topbar_keep_awake(app->bar);
     if (awake) lv_obj_set_hidden(awake, !v->seq || !v->keepawake_enabled);
     // FR-747: the KO layer composes on this device only when a Unicode delivery mode can carry its text;

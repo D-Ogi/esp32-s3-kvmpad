@@ -19,10 +19,9 @@
 #
 # Build (nothing is installed on drive C:, and the build directory stays out of the repository):
 #
-#   export PATH=/o/Praca/KVMpad/.tools/llvm-mingw-20261020-ucrt-x86_64/bin:$PATH
+#   export PATH="$(cd ../.tools && pwd)"/llvm-mingw-20261020-ucrt-x86_64/bin:$PATH
 #   cmake -S clients/windows/native -B ../build-win-pairing -G Ninja \
-#         -DCMAKE_C_COMPILER=x86_64-w64-mingw32-clang \
-#         -DMBEDTLS_ROOT=O:/Praca/KVMpad/.tools/esp-idf-v6.1/components/mbedtls/mbedtls
+#         -DCMAKE_C_COMPILER=x86_64-w64-mingw32-clang
 #   cmake --build ../build-win-pairing
 #
 # The two DLLs land in clients/windows/native/bin/, which .gitignore already covers, because the
@@ -40,7 +39,11 @@ if(NOT WIN32)
     message(FATAL_ERROR "This library is the Windows CLIENT's pairing core; build it for Windows.")
 endif()
 
-set(MBEDTLS_ROOT "O:/Praca/KVMpad/.tools/esp-idf-v6.1/components/mbedtls/mbedtls"
+set(idf_tree "$ENV{IDF_PATH}")
+if(NOT idf_tree)
+    set(idf_tree "${REPO}/../.tools/esp-idf-v6.1")
+endif()
+set(MBEDTLS_ROOT "${idf_tree}/components/mbedtls/mbedtls"
     CACHE PATH "Root of the mbedTLS tree pinned by ESP-IDF v6.1")
 if(NOT EXISTS ${MBEDTLS_ROOT}/tf-psa-crypto/CMakeLists.txt)
     message(FATAL_ERROR "MBEDTLS_ROOT does not point at the pinned mbedTLS tree: ${MBEDTLS_ROOT}")

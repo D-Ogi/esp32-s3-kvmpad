@@ -271,6 +271,45 @@ static void test_pad_rectangle(void)
 }
 
 static unsigned extension_clicks;
+static void test_diagnostics_overlay(void)
+{
+    CHECK(start());
+    ui_settings_view_t v = {.diag_overlay = true};
+    ui_app_set_settings(&s_app, &v);
+    CHECK(s_app.diagnostics == NULL); // no published setting
+    v.seq = 1;
+    ui_app_set_settings(&s_app, &v);
+    CHECK(s_app.diagnostics != NULL);
+    CHECK(strcmp(lv_label_get_text(s_app.diagnostics), "Mouse HID  Unknown    Touch  Unknown") == 0);
+    ui_hid_slice_t h = {.host_usb_state = KVM_HOST_USB_MOUNTED, .mouse_boot_protocol = true};
+    ui_touch_slice_t t = {.touch_healthy = true};
+    ui_mailbox_publish_hid(&s_mb, &h, ++s_seq);
+    ui_mailbox_publish_touch(&s_mb, &t, s_seq);
+    ui_store_tick(&s_store);
+    CHECK(strcmp(lv_label_get_text(s_app.diagnostics), "Mouse HID  Boot    Touch  Ready") == 0);
+    lv_screen_load(s_home);
+    lv_test_wait(5);
+    lv_obj_t *layer = lv_display_get_layer_top(lv_obj_get_display(s_home));
+    CHECK(lv_obj_get_parent(s_app.diagnostics) == layer);
+    lv_point_t point;
+    center_of(s_app.diagnostics, &point.x, &point.y);
+    CHECK(lv_indev_search_obj(layer, &point) == NULL); // top-layer hit test used by touchpad surfaces
+    h.mouse_boot_protocol = false;
+    t.touch_healthy = false;
+    ui_mailbox_publish_hid(&s_mb, &h, ++s_seq);
+    ui_mailbox_publish_touch(&s_mb, &t, s_seq);
+    ui_store_tick(&s_store);
+    CHECK(strcmp(lv_label_get_text(s_app.diagnostics), "Mouse HID  Report    Touch  Fault") == 0);
+    publish(KVM_HOST_USB_DETACHED, UI_CLIENT_DISABLED);
+    CHECK(strcmp(lv_label_get_text(s_app.diagnostics), "Mouse HID  Disconnected    Touch  Fault") == 0);
+    v.diag_overlay = false;
+    ui_app_set_settings(&s_app, &v);
+    CHECK(s_app.diagnostics == NULL);
+    v.diag_overlay = true;
+    ui_app_set_settings(&s_app, &v);
+    stop(); // destroy the app with observers still bound
+}
+
 static void extensions_clicked(lv_event_t *event)
 {
     CHECK(lv_event_get_user_data(event) == &s_app);
@@ -564,6 +603,44 @@ static void test_indicator_details(void)
     ui_actions_submit(&s_act, UI_ACT_DISMISS_OVERLAY, UI_CTRL_STATUS_CLOSE, 0, fake_now(), NULL);
     lv_test_wait(20);
     CHECK_EQ(s_rec_n, 0);          // nothing reached the domain
+    stop();
+}
+
+static void test_scroll_preferences(void)
+{
+    CHECK(start());
+    publish(KVM_HOST_USB_MOUNTED, UI_CLIENT_DISABLED);
+    ui_settings_view_t settings = {.seq = 1, .two_finger_scroll = false};
+    ui_app_set_settings(&s_app, &settings);
+    CHECK(strstr(lv_label_get_text(s_app.mouse.idle_sub), "scroll faster") != NULL);
+    CHECK(!lv_obj_has_state(s_app.mouse.scroll_wheel, LV_STATE_DISABLED));
+    click_obj(s_app.mouse.btn_right);
+    CHECK_EQ(count(UI_ACT_MOUSE_BUTTON_DOWN, KVM_MOUSE_BTN_RIGHT), 1);
+    CHECK_EQ(count(UI_ACT_MOUSE_BUTTON_UP, KVM_MOUSE_BTN_RIGHT), 1);
+    click_obj(s_app.mouse.btn_help);
+    CHECK_EQ(ui_overlay_top(&s_app.router), UI_OVERLAY_GESTURE_HELP);
+    CHECK(s_app.mouse.help_scroll_result &&
+          strcmp(lv_label_get_text(s_app.mouse.help_scroll_result), "KVMpad scroll gesture is off") == 0);
+    CHECK(s_app.mouse.help_hold_result &&
+          strcmp(lv_label_get_text(s_app.mouse.help_hold_result), "Hold to right-click is off") == 0);
+    settings.two_finger_scroll = true;
+    settings.longpress_right_click = true;
+    ++settings.seq;
+    ui_app_set_settings(&s_app, &settings);
+    CHECK(s_app.mouse.help_scroll_result &&
+          strcmp(lv_label_get_text(s_app.mouse.help_scroll_result), ui_view_mouse_help_result(4)) == 0);
+    CHECK(s_app.mouse.help_hold_result &&
+          strcmp(lv_label_get_text(s_app.mouse.help_hold_result), "Right click") == 0);
+    ui_overlay_dismiss(&s_app.router);
+    CHECK(ui_router_show(&s_app.router, UI_VIEW_KEYBOARD));
+    lv_test_wait(30);
+    click_obj(s_app.keyboard.workspace_button);
+    click_obj(s_app.keyboard.workspace_choices[UI_KBD_PAD_LEFT]);
+    CHECK(lv_obj_is_visible(s_app.keyboard.hybrid_scroll_hint));
+    settings.two_finger_scroll = false;
+    ++settings.seq;
+    ui_app_set_settings(&s_app, &settings);
+    CHECK(!lv_obj_is_visible(s_app.keyboard.hybrid_scroll_hint));
     stop();
 }
 
@@ -1158,6 +1235,8 @@ int main(void)
     RUN_MEM(test_workspace_navigation);
     RUN_MEM(test_indicator_details);
     RUN_MEM(test_settings_overlay);
+    RUN_MEM(test_diagnostics_overlay);
+    RUN_MEM(test_scroll_preferences);
     RUN_MEM(test_keyboard_language_picker);
     RUN_MEM(test_mode_switcher);
     RUN_MEM(test_leave_releases_held_button);

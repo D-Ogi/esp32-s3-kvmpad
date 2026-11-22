@@ -8,10 +8,9 @@
 #
 # The build directory lives outside the repository (CONTRIBUTING.md):
 #
-#   export PATH=/o/Praca/KVMpad/.tools/llvm-mingw-20261020-ucrt-x86_64/bin:$PATH
+#   export PATH="$(cd ../.tools && pwd)"/llvm-mingw-20261020-ucrt-x86_64/bin:$PATH
 #   cmake -S test/pairing -B ../build-host-pairing -G Ninja \
-#         -DCMAKE_C_COMPILER=x86_64-w64-mingw32-clang \
-#         -DMBEDTLS_ROOT=O:/Praca/KVMpad/.tools/esp-idf-v6.1/components/mbedtls/mbedtls
+#         -DCMAKE_C_COMPILER=x86_64-w64-mingw32-clang
 #   cmake --build ../build-host-pairing
 #   ctest --test-dir ../build-host-pairing --output-on-failure
 #
@@ -26,7 +25,11 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(REPO ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 
-set(MBEDTLS_ROOT "O:/Praca/KVMpad/.tools/esp-idf-v6.1/components/mbedtls/mbedtls"
+set(idf_tree "$ENV{IDF_PATH}")
+if(NOT idf_tree)
+    set(idf_tree "${REPO}/../.tools/esp-idf-v6.1")
+endif()
+set(MBEDTLS_ROOT "${idf_tree}/components/mbedtls/mbedtls"
     CACHE PATH "Root of the mbedTLS tree pinned by ESP-IDF v6.1")
 if(NOT EXISTS ${MBEDTLS_ROOT}/tf-psa-crypto/CMakeLists.txt)
     message(FATAL_ERROR "MBEDTLS_ROOT does not point at the pinned mbedTLS tree: ${MBEDTLS_ROOT}")

@@ -1,18 +1,8 @@
 # `remote_protocol`
 
-> **Status:** `IMPLEMENTED_SW` — protocol part of TASK-100 (envelope reader, validator, session layer).
-> Not yet wired into the firmware: the root `CMakeLists.txt` still lists the component in
-> `EXCLUDE_COMPONENTS`, and the transport (WSS), the authentication and the pairing state machine belong to
-> `secure_remote`.
-
 **Role:** CLIENT protocol v1 — the only place where untrusted network bytes become typed intents.
 
-| | |
-|---|---|
-| Tasks | TASK-100 |
-| Specification | 03 §6 (6.1–6.6), §7, §8 (VEC-005/007/008/009); 02 §8, §10 |
-| Decisions | ADR-011, ADR-018, ADR-019, ADR-021, ADR-022, ADR-023, ADR-024, **ADR-030** |
-| Tests | `test/remote_protocol/` — AT-CONN-04..09, AT-SEC-02/03/04/07/08, AT-FAULT-06, AT-EXT-19, fuzz |
+**Tests.** `test/remote_protocol/` — AT-CONN-04..09, AT-SEC-02/03/04/07/08, AT-FAULT-06, AT-EXT-19, fuzz
 
 ## What it does
 
@@ -50,7 +40,7 @@ Every loss of the lease asks the integrator for a revoke plus `RELEASE_ALL` with
 | `control.release` | `client_release` | `KVM_RA_REMOTE_RELEASE` |
 | no heartbeat for 3 s | `client_stale` | `KVM_RA_LEASE_TIMEOUT` |
 | `session.close` / transport drop | `session_closed` | `KVM_RA_REMOTE_DISCONNECT` |
-| local input took over (ADR-011) | `local_override` | `KVM_RA_LOCAL_OVERRIDE` |
+| local input took over | `local_override` | `KVM_RA_LOCAL_OVERRIDE` |
 | USB lost | `host_offline` | `KVM_RA_USB_LOSS` |
 | OTA / factory reset | `maintenance` | `KVM_RA_MAINTENANCE` |
 | input flood | `rate_flood` | `KVM_RA_REMOTE_DISCONNECT` |
@@ -105,11 +95,9 @@ kvm_rp_set_owner(&g_rp, snapshot.owner_kind, owner_session, snapshot.owner_epoch
 
 ## Extensions already covered
 
-- ADR-018: media keys only as `input/shortcut` with an allowlisted `command_id` (TECH-075).
-- ADR-019: "Type text" is a CLIENT feature over the existing `keyboard.key`; no firmware command.
-- ADR-022: `pair.*` whitelisted, validated and fuzzed; routed to `secure_remote`, never to HID (AT-EXT-16/17).
-- ADR-023: no `settings.*` in v1 → `ERR_BAD_FRAME` + counter; the snapshot carries no policy values (SEC-107).
-- ADR-024: the read-only `host_layout` field in the snapshot, validated, never settable from the CLIENT
+- media keys only as `input/shortcut` with an allowlisted `command_id` (TECH-075).
+- "Type text" is a CLIENT feature over the existing `keyboard.key`; no firmware command.
+- `pair.*` whitelisted, validated and fuzzed; routed to `secure_remote`, never to HID (AT-EXT-16/17).
+- no `settings.*` in v1 → `ERR_BAD_FRAME` + counter; the snapshot carries no policy values (SEC-107).
+- the read-only `host_layout` field in the snapshot, validated, never settable from the CLIENT
   (FR-745, AT-EXT-25).
-
-Governing documents: `AGENTS.md`, `docs/ADR/ADR-030-remote-protocol-component.md`.

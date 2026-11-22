@@ -130,6 +130,7 @@ typedef struct {
     uint32_t lease_epoch;
     char device_id[24];    // e.g. "kvm-7f3a"
     char usb_serial[13];   // Physical USB identity advertised to a paired display client.
+    char ssh_host_key_sha256[65]; // Hex SHA-256 of the OpenSSH host public key blob.
     char fw[16];           // e.g. "1.0.0"
     char host_layout[24];  // ADR-024 / FR-745: an enumerated id from kbd_layouts, never free text
 } kvm_rp_status_t;
@@ -202,6 +203,8 @@ typedef struct {
     kvm_rp_err_t (*host_attach)(void *ctx, uint64_t session, const kvm_json_doc_t *doc, int payload);
     bool (*host_detach)(void *ctx, uint64_t session);
     bool (*display_profile)(void *ctx, uint64_t session, const char *serial, bool native);
+    /** Optional SSH transport. Bind an SSH public-key fingerprint to this paired TLS session. */
+    kvm_rp_err_t (*ssh_bind_key)(void *ctx, uint64_t session, const kvm_json_doc_t *doc, int payload);
 
     void *ctx;
 } kvm_rp_hooks_t;

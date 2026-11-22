@@ -36,6 +36,7 @@
 #define PANE_W (INNER_W - TAB_W - UI_SPACE_L)
 #define CLOSE_W 168
 #define ROW_H 76
+#define INPUT_ROW_H 64
 #define TOGGLE_W 132
 #define TOGGLE_H UI_TOUCH_PREFERRED
 #define APPROVAL_W 150
@@ -142,6 +143,13 @@ static const toggle_def_t k_toggles[] = {
      "On: Alt+F4 needs a second tap within 2 s before it reaches the host."},
     {UI_SETTING_KEEPAWAKE_ENABLED, "Keep awake",
      "Sends a 0 px mouse report while the host is idle, so it does not fall asleep."},
+    {UI_SETTING_TWO_FINGER_SCROLL, "Two-finger scrolling",
+     "Scroll with two fingers on the KVMpad mouse pad. The scroll arrows work independently."},
+    {UI_SETTING_NATURAL_SCROLL, "Natural scrolling",
+     "Move content in the same direction as your fingers when scrolling."},
+    {UI_SETTING_LONGPRESS_RIGHT_CLICK, "Long press for right click",
+     "Hold one finger on the pad to right-click. The Right click button stays available."},
+    {UI_SETTING_DIAG_OVERLAY, "Diagnostics overlay", "Show the USB mouse mode and touch controller status."},
     // ADR-037: the three composed languages. Their rows are compact (one line each, no per-row note), so the
     // note of the block above them carries the one sentence FR-731 asks for.
     {UI_SETTING_LANG_KO, "Korean", NULL},
@@ -163,7 +171,15 @@ static const char *const k_setting_key[UI_SETTING_COUNT] = {
     "kbd.unicode_mode",    "kbd.lang_ko",              "kbd.lang_zh",      "kbd.lang_ja",
     "kbd.host_layout", [UI_SETTING_BRIGHTNESS] = "display.brightness",
     [UI_SETTING_PALETTE] = "display.palette",
+    [UI_SETTING_TWO_FINGER_SCROLL] = "mouse.two_finger_scroll",
+    [UI_SETTING_NATURAL_SCROLL] = "mouse.natural_scroll",
+    [UI_SETTING_MOUSE_SENSITIVITY] = "mouse.sensitivity",
+    [UI_SETTING_LONGPRESS_RIGHT_CLICK] = "mouse.longpress_right_click",
+    [UI_SETTING_DIAG_OVERLAY] = "diag.overlay",
 };
+
+static const char *const k_sensitivity_names[] = {"Slow", "Normal", "Fast"};
+#define SENSITIVITY_COUNT (sizeof(k_sensitivity_names) / sizeof(k_sensitivity_names[0]))
 
 const char *ui_setting_key(ui_setting_id_t id)
 {
@@ -307,6 +323,10 @@ static bool toggle_value(const ui_view_settings_t *s, ui_setting_id_t id, bool *
     case UI_SETTING_PAIR_REQUIRE_ACCEPT: return s->v.pair_require_accept;
     case UI_SETTING_CONFIRM_ALT_F4: return s->v.confirm_alt_f4;
     case UI_SETTING_KEEPAWAKE_ENABLED: return s->v.keepawake_enabled;
+    case UI_SETTING_TWO_FINGER_SCROLL: return s->v.two_finger_scroll;
+    case UI_SETTING_NATURAL_SCROLL: return s->v.natural_scroll;
+    case UI_SETTING_LONGPRESS_RIGHT_CLICK: return s->v.longpress_right_click;
+    case UI_SETTING_DIAG_OVERLAY: return s->v.diag_overlay;
     case UI_SETTING_LANG_KO: return s->v.lang_ko;
     case UI_SETTING_LANG_ZH: return s->v.lang_zh;
     case UI_SETTING_LANG_JA: return s->v.lang_ja;
@@ -572,6 +592,16 @@ static void interval_clicked(lv_event_t *e)
     refresh(s);
 }
 
+static void sensitivity_clicked(lv_event_t *e)
+{
+    ui_view_settings_t *s = lv_event_get_user_data(e);
+    int current = s->v.mouse_sensitivity;
+    int next = current + (lv_event_get_current_target_obj(e) == s->sensitivity_up ? 1 : -1);
+    if (controls_live(s) && (unsigned)current < SENSITIVITY_COUNT && (unsigned)next < SENSITIVITY_COUNT) {
+        report(s, UI_SETTING_MOUSE_SENSITIVITY, next, 0u);
+    }
+}
+
 static void palette_clicked(lv_event_t *e)
 {
     ui_view_settings_t *s = lv_event_get_user_data(e);
@@ -763,6 +793,12 @@ static void refresh(ui_view_settings_t *s)
         lv_label_set_text_static(s->pair_note, on ? k_pair_note : k_pair_blocked_note);
     }
 
+    unsigned sensitivity = s->v.mouse_sensitivity;
+    bool sensitivity_known = known && sensitivity < SENSITIVITY_COUNT;
+    lv_label_set_text_static(s->sensitivity_value, sensitivity_known ? k_sensitivity_names[sensitivity] : UNKNOWN_TEXT);
+    set_enabled(s->sensitivity_down, controls_live(s) && sensitivity_known && sensitivity > 0);
+    set_enabled(s->sensitivity_up, controls_live(s) && sensitivity_known && sensitivity + 1 < SENSITIVITY_COUNT);
+
     if (s->interval_value != NULL) {
         if (!known) {
             lv_label_set_text_static(s->interval_value, UNKNOWN_TEXT);
@@ -890,6 +926,7 @@ static void add_toggle_row(ui_view_settings_t *s, lv_obj_t *pane, ui_setting_id_
     }
     lv_obj_t *left = NULL;
     lv_obj_t *row = setting_row(pane, def->caption, def->note, &left);
+    if (pane == s->pane[UI_SETTINGS_SEC_INPUT]) lv_obj_set_height(row, INPUT_ROW_H);
     lv_obj_t *btn = button(row, "", TOGGLE_W, TOGGLE_H, UI_BTN_SECONDARY, toggle_clicked, s);
     s->toggle[id].row = row;
     s->toggle[id].control = btn;
@@ -990,12 +1027,23 @@ static void add_stepper(lv_obj_t *row, lv_event_cb_t clicked, ui_view_settings_t
 
 static void build_input_pane(ui_view_settings_t *s, lv_obj_t *holder)
 {
-    lv_obj_t *pane = new_pane(s, holder, UI_SETTINGS_SEC_INPUT, UI_SPACE_S);
-    add_toggle_row(s, pane, UI_SETTING_KEEPAWAKE_ENABLED);
+    lv_obj_t *pane = new_pane(s, holder, UI_SETTINGS_SEC_INPUT, UI_SPACE_XS);
+    lv_obj_set_scrollable(pane, true);
+    lv_obj_set_scroll_dir(pane, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(pane, LV_SCROLLBAR_MODE_AUTO);
     lv_obj_t *left = NULL;
-    lv_obj_t *row = setting_row(pane, "Idle interval",
+    lv_obj_t *row = setting_row(pane, "Mouse sensitivity", "Set the pointer speed for mouse pad gestures.", &left);
+    lv_obj_set_height(row, INPUT_ROW_H);
+    add_stepper(row, sensitivity_clicked, s, &s->sensitivity_down, &s->sensitivity_value, &s->sensitivity_up);
+    add_toggle_row(s, pane, UI_SETTING_LONGPRESS_RIGHT_CLICK);
+    add_toggle_row(s, pane, UI_SETTING_TWO_FINGER_SCROLL);
+    add_toggle_row(s, pane, UI_SETTING_NATURAL_SCROLL);
+    (void)wrapped(pane, "Precision Touchpad uses the host's pointer and gesture settings.", UI_STYLE_TEXT_MUTED);
+    add_toggle_row(s, pane, UI_SETTING_KEEPAWAKE_ENABLED);
+    row = setting_row(pane, "Idle interval",
                                 "How long the host must be idle before a keep-awake report. 10 to 300 s.",
                                 &left);
+    lv_obj_set_height(row, INPUT_ROW_H);
     add_stepper(row, interval_clicked, s, &s->interval_down, &s->interval_value, &s->interval_up);
 }
 
@@ -2141,6 +2189,7 @@ static void build_about_pane(ui_view_settings_t *s, lv_obj_t *holder)
     lv_obj_set_style_text_align(s->version_value, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
     one_line_dots(s->version_value);
 
+    add_toggle_row(s, pane, UI_SETTING_DIAG_OVERLAY);
     (void)wrapped(pane, ui_notices_license(), UI_STYLE_TEXT_LABEL);
     (void)text(pane, "Third-party notices", UI_STYLE_TEXT_BODY);
 
@@ -2239,6 +2288,9 @@ static void on_close(void *ctx)
     s->interval_value = NULL;
     s->interval_down = NULL;
     s->interval_up = NULL;
+    s->sensitivity_value = NULL;
+    s->sensitivity_down = NULL;
+    s->sensitivity_up = NULL;
     memset(s->palette, 0, sizeof(s->palette));
     s->brightness_value = NULL;
     s->brightness_down = NULL;

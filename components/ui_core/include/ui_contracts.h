@@ -44,8 +44,11 @@ typedef enum {
     UI_ACT_TEXT_CHAR,          // value = BMP code point 0x20..0xFFFF, not a surrogate (U+0x7F..0x9F excluded)
     UI_ACT_TEXT_KEY,           // value = non-modifier usage 0x04..0xDD, | UI_TEXT_KEY_SHIFT to type it with Shift
     UI_ACT_TEXT_CANCEL,        // value = 0: drop the queued text, cancel the running burst, release everything
+    UI_ACT_MOUSE_WHEEL_STEP,   // value = UI_WHEEL_UP or UI_WHEEL_DOWN
     UI_ACT_COUNT,
 } ui_action_type_t;
+
+enum { UI_WHEEL_UP, UI_WHEEL_DOWN };
 
 /** UI_ACT_TEXT_KEY flag: the key is typed with Left Shift held for this one keystroke. */
 #define UI_TEXT_KEY_SHIFT 0x0100u
@@ -93,6 +96,7 @@ typedef struct {
     uint8_t mods_locked;     // ADR-016 locked modifier bits (FR-204 LOCKED)
     bool caps_led_known;     // the HOST has sent at least one LED output report
     bool caps_led_active;
+    bool mouse_boot_protocol;
     bool maintenance;        // OTA / factory reset: input blocked
     uint16_t error_code;     // 0 = none; a persistent domain error (e.g. KVM_HID_ERR_* of the USB state)
 } ui_state_snapshot_t;
@@ -107,6 +111,7 @@ typedef struct {
     uint8_t mods_locked;
     bool caps_led_known;
     bool caps_led_active;
+    bool mouse_boot_protocol;
     bool maintenance;
     uint16_t error_code;
 } ui_hid_slice_t;

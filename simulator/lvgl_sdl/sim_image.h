@@ -5,8 +5,8 @@
 // Golden images of the simulator (TASK-070D): render an object tree to RGB888, write and read 24-bit PNG, and
 // compare two images with a per-channel tolerance and a budget of differing pixels.
 //
-// The render goes through lv_snapshot_take() in RGB565 - the pixel format of the target panel (ADR-026,
-// TECH-087) - and is expanded to RGB888 for the PNG, so a golden shows exactly the quantization the panel
+// Screen captures with a top-layer overlay use the headless display framebuffer. Object snapshots use
+// lv_snapshot_take(). Both expand the panel's RGB565 format to RGB888 so a golden shows the quantization the panel
 // shows. PNG is handled by the lodepng that LVGL vendors (LV_USE_LODEPNG), not by a hand-written codec.
 #pragma once
 

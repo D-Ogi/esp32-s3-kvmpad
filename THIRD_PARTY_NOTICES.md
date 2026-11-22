@@ -48,6 +48,8 @@ TECH-078) have their own row in the vendored table above.
 | Espressif managed components pinned by `dependencies.lock` (2026-11-02): `esp_tinyusb`, `esp_lcd_touch`, `esp_lcd_touch_gt911`, `esp_lvgl_adapter`, `esp_lvgl_port` (until ADR-027 item 1), and the adapter's transitive `button`, `knob`, `cmake_utilities`, `esp_lv_decoder`, `esp_lv_fs`, `esp_mmap_assets` | Apache-2.0 (as declared in each component's manifest) |
 | `espressif/esp_new_jpeg` 1.0.2, Copyright (c) 2024 Espressif Systems (Shanghai) Co., Ltd. | ESPRESSIF MIT License for use on Espressif Systems products. The copyright and permission notice are in the component's [LICENSE](https://github.com/espressif/esp-adf-libs/blob/daee964980d14d7fcf9da10821827399ef600577/esp_new_jpeg/LICENSE). |
 | `espressif/freetype` (transitive, adapter) | FreeType License (FTL) / GPL-2.0 dual |
+| `david-cermak/libssh` 0.12.2 (optional device SSH endpoint) | GNU LGPL 2.1. The component includes upstream libssh and its license in `libssh-mirror/COPYING`. [Component sources](https://github.com/david-cermak/libssh) |
+| `espressif/sock_utils` (device SSH dependency) | Apache License 2.0. The component includes its license in `LICENSE`. |
 | `espressif/libpng`, `espressif/zlib`, `espressif/qoi` (transitive, adapter) | libpng-2.0 / Zlib / MIT |
 
 Exact versions are pinned in `dependencies.lock` from TASK-000 on; this table names licenses, not versions.

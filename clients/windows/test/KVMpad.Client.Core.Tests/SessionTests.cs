@@ -145,12 +145,46 @@ public sealed class SessionTests
     }
 
     [Fact]
-    public async Task DisplayProfileUsesPairedUsbIdentityAndItsOwnAcknowledgment()
+    public async Task SshBindingRequiresTheBoardsHostKeyFingerprint()
     {
-        const string serial = "441BF6C9229C";
         var (logic, _, _) = NewSession();
         logic.OnTransportOpened();
-        logic.OnMessage(ProtocolCodec.Decode("""{"v":1,"type":"hello.ack","seq":1,"session_id":"paired","payload":{"usb_serial":"441BF6C9229C","capabilities":["usb_display_profile"]}}"""));
+        logic.OnMessage(ProtocolCodec.Decode("""{"v":1,"type":"hello.ack","seq":1,"session_id":"paired","payload":{"capabilities":["ssh_key_binding"]}}"""));
+        Assert.Null(logic.SshHostKeySha256);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => logic.BindSshKeyAsync(new byte[32], default));
+    }
+
+    [Fact]
+    public async Task SshBindsOnlyToTheCurrentPairedSessionAndItsAcknowledgment()
+    {
+        var (logic, _, _) = NewSession();
+        var digest = Convert.FromHexString("000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => logic.BindSshKeyAsync(digest, default));
+        logic.OnTransportOpened();
+        logic.OnMessage(ProtocolCodec.Decode("""{"v":1,"type":"hello.ack","seq":1,"session_id":"paired","payload":{"capabilities":["ssh_key_binding"],"ssh_host_key_sha256":"abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"}}"""));
+        Assert.Equal("ABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD", logic.SshHostKeySha256);
+        var bind = logic.BindSshKeyAsync(digest, default);
+        var frame = ProtocolCodec.Decode(Assert.Single(logic.OnTick()));
+        Assert.Equal("ssh.key.bind", frame.Type);
+        Assert.Equal(Convert.ToHexString(digest), frame.PayloadString("sha256"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => logic.BindSshKeyAsync(digest, default));
+        void Reply(string type, string session, ulong seq) => logic.OnMessage(ProtocolCodec.Decode(
+            JsonSerializer.SerializeToUtf8Bytes(new {v=1,type,seq=5,session_id=session,payload=new {ack_seq=seq}})));
+        Reply("host.attached", "paired", frame.Seq);
+        Reply("ssh.key.bound", "old-session", frame.Seq);
+        Reply("ssh.key.bound", "paired", frame.Seq + 1);
+        Assert.False(bind.IsCompleted);
+        Reply("ssh.key.bound", "paired", frame.Seq);
+        await bind;
+    }
+
+    [Fact]
+    public async Task DisplayProfileUsesPairedUsbIdentityAndItsOwnAcknowledgment()
+    {
+        const string serial = "02000000ABCD";
+        var (logic, _, _) = NewSession();
+        logic.OnTransportOpened();
+        logic.OnMessage(ProtocolCodec.Decode("""{"v":1,"type":"hello.ack","seq":1,"session_id":"paired","payload":{"usb_serial":"02000000ABCD","capabilities":["usb_display_profile"]}}"""));
         await Assert.ThrowsAsync<InvalidOperationException>(() => logic.RequestDisplayProfileAsync("441BF6C92290", true, default));
         var update = logic.RequestDisplayProfileAsync(serial, true, default);
         var frame = ProtocolCodec.Decode(Assert.Single(logic.OnTick()));

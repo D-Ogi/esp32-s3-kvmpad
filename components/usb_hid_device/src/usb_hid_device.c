@@ -32,9 +32,9 @@
 #include "hpe_studio.h"
 #include "esp_app_desc.h"
 #include "hpe_cert.h"
-#elif CONFIG_TINYUSB_HID_COUNT != 3
-#error "Select the three- or four-interface KVMpad configuration"
 #endif
+_Static_assert(KVM_HID_ITF_COUNT == CONFIG_TINYUSB_HID_COUNT && KVM_HID_ITF_COUNT == CFG_TUD_HID,
+               "USB configuration must match the number of TinyUSB HID instances");
 
 static const char *TAG = "usb_hid";
 
@@ -45,6 +45,8 @@ static const char *TAG = "usb_hid";
 #define KVM_USB_PID       0x400C
 #if KVM_HPE_FOUR
 #define KVM_USB_BCD       0x0101
+#elif KVM_HID_ITF_COUNT == 2
+#define KVM_USB_BCD       0x0102
 #else
 #define KVM_USB_BCD       0x0100
 #endif
@@ -60,7 +62,9 @@ enum {
 #if KVM_HPE_FOUR
     STRID_PTP,
 #endif
+#if KVM_HID_ITF_COUNT > 2
     STRID_CONSUMER,
+#endif
     STRID_COUNT,
 };
 
@@ -77,8 +81,9 @@ static const uint8_t s_report_mouse[] = {TUD_HID_REPORT_DESC_MOUSE()};
 #define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + 3 * TUD_HID_DESC_LEN + TUD_HID_INOUT_DESC_LEN)
 _Static_assert(CFG_TUD_HID_EP_BUFSIZE == 64, "IF3 has a 64-byte interrupt OUT transfer");
 #else
+#if KVM_HID_ITF_COUNT == 3
 static const uint8_t s_report_consumer[] = {TUD_HID_REPORT_DESC_CONSUMER()};
-
+#endif
 #define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + KVM_HID_ITF_COUNT * TUD_HID_DESC_LEN)
 #endif
 
@@ -93,7 +98,7 @@ static const uint8_t s_config_fs[] = {
     TUD_HID_DESCRIPTOR(KVM_HID_ITF_PTP, STRID_PTP, HID_ITF_PROTOCOL_NONE, sizeof(s_report_ptp), 0x83, 64, 1),
     TUD_HID_INOUT_DESCRIPTOR(KVM_HID_ITF_CONSUMER, STRID_CONSUMER, HID_ITF_PROTOCOL_NONE,
                              sizeof(s_report_control), 0x05, 0x84, 64, 4),
-#else
+#elif KVM_HID_ITF_COUNT == 3
     TUD_HID_DESCRIPTOR(KVM_HID_ITF_CONSUMER, STRID_CONSUMER, HID_ITF_PROTOCOL_NONE, sizeof(s_report_consumer),
                        EP_CONSUMER, EP_SIZE, POLL_MS_CONSUMER),
 #endif
@@ -131,7 +136,7 @@ static const char *s_strings[STRID_COUNT] = {
 #if KVM_HPE_FOUR
     [STRID_PTP] = "KVMpad Precision Touchpad",
     [STRID_CONSUMER] = "KVMpad Radial and Control Deck",
-#else
+#elif KVM_HID_ITF_COUNT == 3
     [STRID_CONSUMER] = "KVMpad Consumer Control",
 #endif
 };
@@ -143,6 +148,9 @@ static bool s_neutral_pending[KVM_HID_ITF_COUNT]; // TinyUSB task only
 static usb_hid_transport_t s_tr;                   // set before start, read-only afterwards
 static volatile bool s_pump_queued;                // a deferred pump call is in the TinyUSB queue
 static TaskHandle_t s_tusb_task;                   // recorded in the TinyUSB-task callbacks
+// Keyboard idle timing runs in the TinyUSB task. The rate is in units of 4 ms.
+static uint8_t s_keyboard_idle;
+static int64_t s_keyboard_last_report, s_keyboard_deadline;
 
 #define ST_LOCK()   portENTER_CRITICAL(&s_mux)
 #define ST_UNLOCK() portEXIT_CRITICAL(&s_mux)
@@ -308,8 +316,22 @@ static void notify_state(void)
     s_tr.on_state(s_tr.ctx, st, epoch);
 }
 
+static void keyboard_deadline(int64_t deadline)
+{
+    if ((s_keyboard_deadline != 0) != (deadline != 0)) tud_sof_cb_enable(deadline != 0);
+    s_keyboard_deadline = deadline;
+}
+
+static void keyboard_reported(void)
+{
+    s_keyboard_last_report = esp_timer_get_time();
+    keyboard_deadline(s_keyboard_idle ? s_keyboard_last_report + 4000 * s_keyboard_idle : 0);
+}
+
 static void configuration_lost(kvm_usb_state_t state)
 {
+    s_keyboard_idle = 0;
+    keyboard_deadline(0);
     memset(s_neutral_pending, 0, sizeof(s_neutral_pending));
     ST_LOCK();
     s_st.state = state;
@@ -326,6 +348,10 @@ static void configuration_lost(kvm_usb_state_t state)
 void __real_hidd_reset(uint8_t rhport);
 void __wrap_hidd_reset(uint8_t rhport)
 {
+    // On unplug the ISR clears cfg_num before the class reset; the SOF consumer
+    // bit is still available here and is erased before the detach callback.
+    s_keyboard_idle = 0;
+    keyboard_deadline(0);
     __real_hidd_reset(rhport);
 #if CONFIG_KVM_USB_MONITOR_EVAL
     if (usb_monitor_port_owns_bus()) {
@@ -359,6 +385,8 @@ static void usb_event_cb(tinyusb_event_t *event, void *arg)
 #endif
     switch (event->id) {
     case TINYUSB_EVENT_ATTACHED: {
+        s_keyboard_idle = 0;
+        keyboard_reported();
         ST_LOCK();
         s_st.state = KVM_USB_MOUNTED;
         s_st.mounts++;
@@ -393,6 +421,7 @@ static void usb_event_cb(tinyusb_event_t *event, void *arg)
         ESP_LOGI(TAG, "detached");
         break;
     case TINYUSB_EVENT_SUSPENDED:
+        keyboard_deadline(0);
         ST_LOCK();
         s_st.state = KVM_USB_SUSPENDED;
         s_st.suspends++;
@@ -402,6 +431,7 @@ static void usb_event_cb(tinyusb_event_t *event, void *arg)
         ESP_LOGI(TAG, "suspended (remote wakeup %s by HOST)", event->suspended.remote_wakeup ? "enabled" : "disabled");
         break;
     case TINYUSB_EVENT_RESUMED:
+        keyboard_reported();
         ST_LOCK();
         s_st.state = tud_mounted() ? KVM_USB_MOUNTED : KVM_USB_DETACHED;
         s_st.resumes++;
@@ -423,7 +453,7 @@ uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
 #if KVM_HPE_FOUR
     case KVM_HID_ITF_PTP: return s_report_ptp;
     case KVM_HID_ITF_CONSUMER: return s_report_control;
-#else
+#elif KVM_HID_ITF_COUNT == 3
     case KVM_HID_ITF_CONSUMER: return s_report_consumer;
 #endif
     default: return NULL;
@@ -456,10 +486,11 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_t
         buffer[0] = led;
         return 1;
     }
-    if (report_type == HID_REPORT_TYPE_INPUT && instance < KVM_HID_ITF_COUNT) {
-        // GET_REPORT(Input) returns the neutral state: this layer never holds a pressed state.
+    if (report_type == HID_REPORT_TYPE_INPUT && report_id == 0 && instance < usb_hid_device_interface_count()) {
         uint8_t tmp[8];
-        size_t len = kvm_hid_build_neutral(instance, tud_hid_n_get_protocol(instance), tmp);
+        uint8_t protocol = tud_hid_n_get_protocol(instance);
+        size_t len = s_tr.get_input_report ? s_tr.get_input_report(s_tr.ctx, instance, protocol, tmp)
+                                           : kvm_hid_build_neutral(instance, protocol, tmp);
         if (len > reqlen) {
             len = reqlen;
         }
@@ -531,11 +562,13 @@ void tud_hid_set_protocol_cb(uint8_t instance, uint8_t protocol)
     ESP_LOGI(TAG, "itf %u SET_PROTOCOL(%s)", instance, protocol == KVM_HID_PROTOCOL_BOOT ? "BOOT" : "REPORT");
 }
 
-bool tud_hid_set_idle_cb(uint8_t instance, uint8_t idle_rate)
+void tud_sof_cb(uint32_t frame_count)
 {
-    (void)instance;
-    (void)idle_rate;
-    return true; // reports are sent on change only; idle rate accepted, not used
+    (void)frame_count;
+    if (!s_keyboard_deadline || esp_timer_get_time() < s_keyboard_deadline ||
+        !tud_hid_n_ready(KVM_HID_ITF_KEYBOARD)) return;
+    if (s_tr.repeat_keyboard) s_tr.repeat_keyboard(s_tr.ctx);
+    else if (!s_tr.pump) send_neutral(KVM_HID_ITF_KEYBOARD);
 }
 
 void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_t len)
@@ -551,6 +584,7 @@ void tud_hid_report_complete_cb(uint8_t instance, uint8_t const *report, uint16_
     if (instance >= KVM_HID_ITF_COUNT) {
         return;
     }
+    if (instance == KVM_HID_ITF_KEYBOARD && tud_mounted() && !tud_suspended()) keyboard_reported();
     if (s_tr.on_complete != NULL) {
         s_tr.on_complete(s_tr.ctx, instance);
     } else if (s_neutral_pending[instance]) {
@@ -690,7 +724,7 @@ bool __wrap_hidd_control_xfer_cb(uint8_t port, uint8_t stage, tusb_control_reque
 #if CONFIG_KVM_USB_MONITOR_EVAL
     if (usb_monitor_port_owns_bus()) {
         if (!usb_hid_device_interface_count() || !usb_hid_device_monitor_mounted()) return false;
-        keyboard = 1; // MI_00 is the vendor interface on the composite device.
+        keyboard = 1; // Composite MI_00 is the display or screenshot storage.
         // Neither boot device implements feature reports. In particular MI_02
         // is now the mouse and must not expose the normal touchpad's certificate.
         if ((r->bmRequestType == 0xa1 && r->bRequest == HID_REQ_CONTROL_GET_REPORT) ||
@@ -702,6 +736,22 @@ bool __wrap_hidd_control_xfer_cb(uint8_t port, uint8_t stage, tusb_control_reque
     if (r->bmRequestType == 0x21 && r->bRequest == HID_REQ_CONTROL_SET_REPORT &&
         r->wIndex == keyboard && r->wValue == (HID_REPORT_TYPE_OUTPUT << 8) && r->wLength == 1)
         return keyboard_led_control(port, stage, r);
+    if (r->wIndex == keyboard && r->bmRequestType == 0x21 && r->bRequest == HID_REQ_CONTROL_SET_IDLE) {
+        if ((r->wValue & 0xff) || r->wLength) return false; // Boot keyboard has no report IDs.
+        if (stage == CONTROL_STAGE_SETUP) return tud_control_status(port, r);
+        if (stage == CONTROL_STAGE_ACK) {
+            int64_t now = esp_timer_get_time();
+            s_keyboard_idle = (uint8_t)(r->wValue >> 8);
+            // HID 1.11 section 7.2.4: finish the current period if fewer than 4 ms remain.
+            if (!s_keyboard_deadline || now <= s_keyboard_deadline - 4000 || now >= s_keyboard_deadline)
+                keyboard_deadline(s_keyboard_idle ? s_keyboard_last_report + 4000 * s_keyboard_idle : 0);
+        }
+        return true;
+    }
+    if (r->wIndex == keyboard && r->bmRequestType == 0xa1 && r->bRequest == HID_REQ_CONTROL_GET_IDLE) {
+        if (r->wValue || r->wLength != 1) return false;
+        return stage != CONTROL_STAGE_SETUP || tud_control_xfer(port, r, &s_keyboard_idle, 1);
+    }
 #if KVM_HPE_FOUR
     // Delegate the 257-byte certificate directly to the core's multi-packet transfer.
     if (r->bmRequestType == 0xa1 && r->bRequest == HID_REQ_CONTROL_GET_REPORT &&
@@ -725,14 +775,26 @@ esp_err_t usb_hid_device_set_monitor(bool active)
     return usb_hid_device_set_monitor_mode(active, false);
 }
 
-static esp_err_t select_display(bool active, bool native, bool controls, bool windows_modes)
+static bool display_port_ready(void)
 {
     ST_LOCK();
     bool ready = s_st.state != KVM_USB_UNINITIALIZED && s_st.state != KVM_USB_ERROR;
     ST_UNLOCK();
-    if (!ready) return ESP_ERR_INVALID_STATE;
-    usb_monitor_port_select(active, native, controls, windows_modes);
-    return ESP_OK;
+    return ready;
+}
+
+#if CONFIG_KVM_USB_GUD
+esp_err_t usb_hid_device_set_gud(bool active)
+{
+    if (!display_port_ready()) return ESP_ERR_INVALID_STATE;
+    return usb_monitor_port_select_gud(active) ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
+#endif
+
+static esp_err_t select_display(bool active, bool native, bool controls, bool windows_modes)
+{
+    if (!display_port_ready()) return ESP_ERR_INVALID_STATE;
+    return usb_monitor_port_select(active, native, controls, windows_modes) ? ESP_OK : ESP_ERR_INVALID_STATE;
 }
 
 esp_err_t usb_hid_device_set_monitor_mode(bool active, bool native)

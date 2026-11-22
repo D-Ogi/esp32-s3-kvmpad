@@ -10,7 +10,7 @@
 // The test drives producer, timer and TinyUSB events in a fixed order on one
 // thread. Only the real panel/decoder runs on its own worker thread.
 typedef int esp_err_t;
-enum { ESP_OK, ESP_ERR_INVALID_STATE, ESP_ERR_INVALID_ARG, ESP_ERR_NO_MEM, ESP_ERR_TIMEOUT, ESP_TIMER_TASK, pdTRUE = 1 };
+enum { ESP_OK, ESP_ERR_INVALID_STATE, ESP_ERR_INVALID_ARG, ESP_ERR_NO_MEM, ESP_ERR_TIMEOUT, ESP_ERR_NOT_SUPPORTED, ESP_TIMER_TASK, pdTRUE = 1 };
 #define ESP_RETURN_ON_FALSE(c,e,...) do { if (!(c)) return (e); } while (0)
 #define ESP_RETURN_ON_ERROR(c,...) do { esp_err_t rc = (c); if (rc) return rc; } while (0)
 #define ESP_LOGI(t,...) ((void)(t))

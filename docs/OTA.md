@@ -1,6 +1,5 @@
 # Signed updates — operator procedure
 
-Decision and rationale: [`ADR/ADR-031-ota-source-and-signing.md`](ADR/ADR-031-ota-source-and-signing.md).
 Component: [`../components/update_manager/`](../components/update_manager/README.md). Requirements: TECH-051..056,
 TECH-095..100, PROC-009. Tests: AT-FAULT-07/08, AT-PERF-09, AT-SEC-07/09.
 
@@ -39,7 +38,7 @@ espsecure generate-signing-key --version 2 --scheme rsa3072 ../keys/kvmpad_ota_d
 
 The release key is generated the same way, kept offline, and copied once to separate physical custody. Point
 `CONFIG_SECURE_BOOT_SIGNING_KEY` at a path **outside** the repository (it is evaluated relative to the project
-directory, so `../keys/…` is the workspace directory). Add the `sdkconfig.defaults` block from ADR-031.
+directory, so `../keys/…` is the workspace directory). Check the signing and rollback options in the [7B defaults](../sdkconfig.defaults).
 
 Lose the key and the devices already in the field can no longer be updated. Leak it and the signature stops meaning
 anything.
@@ -51,7 +50,7 @@ anything.
 > block, because a device that cannot verify any update would be stuck. So the transition from an unsigned to a signed
 > build is a wired `idf.py flash`, not an OTA.
 
-The trust anchor is the running image's own signature block (ADR-031): an OTA is accepted only when it is signed with
+The trust anchor is the running image's own signature block: an OTA is accepted only when it is signed with
 the same key. Signing with a new key therefore needs a wired flash, or a transition release carrying both signatures.
 
 ## Normal use
@@ -84,7 +83,7 @@ is refused.
 | New image boots but a subsystem is dead | Nothing. The health check rolls back within 20 s and the device returns to the previous image. |
 | New image does not boot at all, or resets in a loop | Nothing. `PENDING_VERIFY` is not confirmed, so the bootloader returns to the previous slot on the next reset. |
 | `ota status` shows `UNCONFIRMED` and the device is clearly fine | `ota mark-valid`. Until then the next reset rolls back. |
-| Both slots unusable | Wired recovery: `idf.py -p COM3 flash`. Hardware Secure Boot is **not** enabled (ADR-031), so the ROM download path is intact. This is the reason TECH-055 asks for a recovery plan before any eFuse is programmed. |
+| Both slots unusable | Wired recovery: `idf.py -p COM3 flash`. Hardware Secure Boot is **not** enabled, so the ROM download path is intact. This is the reason TECH-055 asks for a recovery plan before any eFuse is programmed. |
 | Update refused with `downgrade` | Expected: the candidate's `secure_version` is lower than the running image's. Build the image with a `secure_version` at least equal to the running one. |
 | Update refused with `signature` | The image was not signed with the running image's key, or it is corrupt. Do not work around it. |
 
@@ -107,8 +106,4 @@ reachable from the board, and `ota status` reporting `signed ota yes` / `rollbac
 | 5 | during `PENDING_VERIFY`, before the health check finishes, with a good image | `ota url …` then reset as soon as the new image logs `health_check 0%` (a good image is confirmed about 0.6 s later) | the bootloader rolls back by itself (`PENDING_VERIFY` → `ABORTED`); the old image boots | rollback without firmware help |
 | 6 | normal reset after a confirmed update | — | boots the new image; `state=valid`; `nvs` intact (`config` command shows the settings record) | no NVS corruption |
 
-Record each run in `test/reports/` with the console transcript (raw logs go to `../evidence/`, never into the
-repository), and note `AT-PERF-09` alongside: during `RECEIVE` the panel may stutter while flash is written (TECH-021)
-but the scan-out must recover, and input must stay blocked until the health check ends.
-
-Until these runs exist, every hardware row of AT-FAULT-07/08, AT-PERF-09 and AT-SEC-09 is `NOT_RUN_HW`.
+During an update, writing flash may briefly interrupt rendering. Check that the display recovers and that input stays blocked until the health check ends.

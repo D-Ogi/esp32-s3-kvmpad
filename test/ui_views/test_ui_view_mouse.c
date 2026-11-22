@@ -8,6 +8,7 @@
 // - HOST not mounted: buttons disabled, nothing submitted, "Host disconnected" shown; HOST lost while held = UP;
 // - navigation while Right-click is held: the router's release request and the view's own UP (AT-UIFW-08);
 // - a refused DOWN never leaves a local "held" flag (no UP owed);
+// - FR-116/602: a one-finger wheel tap submits a single step, only while the HOST is mounted;
 // - Drag lock: the click asks for the opposite of the authoritative state; the button follows the store only
 //   (FR-107/115, AGENTS-UI §5);
 // - geometry: the pad rectangle reported to the touch router excludes the foot buttons, targets >= 56 px;
@@ -101,14 +102,19 @@ static lv_obj_t *s_scr;
 static lv_obj_t *s_home;
 static uint32_t s_seq;
 
-static void publish(uint8_t host, bool drag)
+static void publish_protocol(uint8_t host, bool drag, bool boot)
 {
-    ui_hid_slice_t h = {.host_usb_state = host};
+    ui_hid_slice_t h = {.host_usb_state = host, .mouse_boot_protocol = boot};
     ui_mailbox_publish_hid(&s_mb, &h, ++s_seq);
     ui_gesture_slice_t g = {.drag_lock_active = drag};
     ui_mailbox_publish_gesture(&s_mb, &g, s_seq);
     ui_store_tick(&s_store);
     lv_test_wait(5);
+}
+
+static void publish(uint8_t host, bool drag)
+{
+    publish_protocol(host, drag, false);
 }
 
 static bool start(void)
@@ -128,7 +134,9 @@ static bool start(void)
     s_desc[1] = (ui_view_descriptor_t){.id = UI_VIEW_KEYBOARD, .create = kbd_create};
     s_scr = lv_obj_create(NULL);
     lv_screen_load(s_scr);
-    const ui_shell_layout_t lay = {.width = SCR_W, .height = SCR_H, .topbar_h = TOP_H};
+    lv_display_t *display = lv_display_get_default();
+    const ui_shell_layout_t lay = {.width = lv_display_get_horizontal_resolution(display),
+                                   .height = lv_display_get_vertical_resolution(display), .topbar_h = TOP_H};
     uint8_t n_ov = 0;
     const ui_overlay_descriptor_t *ov = ui_view_mouse_overlays(&s_mouse, &n_ov);
     bool ok = ui_router_init(&s_r, s_scr, &lay, &s_store, s_desc, 2, ov, n_ov, &k_hooks);
@@ -257,6 +265,113 @@ static void test_host_not_mounted(void)
     CHECK_EQ(s_mouse.c.forced_releases, 1);
     release();
     CHECK_EQ(count(UI_ACT_MOUSE_BUTTON_UP, KVM_MOUSE_BTN_RIGHT), 1); // not twice
+    stop();
+}
+
+static void wheel_position(int percent)
+{
+    lv_area_t area;
+    lv_obj_get_coords(s_mouse.scroll_wheel, &area);
+    lv_test_mouse_move_to((area.x1 + area.x2) / 2, (area.y1 + area.y2) / 2 - percent * (area.y2 - area.y1) / 200);
+}
+
+static void wheel_tap(int position)
+{
+    wheel_position(position);
+    lv_test_mouse_press();
+    lv_test_wait(40);
+    release();
+}
+
+static void test_wheel_steps_and_host_loss(void)
+{
+    CHECK(start());
+    press_obj(s_mouse.scroll_wheel);
+    lv_test_wait(600);
+    CHECK_EQ(s_rec_n, 0); // neutral
+    wheel_position(25);
+    lv_test_wait(800);
+    int slow = s_rec_n;
+    CHECK(slow >= 1);
+    CHECK_EQ(count(UI_ACT_MOUSE_WHEEL_STEP, UI_WHEEL_UP), slow);
+    wheel_position(-90);
+    lv_test_wait(800);
+    CHECK(count(UI_ACT_MOUSE_WHEEL_STEP, UI_WHEEL_DOWN) > slow);
+    wheel_position(0);
+    lv_test_wait(60);
+    int stopped = s_rec_n;
+    lv_test_wait(600);
+    CHECK_EQ(s_rec_n, stopped);
+    release();
+    wheel_tap(-80);
+    CHECK_EQ(s_rec_n, stopped + 1);
+    lv_test_wait(500);
+    CHECK_EQ(s_rec_n, stopped + 1);
+
+    wheel_position(90);
+    lv_test_mouse_press();
+    lv_test_wait(40);
+    publish(KVM_HOST_USB_SUSPENDED, false);
+    CHECK(lv_obj_has_state(s_mouse.scroll_wheel, LV_STATE_DISABLED));
+    stopped = s_rec_n;
+    publish(KVM_HOST_USB_MOUNTED, false);
+    lv_test_wait(500);
+    release();
+    CHECK_EQ(s_rec_n, stopped);
+    stop();
+}
+
+static void test_wheel_tread_in_each_palette(void)
+{
+    CHECK(start());
+    lv_obj_t *meter = lv_obj_get_child(s_mouse.scroll_wheel, 0);
+    for (unsigned i = 0; i < UI_PALETTE_COUNT; ++i) {
+        ui_theme_set_control_palette((ui_control_palette_t)i);
+        lv_draw_buf_t *image = lv_snapshot_take(meter, LV_COLOR_FORMAT_RGB565);
+        CHECK(image != NULL);
+        if (!image) continue;
+        // Each horizontal rib has a pixel boundary on both sides. A vertical track
+        // with a round knob has a nearly uniform center column.
+        uint32_t x = image->header.w / 2;
+        unsigned transitions = 0;
+        for (uint32_t y = 3; y + 3 < image->header.h; ++y) {
+            const void *above = lv_draw_buf_goto_xy(image, x, y - 1);
+            const void *pixel = lv_draw_buf_goto_xy(image, x, y);
+            if (memcmp(above, pixel, 2) != 0) ++transitions;
+        }
+        CHECK(transitions >= 16);
+        lv_draw_buf_destroy(image);
+    }
+    ui_theme_set_control_palette(UI_PALETTE_DAY);
+    stop();
+}
+
+static void test_wheel_capture_past_both_ends(void)
+{
+    CHECK(start());
+    lv_area_t rail;
+    lv_obj_get_coords(s_mouse.scroll_wheel, &rail);
+    const int32_t x = (rail.x1 + rail.x2) / 2;
+    press_obj(s_mouse.scroll_wheel);
+    lv_test_mouse_move_to(x, rail.y1 - 12);
+    lv_test_wait(240);
+    int up = count(UI_ACT_MOUSE_WHEEL_STEP, UI_WHEEL_UP);
+    CHECK(up >= 2);
+    lv_test_wait(240);
+    CHECK(count(UI_ACT_MOUSE_WHEEL_STEP, UI_WHEEL_UP) > up);
+    wheel_position(0);
+    lv_test_wait(60);
+    int neutral = s_rec_n;
+    lv_test_wait(240);
+    CHECK_EQ(s_rec_n, neutral);
+    lv_test_mouse_move_to(rail.x2 + 5, rail.y2 + 12);
+    lv_test_wait(240);
+    CHECK(count(UI_ACT_MOUSE_WHEEL_STEP, UI_WHEEL_DOWN) >= 2);
+    release();
+    int released = s_rec_n;
+    lv_test_wait(240);
+    CHECK_EQ(s_rec_n, released);
+    CHECK_EQ(s_rec_n, count(UI_ACT_MOUSE_WHEEL_STEP, UI_WHEEL_UP) + count(UI_ACT_MOUSE_WHEEL_STEP, UI_WHEEL_DOWN));
     stop();
 }
 
@@ -412,6 +527,53 @@ static lv_obj_t *help_close_button(void)
     return foot != NULL ? lv_obj_get_child(foot, 0) : NULL;
 }
 
+static bool visible_label(lv_obj_t *root, const char *caption)
+{
+    if (lv_obj_check_type(root, &lv_label_class) && lv_obj_is_visible(root) &&
+        strcmp(lv_label_get_text(root), caption) == 0) return true;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(root); i++) {
+        if (visible_label(lv_obj_get_child(root, (int32_t)i), caption)) return true;
+    }
+    return false;
+}
+
+static void test_wheel_protocol_change(void)
+{
+    const char *boot_hint = "Host boot protocol has no wheel";
+    CHECK(start());
+    press_obj(s_mouse.scroll_wheel);
+    publish_protocol(KVM_HOST_USB_MOUNTED, false, true);
+    publish_protocol(KVM_HOST_USB_MOUNTED, false, false);
+    release();
+    CHECK_EQ(s_rec_n, 0);
+    click_obj(s_mouse.btn_help);
+    CHECK(s_mouse.help_card != NULL);
+    CHECK(!visible_label(s_mouse.help_card, boot_hint));
+    publish_protocol(KVM_HOST_USB_MOUNTED, false, true);
+    CHECK(visible_label(s_mouse.help_card, boot_hint));
+    CHECK(lv_obj_has_state(s_mouse.scroll_wheel, LV_STATE_DISABLED));
+    click_obj(help_close_button());
+    wheel_tap(80);
+    wheel_tap(-80);
+    CHECK_EQ(s_rec_n, 0);
+    click_obj(s_mouse.btn_left);
+    CHECK_EQ(count(UI_ACT_MOUSE_BUTTON_DOWN, KVM_MOUSE_BTN_LEFT), 1);
+    CHECK_EQ(count(UI_ACT_MOUSE_BUTTON_UP, KVM_MOUSE_BTN_LEFT), 1);
+    click_obj(s_mouse.btn_help);
+    CHECK(visible_label(s_mouse.help_card, boot_hint));
+    publish_protocol(KVM_HOST_USB_MOUNTED, false, false);
+    CHECK(!visible_label(s_mouse.help_card, boot_hint));
+    CHECK(!lv_obj_has_state(s_mouse.scroll_wheel, LV_STATE_DISABLED));
+    click_obj(help_close_button());
+    s_rec_n = 0;
+    wheel_tap(80);
+    wheel_tap(-80);
+    CHECK_EQ(s_rec_n, 2);
+    CHECK_EQ(count(UI_ACT_MOUSE_WHEEL_STEP, UI_WHEEL_UP), 1);
+    CHECK_EQ(count(UI_ACT_MOUSE_WHEEL_STEP, UI_WHEEL_DOWN), 1);
+    stop();
+}
+
 static void test_gesture_help(void)
 {
     CHECK(start());
@@ -488,6 +650,44 @@ static void test_gesture_help(void)
     CHECK_EQ(s_mouse.c.help_refused, 1);
     CHECK_EQ(s_rec_n, 0);
     stop();
+}
+
+static void test_wheel_controls_at_supported_sizes(void)
+{
+    const lv_point_t sizes[] = {{SCR_W, SCR_H}, {800, 480}, {640, 480}};
+    lv_display_t *display = lv_display_get_default();
+    for (unsigned i = 0; i < sizeof(sizes) / sizeof(sizes[0]); i++) {
+        lv_test_mouse_move_to(0, 0);
+        lv_test_wait(40);
+        lv_display_set_resolution(display, sizes[i].x, sizes[i].y);
+        CHECK(start());
+        lv_obj_t *buttons[] = {s_mouse.btn_help, s_mouse.btn_left, s_mouse.btn_right, s_mouse.btn_drag,
+                               s_mouse.scroll_wheel};
+        lv_area_t pad;
+        lv_obj_update_layout(s_mouse.root);
+        CHECK(ui_router_pad_area(&s_r, &pad));
+        for (unsigned j = 0; j < sizeof(buttons) / sizeof(buttons[0]); j++) {
+            lv_area_t target;
+            lv_obj_get_coords(buttons[j], &target);
+            CHECK(lv_obj_is_visible(buttons[j]));
+            CHECK(target.x1 >= 0 && target.x2 < sizes[i].x && target.y1 >= TOP_H && target.y2 < sizes[i].y);
+            if (buttons[j] == s_mouse.scroll_wheel) {
+                CHECK(target.x1 > pad.x2);
+                CHECK(target.y1 <= pad.y2 && target.y2 >= pad.y1);
+            } else {
+                CHECK(target.y1 > pad.y2);
+            }
+            CHECK(lv_area_get_width(&target) >= 44 && lv_area_get_height(&target) >= 44);
+            for (unsigned k = 0; k < j; k++) CHECK(!overlaps(buttons[k], buttons[j]));
+        }
+        wheel_tap(80);
+        wheel_tap(-80);
+        CHECK_EQ(s_rec_n, 2);
+        CHECK_EQ(count(UI_ACT_MOUSE_WHEEL_STEP, UI_WHEEL_UP), 1);
+        CHECK_EQ(count(UI_ACT_MOUSE_WHEEL_STEP, UI_WHEEL_DOWN), 1);
+        stop();
+    }
+    lv_display_set_resolution(display, SCR_W, SCR_H);
 }
 
 static void test_geometry(void)
@@ -579,6 +779,9 @@ int main(void)
     RUN_MEM(test_right_click_tap);
     RUN_MEM(test_right_click_hold_and_slide_off);
     RUN_MEM(test_host_not_mounted);
+    RUN_MEM(test_wheel_steps_and_host_loss);
+    RUN_MEM(test_wheel_tread_in_each_palette);
+    RUN_MEM(test_wheel_capture_past_both_ends);
     RUN_MEM(test_offline_notice_leaves_the_header_readable);
     RUN_MEM(test_navigation_while_held);
     RUN_MEM(test_left_click_and_both);
@@ -587,6 +790,8 @@ int main(void)
     RUN_MEM(test_drag_lock_available_and_disabled_palettes);
     RUN_MEM(test_gesture_help);
     RUN_MEM(test_geometry);
+    RUN_MEM(test_wheel_controls_at_supported_sizes);
+    RUN_MEM(test_wheel_protocol_change);
     RUN_MEM(test_lifecycle);
 
     lv_test_indev_delete_all();

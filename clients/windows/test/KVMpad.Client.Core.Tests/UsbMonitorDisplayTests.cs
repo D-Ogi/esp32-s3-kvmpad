@@ -114,6 +114,45 @@ public sealed class UsbMonitorDisplayTests
         Assert.Throws<InvalidOperationException>(() => new UsbMonitorDisplayService(raced).MatchSignal("ABCDEF012345", Wide));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReattachmentAfterSuccessfulApplyReportsCurrentModeWithoutWritingAgain(bool paired)
+    {
+        var api = new Api { Paths = [Pc, Board with {Size=Wide}], Mode = new(Wide,60,0,32,0) };
+        var service = new UsbMonitorDisplayService(api);
+        var before = service.Read();
+        int requests = 0;
+        api.AfterApply = () => api.Paths[1] = api.Paths[1] with {Signal=Vga};
+        var applied = paired ? await service.ApplyProfileAsync(before, Vga, (_, native, _) => {
+            Assert.False(native);
+            requests++;
+            api.Paths[1] = api.Paths[1] with {Name=@"\\.\DISPLAY122", Signal=Vga};
+            return Task.CompletedTask;
+        }, default) : service.Apply(before, Vga);
+        Assert.Null(service.Read().ChangeSinceApply(applied));
+        Assert.Equal(Vga, applied.Current);
+        Assert.Equal(Vga, applied.Signal);
+
+        api.Paths = [Pc];
+        Assert.Throws<InvalidOperationException>(service.Read);
+        api.Paths = [Pc, Board with {Name=@"\\.\DISPLAY123", Size=Vga, Signal=Vga}];
+        Assert.Contains("still", service.Read().ChangeSinceApply(applied));
+        api.Paths[1] = api.Paths[1] with {Size=Wide, Signal=Wide};
+        api.Mode = api.Mode with {Size=Wide};
+        for (int i=0; i<2; i++) {
+            var current = service.Read();
+            var notice = current.ChangeSinceApply(applied);
+            Assert.Contains("reconnected", notice);
+            Assert.Contains(Vga.ToString(), notice);
+            Assert.Contains(Wide.ToString(), notice);
+        }
+        api.Paths[1] = api.Paths[1] with {UsbId=Usb.Replace("ABC", "DEF")};
+        Assert.Null(service.Read().ChangeSinceApply(applied));
+        Assert.Equal(paired ? 1 : 0, requests);
+        Assert.Equal(new[] {true, false}, api.Calls.Select(c => c.Test));
+    }
+
     [Fact]
     public void ChoicesExcludeUnmatchableActiveSignalButRetainPairedProfileSwitch()
     {

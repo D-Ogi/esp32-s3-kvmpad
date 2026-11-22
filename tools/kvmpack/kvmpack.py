@@ -39,7 +39,7 @@ PNG_ALLOCATION_HEADER_7B = 16
 CAPABILITY = {
     "hid.key_tap": "hid.keyboard", "hid.pointer_button": "hid.mouse",
     "hid.radial.rotate": "hid.radial", "hid.joystick.set_axes": "hid.joystick",
-    "host.command": "host.actions", "ui.navigate": "ui.basic", "state.set": "ui.basic",
+    "host.command": "host.actions", "ui.navigate": "ui.basic", "state.set": "ui.basic", "state.adjust": "ui.basic",
     "stream.start": "host.screen.region", "stream.stop": "host.screen.region",
 }
 USB_SURFACES = {"MonitorViewport": "usb.monitor", "KeyboardSurface": "hid.keyboard", "TouchpadSurface": "hid.mouse"}
@@ -90,6 +90,7 @@ def document_error(name, data, path, code, detail):
 
 LOCAL_CONTROLS = {
     "TouchArea": ({"label"}, {"tap", "drag", "long_press"}),
+    "RateSlider": (set(), {"step_up", "step_down"}),
     "Dial": ({"label", "min", "max", "value"}, {"rotate"}),
     "TabStrip": ({"tabs", "pages", "selected"}, {"change"}),
     "StatusChip": ({"text", "label", "status"}, set()),
@@ -111,7 +112,9 @@ def check_control(node):
             text = props[key]
             require(isinstance(text, str) and 0 < len(text.encode("utf-8")) <= 96 and "\0" not in text,
                     f"{kind}: invalid label")
-    if kind == "Dial":
+    if kind == "RateSlider":
+        require(bounds["w"] >= 48 and bounds["h"] >= 96, "RateSlider: too small")
+    elif kind == "Dial":
         lo, hi = props.get("min", 0), props.get("max", 100)
         v = props.get("value", lo)
         require(all(type(n) is int for n in (lo, hi, v)) and -32768 <= lo <= v <= hi <= 32767 and lo < hi and
@@ -138,7 +141,8 @@ def check_control(node):
 
 def check_action(kind, args, state, widgets, source, event):
     if source["type"] in LOCAL_CONTROLS:
-        require(kind == "state.set", "local controls support only state.set")
+        allowed = ("state.set", "state.adjust") if source["type"] == "RateSlider" else ("state.set",)
+        require(kind in allowed, "unsupported local action for this control")
     if kind == "hid.joystick.set_axes":
         require(bool(args) and args.keys() <= {"axes", "buttons", "hat"}, "unknown joystick argument")
         axes = args.get("axes", {})
@@ -164,6 +168,12 @@ def check_action(kind, args, state, widgets, source, event):
                     (mode in ("OVERVIEW", "ZOOM_2X", "PIXEL_1X") or
                      mode.startswith("$state.") and state.get(mode[7:], {}).get("type") == "string"),
                     "invalid capture mode or consent")
+    elif kind == "state.adjust":
+        require(source["type"] == "RateSlider" and event in ("step_up", "step_down") and
+                args.keys() == {"name", "delta"} and isinstance(args["name"], str) and
+                args["name"] in state and state[args["name"]]["type"] == "int" and
+                type(args["delta"]) is int and -(1 << 31) <= args["delta"] < (1 << 31) and args["delta"] != 0,
+                "state.adjust requires a RateSlider step, an integer state and a nonzero int32 delta")
     elif kind == "state.set":
         require(args.keys() == {"name", "value"} and isinstance(args["name"], str) and
                 args["name"] in state, "unknown state target or argument")
@@ -427,7 +437,7 @@ def chart_run_bytes(data):
         return total
 
 
-def check_memory_budget(files, kib, icons=(), charts=()):
+def check_memory_budget(files, kib, icons=(), charts=(), keyboards=0):
     resident = SCENE_BYTES_7B
     resident += sum(chart_run_bytes(files[name]) for name in charts)
     for name in set(icons):
@@ -440,6 +450,10 @@ def check_memory_budget(files, kib, icons=(), charts=()):
             peak = resident + png_workspace_floor(data, name)
             if peak > required:
                 required, resource = peak, name
+    # Rendering starts after image decoding releases its workspace. Each
+    # KeyboardSurface keeps its system keys, including on a hidden page.
+    if keyboards and resident + keyboards * 48 * 1024 > required:
+        required, resource = resident + keyboards * 48 * 1024, "KeyboardSurface"
     minimum_kib = (required + 1023) // 1024
     if kib < minimum_kib:
         raise ProfileBudgetError(resource, kib, minimum_kib)
@@ -538,6 +552,8 @@ def validate_scene(files, *, editing=False):
         if node["type"] == "StreamViewport":
             require("host.screen.region" in permissions, "StreamViewport requires host.screen.region")
         for event, action in node.get("events", {}).items():
+            if event in ("step_up", "step_down"):
+                require(node["type"] == "RateSlider", "step events require a RateSlider")
             events[f"{key}.{event}"] = action
         for child in node.get("children", []):
             visit(child, depth + 1, key, screen)
@@ -557,7 +573,8 @@ def validate_scene(files, *, editing=False):
                     "\0" not in title and not ({"text","label"} & child["props"].keys()),
                     "each screen must be a container with a title of up to 48 bytes")
     if not editing:
-        check_memory_budget(files, manifest["limits"]["max_memory_kib"], button_icons(ui["root"]), chart_assets(ui["root"]))
+        check_memory_budget(files, manifest["limits"]["max_memory_kib"], button_icons(ui["root"]), chart_assets(ui["root"]),
+                            sum(n["type"] == "KeyboardSurface" for n in widgets.values()))
     claimed_pages = set()
     caption_sets = set()
     tab_count = 0
@@ -820,6 +837,8 @@ def preview_html(files):
     for state in bindings["state"]:
         if state["type"] == "int":
             state["initial"] = str(state["initial"])
+            state["int_low"] = str(max(-(1 << 63), math.ceil(state.get("min", -(1 << 63)))))
+            state["int_high"] = str(min((1 << 63)-1, math.floor(state.get("max", (1 << 63)-1))))
         elif state["type"] == "float":
             state["initial_text"] = float_label(state["initial"])
     for action in bindings["actions"]:

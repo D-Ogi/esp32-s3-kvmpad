@@ -8,9 +8,7 @@
 // LVGL and network priorities; its stack stays in internal RAM because it writes flash.
 #include "app_config.h"
 #include "sdkconfig.h"
-#if CONFIG_TINYUSB_HID_COUNT == 4
 #include "hpe_access_config.h"
-#endif
 
 #include <inttypes.h>
 #include <stdatomic.h>
@@ -18,6 +16,7 @@
 #include <string.h>
 
 #include "config_store.h"
+#include "gesture_engine.h"
 #include "config_store_nvs.h"
 #include "board_hal.h"
 #include "esp_attr.h"
@@ -39,12 +38,35 @@ static SemaphoreHandle_t s_mtx;
 static TaskHandle_t s_task;
 static bool s_ready;
 static _Atomic uint8_t s_palette;
+enum { SCROLL_ENABLED = 1, SCROLL_NATURAL = 2, HOLD_RIGHT = 4, SPEED_SHIFT = 3 };
+_Static_assert((int)KVM_MOUSE_SENS_SLOW == (int)KVM_GEST_SPEED_SLOW &&
+               (int)KVM_MOUSE_SENS_NORMAL == (int)KVM_GEST_SPEED_NORMAL &&
+               (int)KVM_MOUSE_SENS_FAST == (int)KVM_GEST_SPEED_FAST, "mouse speed encoding");
+static _Atomic uint8_t s_mouse = SCROLL_ENABLED | HOLD_RIGHT | (KVM_MOUSE_SENS_NORMAL << SPEED_SHIFT);
 static uint8_t s_saved_palette;
 static volatile uint32_t s_seq; // bumped under the lock by every write (app_config_seq)
 
 static void lock(void)
 {
     xSemaphoreTake(s_mtx, portMAX_DELAY);
+}
+
+static void publish_mouse(void)
+{
+    const kvm_config_t *c = kvm_config_store_get(&s_store);
+    atomic_store(&s_mouse, (c->two_finger_scroll ? SCROLL_ENABLED : 0) |
+                           (c->natural_scroll ? SCROLL_NATURAL : 0) |
+                           (c->longpress_right_click ? HOLD_RIGHT : 0) |
+                           (c->mouse_sensitivity << SPEED_SHIFT));
+}
+
+void app_config_apply_mouse(kvm_gesture_cfg_t *gesture)
+{
+    const uint8_t mouse = atomic_load(&s_mouse);
+    gesture->scroll_enabled = (mouse & SCROLL_ENABLED) != 0;
+    gesture->scroll_natural = (mouse & SCROLL_NATURAL) != 0;
+    gesture->longpress_right_click = (mouse & HOLD_RIGHT) != 0;
+    gesture->speed = (kvm_gesture_speed_t)(mouse >> SPEED_SHIFT);
 }
 
 static void unlock_and_wake(bool wake)
@@ -58,7 +80,6 @@ static void unlock_and_wake(bool wake)
     }
 }
 
-#if CONFIG_TINYUSB_HID_COUNT == 4
 static hpe_access_timing_t s_access = HPE_ACCESS_DEFAULTS;
 static bool s_access_dirty;
 
@@ -86,7 +107,6 @@ bool app_config_access_save(hpe_access_timing_t value)
     unlock_and_wake(changed);
     return true;
 }
-#endif
 
 uint8_t app_config_control_palette(void)
 {
@@ -119,9 +139,7 @@ static void writer_task(void *arg)
         if (kvm_config_store_tick(&s_store, now)) {
             ESP_LOGI(TAG, "settings written (%" PRIu32 " writes)", s_store.stats.writes);
         }
-#if CONFIG_TINYUSB_HID_COUNT == 4
         (void)access_flush();
-#endif
         uint32_t wait_ms = kvm_config_store_ms_until_write(&s_store, config_store_nvs_now_ms());
         xSemaphoreGive(s_mtx);
         if (wait_ms > IDLE_WAKE_MS) {
@@ -141,12 +159,11 @@ esp_err_t app_config_start(void)
     if (err != ESP_OK) {
         return err;
     }
-#if CONFIG_TINYUSB_HID_COUNT == 4
     uint64_t timing_word;
     if (config_store_nvs_access_read(&timing_word) == ESP_OK) s_access = hpe_access_unpack(timing_word);
-#endif
     if (config_store_nvs_palette_read(&s_saved_palette) == ESP_OK) atomic_store(&s_palette, s_saved_palette);
     s_seq = 1;
+    publish_mouse();
     s_ready = true;
     if (xTaskCreatePinnedToCore(writer_task, "cfg_store", TASK_STACK, NULL, TASK_PRIO, &s_task, 0) != pdPASS) {
         // The record is still usable in RAM; it just is not persisted until the next boot.
@@ -213,9 +230,7 @@ bool app_config_flush(void)
     lock();
     bool ok = kvm_config_store_flush(&s_store, config_store_nvs_now_ms());
     ok = palette_flush() && ok;
-#if CONFIG_TINYUSB_HID_COUNT == 4
     ok = access_flush() && ok;
-#endif
     xSemaphoreGive(s_mtx);
     return ok;
 }
@@ -403,6 +418,11 @@ bool app_config_settings(app_config_settings_t *out, uint32_t timeout_ms)
     out->pair_require_accept = c->pair_require_accept != 0;
     out->control_approval = c->control_approval;
     out->confirm_alt_f4 = c->confirm_alt_f4 != 0;
+    out->natural_scroll = c->natural_scroll != 0;
+    out->diag_overlay = c->diag_overlay != 0;
+    out->two_finger_scroll = c->two_finger_scroll != 0;
+    out->mouse_sensitivity = c->mouse_sensitivity;
+    out->longpress_right_click = c->longpress_right_click != 0;
     out->brightness = c->brightness;
     out->keepawake_enabled = c->keepawake_enabled != 0;
     out->keepawake_interval_s = c->keepawake_interval_s;
@@ -435,6 +455,10 @@ bool app_config_set_field(kvm_config_field_t field, uint32_t value)
     }
     lock();
     const bool ok = kvm_config_store_set_field(&s_store, field, value, config_store_nvs_now_ms());
+    if (ok && (field == KVM_CFG_F_NATURAL_SCROLL || field == KVM_CFG_F_TWO_FINGER_SCROLL ||
+               field == KVM_CFG_F_MOUSE_SENSITIVITY || field == KVM_CFG_F_LONGPRESS_RIGHT_CLICK)) {
+        publish_mouse();
+    }
     if (ok && field == KVM_CFG_F_BRIGHTNESS) {
         // Keep the validated setting and PWM writes in the same order for concurrent callers.
         esp_err_t err = board_hal_backlight_level((uint8_t)value);

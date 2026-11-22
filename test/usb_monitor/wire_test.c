@@ -78,5 +78,22 @@ int main(void)
     full = false;
     feed(&rx, wire + sizeof(h), n - sizeof(h));
     assert(offered == 1 && accepted == 1 && last == h.length);
+    // After a resize the next bytes may be the tail of an abandoned record.
+    // Exercise every overlap between those bytes and the next real header.
+    h.width = 1024;
+    h.height = 600;
+    body[2] = 0xff;
+    n = frame(wire,h);
+    for (size_t tail = 1; tail <= 16; ++tail) {
+        uint8_t fragments[16];
+        memset(fragments, 0x4e, sizeof(fragments));
+        rx = (monitor_wire_t){.windows_modes=true};
+        offered = accepted = 0;
+        feed(&rx,fragments,tail);
+        for (size_t i = 0; i < n; ++i) feed(&rx,wire+i,1);
+        assert(offered == 1 && accepted == 1 && last == h.length);
+        assert(rx.rejected && !rx.search_used && !rx.remaining);
+        assert(rx.source.width == 1024 && rx.source.height == 600);
+    }
     puts("PASS vendor bitfields, all split positions, END, rollover, concatenation, one-byte chunks, size limit, skip/recovery, atomic busy drop, reset at every prefix, slot available after header");
 }

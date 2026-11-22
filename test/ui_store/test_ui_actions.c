@@ -52,6 +52,9 @@ static void test_ranges(void)
     CHECK(ui_action_valid(UI_ACT_DRAG_LOCK_REQUEST, 0));
     CHECK(ui_action_valid(UI_ACT_DRAG_LOCK_REQUEST, 1));
     CHECK(!ui_action_valid(UI_ACT_DRAG_LOCK_REQUEST, 2));
+    CHECK(ui_action_valid(UI_ACT_MOUSE_WHEEL_STEP, UI_WHEEL_UP));
+    CHECK(ui_action_valid(UI_ACT_MOUSE_WHEEL_STEP, UI_WHEEL_DOWN));
+    CHECK(!ui_action_valid(UI_ACT_MOUSE_WHEEL_STEP, 2));
     CHECK(!ui_action_valid(UI_ACT_COUNT, 0));
     // ADR-024 text actions
     CHECK(ui_action_valid(UI_ACT_TEXT_CHAR, 0x20));

@@ -8,8 +8,8 @@
 
 /** LVGL owner only. The parent owns the surface and its layout. */
 lv_obj_t *pack_keyboard_surface_open(lv_obj_t *parent, int width, int height, bool (*ready)(void));
-/** Apply the host LED report to the matrix returned by open. LVGL owner only. */
-void pack_keyboard_surface_set_caps(lv_obj_t *matrix, bool known, bool on);
+/** Apply the host LED report to the surface returned by open. LVGL owner only. */
+void pack_keyboard_surface_set_caps(lv_obj_t *surface, bool known, bool on);
 /** Cancel the current press and selected modifiers before hiding a page or losing the USB session. */
 void pack_keyboard_surface_release(void);
 bool pack_keyboard_surface_buffered_target(lv_obj_t *target);

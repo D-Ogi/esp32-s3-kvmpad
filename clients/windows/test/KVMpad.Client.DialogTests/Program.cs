@@ -10,8 +10,10 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using KVMpad.Client.App;
+using KVMpad.Client.Core.Display;
 using KVMpad.Client.Core.Discovery;
 using KVMpad.Client.Core.Storage;
 
@@ -20,6 +22,7 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args is ["--usb-reattach"]) { CheckUsbReattachment(); return 0; }
         if (args.Length is < 1 or > 3 || args[0] is not ("light" or "dark") ||
             (args.Length == 3 && args[2] != "--native-display")) return 2;
         Application.EnableVisualStyles();
@@ -34,12 +37,15 @@ internal static class Program
             new string('a', 64), "fixture-token", DateTimeOffset.UnixEpoch);
         using var advanced = Open("AdvancedConnectDialog", new[] { saved }, saved.DeviceId);
         using var about = Open("AboutForm");
+        using var ssh = Open("SshCommandDialog", "fixture command");
+        Require(Descendants(ssh).OfType<TextBox>().Single() is { ReadOnly: true, Text: "fixture command" } &&
+                Descendants(ssh).OfType<Button>().Any(b => b.Text == "Copy command"), "Selectable SSH command");
         using var usb = Open("UsbDisplayDialog", (object)null!);
         Require(Descendants(usb).OfType<ComboBox>().Single() is { Enabled: false, AccessibleName: "Desktop resolution" } &&
                 Descendants(usb).OfType<Button>().Single(b => b.Text == "Apply").Enabled == false,
                 "USB mode changes wait for a detected display");
         if (args.Length == 3) CheckNativeUsbOffer(usb, args[1], args[0]);
-        foreach (var form in new[] { pair, advanced, about, usb }) {
+        foreach (var form in new[] { pair, advanced, about, usb, ssh }) {
             Control[] controls = Descendants(form).ToArray();
             foreach (var control in controls) {
                 var properties = TypeDescriptor.GetProperties(control);
@@ -91,7 +97,7 @@ internal static class Program
                 "Selectable About notices");
         CheckMainWindow(args.Length >= 2 ? args[1] : null, args[0]);
         Console.WriteLine($"PASS requested={args[0]} effectiveDark={dark} systemHighContrast={highContrast}; " +
-                          "four hidden dialogs, three workspace pages, compact and desktop layouts.");
+                          "five hidden dialogs, three workspace pages, compact and desktop layouts.");
         return 0;
     }
 
@@ -99,6 +105,74 @@ internal static class Program
     {
         var type = typeof(AppSettings).Assembly.GetType($"KVMpad.Client.App.{name}", throwOnError: true)!;
         return (Form)Activator.CreateInstance(type, args)!;
+    }
+
+    private sealed class ReattachingDisplay : IDisplayApi
+    {
+        internal static readonly DisplayResolution Vga = new(640,480), Native = new(1024,600);
+        internal volatile int Stage; // Native, applied VGA, temporarily absent, restored native.
+        internal int Changes;
+        private DisplayResolution Size => Stage == 1 ? Vga : Native;
+
+        public DisplayPath[] ActivePaths()
+        {
+            var pc = new DisplayPath(new(1,0,0),new(1,0,1),@"\\.\DISPLAY1",null,0,0,
+                new(1920,1080),new(1920,1080),1,1,60000,1000,5,1);
+            if (Stage == 2) return [pc];
+            return [pc, pc with {Source=new(9,1,0), Target=new(9,1,1), X=1920,
+                Name=Stage == 3 ? @"\\.\DISPLAY123" : @"\\.\DISPLAY122", Size=Size, Signal=Size,
+                UsbId=@"USB\VID_303A&PID_2987\ABCDEF012345"}];
+        }
+
+        public SourceMode Current(string name) => new(Size,60,0,32,0);
+        public IEnumerable<SourceMode> Offered(string name) => [new(Vga,60,0,32,0),new(Native,60,0,32,0)];
+        public void Change(string name, SourceMode mode, bool test, DisplayPosition? position)
+        {
+            Require(name == @"\\.\DISPLAY122" && mode.Size == Vga, "Unexpected USB display change");
+            System.Threading.Interlocked.Increment(ref Changes);
+            if (!test) Stage = 1;
+        }
+    }
+
+    private static void CheckUsbReattachment()
+    {
+        Application.EnableVisualStyles();
+        var api = new ReattachingDisplay();
+        using var dialog = Open("UsbDisplayDialog", null!, new UsbMonitorDisplayService(api));
+        dialog.Opacity = 0;
+        dialog.ShowInTaskbar = false;
+        var modes = Descendants(dialog).OfType<ComboBox>().Single();
+        var apply = Descendants(dialog).OfType<Button>().Single(button => button.Text == "Apply");
+        var labels = Descendants(dialog).OfType<Label>().ToArray();
+        async Task WaitFor(Func<bool> ready, string description)
+        {
+            long limit = Environment.TickCount64 + 8000;
+            while (!ready() && Environment.TickCount64 < limit) await Task.Delay(15);
+            Require(ready(), $"{description}: {string.Join(" / ", labels.Select(label => label.Text))}");
+        }
+        Exception? failure = null;
+        dialog.Shown += async (_, _) => {
+            try {
+                await WaitFor(() => modes.Enabled, "Initial native display");
+                modes.SelectedItem = ReattachingDisplay.Vga;
+                apply.PerformClick();
+                await WaitFor(() => modes.Enabled && labels.Any(l => l.Text == "Desktop  640 × 480"), "Initial VGA success");
+                api.Stage = 2;
+                await WaitFor(() => !modes.Enabled && labels.Any(l => l.Text.Contains("No active USB")), "Source disappeared");
+                api.Stage = 3;
+                await WaitFor(() => modes.Enabled && labels.Any(l => l.Text.Contains("Windows reconnected") &&
+                    l.Text.Contains("640 × 480") && l.Text.Contains("1024 × 600")), "Reattached source and reverted mode");
+                Require(labels.Any(l => l.Text == "Desktop  1024 × 600") && Equals(modes.SelectedItem, ReattachingDisplay.Native),
+                        "Current desktop and selection show the recovered source");
+                Descendants(dialog).OfType<Button>().Single(b => b.Text == "Refresh").PerformClick();
+                await WaitFor(() => modes.Enabled && labels.Any(l => l.Text.Contains("Windows reconnected")), "Notice survives refresh");
+                Require(api.Changes == 2, "A reattachment replayed the mode change");
+            } catch (Exception e) { failure = e; }
+            finally { dialog.Close(); }
+        };
+        Application.Run(dialog);
+        if (failure != null) throw failure;
+        Console.WriteLine("PASS hidden USB dialog: apply VGA, disappear, reattach at native size, refresh, one validated write");
     }
 
     // Hardware trial with a 640x480 desktop on the 7B native signal.
@@ -166,11 +240,13 @@ internal static class Program
                             content.RectangleToScreen(content.ClientRectangle))), $"Page clipped: {size}/{page.Text}");
                 string[] actions = page.Text switch {
                     "Devices" => ["Discover", "Pair…", "Connect", "Disconnect", "Start HOST", "Advanced…"],
-                    "Host input" => ["Request control", "Release control", "Start capture", "Send shortcut", "Type text", "Cancel typing"],
+                    "Host input" => ["Request control", "Release control", "Start capture", "Send shortcut", "Type text", "Cancel typing", "SSH command…"],
                     _ => ["USB display…", "Extension Studio…", "Prepare card video…", "About"]
                 };
                 var buttons = Descendants(page).OfType<Button>().ToArray();
                 Require(buttons.Select(button => button.Text).SequenceEqual(actions), "Client action order");
+                if (page.Text == "Host input")
+                    Require(!buttons.Single(b => b.Text == "SSH command…").Enabled, "SSH waits for paired TLS");
                 foreach (var button in buttons) {
                     var bounds = content.RectangleToClient(button.Parent!.RectangleToScreen(button.Bounds));
                     Require(bounds.Width > 0 && bounds.Height > 0 && content.ClientRectangle.Contains(bounds),

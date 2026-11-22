@@ -37,6 +37,7 @@ typedef enum {
     UI_SUBJ_CAPS_LED,     // 0 / 1; UNKNOWN also while the HOST has sent no LED report
     UI_SUBJ_MAINTENANCE,  // 0 / 1
     UI_SUBJ_ERROR,        // 0 = none
+    UI_SUBJ_MOUSE_BOOT_PROTOCOL,
     UI_SUBJ_DOMAIN_COUNT,
     // local UI state (not security relevant, 07 §2)
     UI_SUBJ_ACTIVE_VIEW = UI_SUBJ_DOMAIN_COUNT, // ui_view_id_t, written by the router (TASK-060C)

@@ -340,6 +340,9 @@ bool sim_fixture_load(const char *path, sim_fixture_t *out)
     out->settings.pair_require_accept = true;
     out->settings.control_approval = UI_CONTROL_APPROVAL_ALWAYS;
     out->settings.keepawake_interval_s = 30u;
+    out->settings.two_finger_scroll = true;
+    out->settings.mouse_sensitivity = 1u;
+    out->settings.longpress_right_click = true;
     out->settings.brightness = 80u;
     out->settings.unicode_mode = UI_UNICODE_MODE_HOST_IME;
     snprintf(out->settings.host_layout, sizeof(out->settings.host_layout), "us");
@@ -463,6 +466,16 @@ bool sim_fixture_load(const char *path, sim_fixture_t *out)
             out->settings.control_approval = (uint8_t)v;
         } else if (strcmp(key, "altf4") == 0 && parse_bool(rest, &b)) {
             out->settings.confirm_alt_f4 = b;
+        } else if (strcmp(key, "mouse_sensitivity") == 0 && parse_u32(rest, &u) && u <= 2u) {
+            out->settings.mouse_sensitivity = (uint8_t)u;
+        } else if (strcmp(key, "longpress_right_click") == 0 && parse_bool(rest, &b)) {
+            out->settings.longpress_right_click = b;
+        } else if (strcmp(key, "two_finger_scroll") == 0 && parse_bool(rest, &b)) {
+            out->settings.two_finger_scroll = b;
+        } else if (strcmp(key, "natural_scroll") == 0 && parse_bool(rest, &b)) {
+            out->settings.natural_scroll = b;
+        } else if (strcmp(key, "diag_overlay") == 0 && parse_bool(rest, &b)) {
+            out->settings.diag_overlay = b;
         } else if (strcmp(key, "awake") == 0 && parse_bool(rest, &b)) {
             out->settings.keepawake_enabled = b;
         } else if (strcmp(key, "awake_s") == 0 && parse_u32(rest, &u) && u <= 0xFFFFu) {

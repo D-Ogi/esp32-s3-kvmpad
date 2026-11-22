@@ -1,27 +1,16 @@
-<!-- Format required by AGENTS.md §6. One PR = one TASK. -->
+## Change
 
-```text
-TASK: TASK-XXX
-STATUS: IMPLEMENTED_SW / READY_FOR_HIL / VERIFIED_HW / BLOCKED
-CHANGED: <file paths>
-REQUIREMENTS: <FR/TECH/SEC IDs>
-TESTS_ACTUALLY_EXECUTED: <exact command and output>
-TESTS_NOT_RUN: <IDs and reasons, e.g. NOT_RUN_HW>
-KNOWN_RISKS: <list>
-NEXT: <one specific task or ADR>
-```
+Describe the behavior this changes and how to exercise it. Include relevant requirement or test IDs.
 
-## Checklist (AGENTS.md §5)
+## Verification
 
-- [ ] Build / lint / unit tests run — commands and results given above
-- [ ] Race / timeout / overflow / deenumeration / 3+ fingers handled
-- [ ] Zero allocations per sample / per HID report on the hot path
-- [ ] Error-path tests, not only the happy path
-- [ ] Only the files allowed for the task changed (or approval is in place)
-- [ ] All `UP` and `RELEASE_ALL` paths listed and tested
-- [ ] Traceability, tests and API documentation updated
-- [ ] No keyboard logs, pairing secrets, tokens or keys in the diff
-- [ ] `python -I tools/check_license_headers.py` → 0 missing, 0 unlisted; third-party code listed in `THIRD_PARTY_NOTICES.md` (ADR-025)
-- [ ] Without a physical board: no `PASS_HW`
+List the exact commands you ran and their results. State which checks still need a physical board. For UI changes, attach a simulator screenshot and describe how you tested observer cleanup.
 
-<!-- UI (AGENTS-UI.md): attach an SDL screenshot, an observer lifecycle test and a list of AT-UIFW PASS/FAIL/NOT_RUN_HW. -->
+## Checklist
+
+- [ ] Exercised affected error paths, including applicable timeouts, queue overflow, USB disconnects or extra touch contacts.
+- [ ] Checked release paths for changed input handling, including `UP` and `RELEASE_ALL`.
+- [ ] Kept the hot path free of per-sample and per-report allocations.
+- [ ] Updated affected API documentation and tests.
+- [ ] Checked the diff and attachments for typed keystrokes, pairing material, access tokens and keys.
+- [ ] Ran `python -I tools/check_license_headers.py` and listed any new third-party components in `THIRD_PARTY_NOTICES.md`.

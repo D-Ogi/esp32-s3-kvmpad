@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "id": "org.kvmpad.sample.rateslider",
+  "version": "1.0.0",
+  "min_firmware": "1.3.0",
+  "title": "Altitude selector",
+  "description": "Adjust a local altitude setting with a spring-centered rate slider.",
+  "category": "CONTROL",
+  "entry_view": "panel",
+  "permissions": [
+    "ui.basic"
+  ],
+  "required_permissions": [
+    "ui.basic"
+  ],
+  "usb": {
+    "mode": "static_superset",
+    "requires": []
+  },
+  "host": {
+    "requires": []
+  },
+  "limits": {
+    "max_events_per_sec": 20,
+    "max_memory_kib": 256
+  }
+}

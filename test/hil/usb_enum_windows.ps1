@@ -2,18 +2,18 @@
 # Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
 # Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
 #
-# TASK-050 (M2) HIL check on a Windows HOST: the composite device enumerates with the three HID
-# interfaces of TECH-030/ADR-018 (boot keyboard, boot mouse, Consumer Control) and every node is
-# started by the in-box drivers. With -CapsLed the HOST toggles Caps Lock twice (state restored)
+# TASK-050 (M2) HIL check on a Windows HOST: verify the selected input profile and its in-box drivers.
+# With -CapsLed the HOST toggles Caps Lock twice (state restored)
 # and the device console must report the LED output reports.
 #
-# Usage: pwsh -NoProfile -File test/hil/usb_enum_windows.ps1 [-CapsLed] [-Port COM3]
+# Usage: pwsh -NoProfile -File test/hil/usb_enum_windows.ps1 [-Interfaces 2|3|4] [-CapsLed] [-Port COM3]
 # Evidence goes to ../evidence/hardware (outside the repository) with its SHA256.
 param(
     [switch]$CapsLed,
     [string]$Port = 'COM3',
     [string]$Vid = '303A',
-    [string]$Pid_ = '400C'
+    [string]$Pid_ = '400C',
+    [ValidateSet(2, 3, 4)][int]$Interfaces = 2
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -42,10 +42,21 @@ function Compat($d) { (Get-PnpDeviceProperty -InstanceId $d.InstanceId -KeyName 
 Expect 'composite parent (USB\COMPOSITE)' { $_.InstanceId -match "^USB\\$ids\\" -and (Compat $_) -match 'USB\\COMPOSITE' }
 Expect 'MI_00 boot keyboard interface (Class_03&SubClass_01&Prot_01)' { $_.InstanceId -match "^USB\\$ids&MI_00" -and (Compat $_) -match 'Class_03&SubClass_01&Prot_01' }
 Expect 'MI_01 boot mouse interface (Class_03&SubClass_01&Prot_02)' { $_.InstanceId -match "^USB\\$ids&MI_01" -and (Compat $_) -match 'Class_03&SubClass_01&Prot_02' }
-Expect 'MI_02 consumer interface (Class_03&SubClass_00&Prot_00)' { $_.InstanceId -match "^USB\\$ids&MI_02" -and (Compat $_) -match 'Class_03&SubClass_00&Prot_00' }
+if ($Interfaces -ge 3) {
+    Expect 'MI_02 HID interface' { $_.InstanceId -match "^USB\\$ids&MI_02" -and (Compat $_) -match 'Class_03&SubClass_00&Prot_00' }
+}
+if ($Interfaces -eq 4) {
+    Expect 'MI_03 HID interface' { $_.InstanceId -match "^USB\\$ids&MI_03" -and (Compat $_) -match 'Class_03&SubClass_00&Prot_00' }
+}
+$interfaceNodes = @($devs | Where-Object { $_.InstanceId -match "^USB\\$ids&MI_[0-9A-F]{2}\\" })
+if ($interfaceNodes.Count -ne $Interfaces) {
+    $fails.Add("Expected $Interfaces USB interfaces, found $($interfaceNodes.Count)")
+}
 Expect 'HID keyboard collection (Keyboard class)' { $_.InstanceId -match "^HID\\$ids&MI_00" -and $_.Class -eq 'Keyboard' }
 Expect 'HID mouse collection (Mouse class)' { $_.InstanceId -match "^HID\\$ids&MI_01" -and $_.Class -eq 'Mouse' }
-Expect 'HID consumer collection (HIDClass)' { $_.InstanceId -match "^HID\\$ids&MI_02" -and $_.Class -eq 'HIDClass' }
+if ($Interfaces -eq 3) {
+    Expect 'HID consumer collection (HIDClass)' { $_.InstanceId -match "^HID\\$ids&MI_02" -and $_.Class -eq 'HIDClass' }
+}
 $serial = @($devs | Where-Object { $_.InstanceId -match "^USB\\$ids\\" }) | ForEach-Object { ($_.InstanceId -split '\\')[-1] }
 Note "SERIAL $serial"
 

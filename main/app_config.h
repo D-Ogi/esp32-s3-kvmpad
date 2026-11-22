@@ -22,6 +22,10 @@ extern "C" {
 /** Load the record (after nvs_flash_init) and start the writer task. Safe to call once. */
 esp_err_t app_config_start(void);
 
+struct kvm_gesture_cfg;
+/** Apply saved mouse preferences to a gesture without changing its geometry or timing. */
+void app_config_apply_mouse(struct kvm_gesture_cfg *gesture);
+
 /** BSSID/channel cache hooks backed by the settings record; all members NULL before app_config_start(). */
 net_cache_hooks_t app_config_net_cache_hooks(void);
 
@@ -81,6 +85,11 @@ typedef struct {
     bool pair_require_accept;
     uint8_t control_approval; // kvm_control_approval_t
     bool confirm_alt_f4;
+    bool natural_scroll;
+    bool diag_overlay;
+    bool two_finger_scroll;
+    uint8_t mouse_sensitivity;
+    bool longpress_right_click;
     uint8_t brightness; // FR-505, percent
     bool keepawake_enabled;
     uint16_t keepawake_interval_s;

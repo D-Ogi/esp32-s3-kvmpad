@@ -264,6 +264,10 @@ static void card_clicked(lv_event_t *e)
 static void media_clicked(lv_event_t *e)
 {
     ui_view_shortcuts_t *s = lv_event_get_user_data(e);
+    if (KVM_HID_ITFS == 2) {
+        s->c.blocked++;
+        return;
+    }
     lv_obj_t *key = lv_event_get_current_target_obj(e);
     const uint16_t ctrl = ui_action_key_control_id(key);
     if (ctrl < UI_CTRL_SHORTCUT_BASE) {
@@ -306,7 +310,8 @@ static const char *hint_text(const ui_view_shortcuts_t *s)
     if (ui_store_get(st, UI_SUBJ_HOST_USB) != (int32_t)KVM_HOST_USB_MOUNTED) {
         return "Host disconnected - commands are unavailable.";
     }
-    return "Each command sends one short, complete chord.";
+    return KVM_HID_ITFS == 2 ? "Media controls are unavailable in the keyboard and mouse USB profile."
+                             : "Each command sends one short, complete chord.";
 }
 
 static void enable_card(lv_obj_t *card, bool on)
@@ -374,7 +379,7 @@ static void refresh(ui_view_shortcuts_t *s)
         paint_card(s, i, on);
     }
     for (int i = 0; i < UI_SHORTCUT_MEDIA_COUNT; i++) {
-        ui_action_key_set_enabled(s->media[i], on);
+        ui_action_key_set_enabled(s->media[i], on && KVM_HID_ITFS > 2);
     }
     const bool layout_ok = s->layout_chord > KVM_CHORD_NONE && s->layout_chord < KVM_CHORD_COUNT;
     ui_action_key_set_enabled(s->layout_key, on && layout_ok);

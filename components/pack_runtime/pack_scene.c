@@ -162,7 +162,7 @@ static int widget_id(const pack_scene_t *s, const char *id)
     return -1;
 }
 
-static const char *const event_names[]={"tap","change","press","release","drag","rotate","long_press"};
+static const char *const event_names[]={"tap","change","press","release","drag","rotate","long_press","step_up","step_down"};
 
 static bool supports_event(pack_widget_kind_t k, unsigned e)
 {
@@ -170,6 +170,7 @@ static bool supports_event(pack_widget_kind_t k, unsigned e)
     case PACK_BUTTON: return e==PACK_TAP || e==PACK_PRESS || e==PACK_RELEASE;
     case PACK_AXIS: case PACK_SLIDER: case PACK_TABS: return e==PACK_CHANGE;
     case PACK_TOUCH: return e==PACK_TAP || e==PACK_DRAG || e==PACK_LONG_PRESS;
+    case PACK_RATE_SLIDER: return e==PACK_STEP_UP || e==PACK_STEP_DOWN;
     case PACK_DIAL: return e==PACK_ROTATE;
     default: return false;
     }
@@ -178,6 +179,7 @@ static bool supports_event(pack_widget_kind_t k, unsigned e)
 static bool local_props(pack_scene_t *s, pack_widget_t *w, const doc_t *d, int p)
 {
     if (p>=0 && kvm_json_type(d,p)!=KVM_JSON_OBJECT) return false;
+    if (w->kind==PACK_RATE_SLIDER) return (p<0 || !kvm_json_count(d,p)) && w->w>=48 && w->h>=96;
     if (w->kind==PACK_TABS) {
         if (p>=0 && !KEYS(d,p,"tabs","pages","selected")) return false;
         int tabs=member(d,p,"tabs"), pages=member(d,p,"pages");
@@ -268,6 +270,7 @@ static bool node(pack_scene_t *s, const doc_t *d, int obj, int parent, unsigned 
     else if (equals(d,obj,"type","ValueTile")) w->kind=PACK_VALUE;
     else if (equals(d,obj,"type","StreamViewport")) w->kind=PACK_STREAM;
     else if (equals(d,obj,"type","TouchArea")) w->kind=PACK_TOUCH;
+    else if (equals(d,obj,"type","RateSlider")) w->kind=PACK_RATE_SLIDER;
     else if (equals(d,obj,"type","Dial")) w->kind=PACK_DIAL;
     else if (equals(d,obj,"type","TabStrip")) w->kind=PACK_TABS;
     else if (equals(d,obj,"type","StatusChip")) w->kind=PACK_CHIP;
@@ -374,7 +377,7 @@ static bool node(pack_scene_t *s, const doc_t *d, int obj, int parent, unsigned 
         if (member(d,p,key)>=0 && !string(d,p,key,w->text,sizeof(w->text))) return false;
     }
     if (e >= 0) {
-        if (!KEYS(d,e,"tap","change","press","release","drag","rotate","long_press")) return false;
+        if (!KEYS(d,e,"tap","change","press","release","drag","rotate","long_press","step_up","step_down")) return false;
         for (unsigned ev=0; ev<sizeof(event_names)/sizeof(event_names[0]); ev++) {
             if (member(d,e,event_names[ev]) < 0) continue;
             if (s->actions >= PACK_ACTIONS || !supports_event(w->kind,ev)) return false;
@@ -800,6 +803,17 @@ static bool compile_action(pack_scene_t *s, const doc_t *d, int o)
         if (w->kind<PACK_TOUCH && equals(d,o,"type","hid.joystick.set_axes") && equals(d,o,"capability","hid.joystick"))
             return joystick_action(s,d,args,a);
         if (a->event!=PACK_TAP && w->kind<PACK_TOUCH) return false;
+        if (w->kind==PACK_RATE_SLIDER && equals(d,o,"type","state.adjust") && equals(d,o,"capability","ui.basic")) {
+            char name[97];
+            int64_t delta;
+            if (!KEYS(d,args,"name","delta") || !string(d,args,"name",name,sizeof(name)) ||
+                !kvm_json_get_i64(d,member(d,args,"delta"),&delta) || !delta ||
+                delta<INT32_MIN || delta>INT32_MAX) return false;
+            int state=state_id(s,name);
+            if (state<0 || s->state[state].kind!=PACK_INTEGER) return false;
+            a->state=(uint16_t)state; a->kind=PACK_STATE; a->argument=PACK_ADJUST; a->value.integer=delta;
+            return true;
+        }
         if (equals(d,o,"type","state.set") && equals(d,o,"capability","ui.basic") && KEYS(d,args,"name","value")) {
             char name[97];
             if (!string(d,args,"name",name,sizeof(name))) return false;
@@ -896,6 +910,15 @@ bool pack_scene_set(pack_scene_t *s, const pack_action_t *a, int value, int x, i
 {
     if (!a || a->kind!=PACK_STATE) return false;
     pack_state_t *state=&s->state[a->state];
+    if (a->argument==PACK_ADJUST) {
+        int64_t current=state->value.integer, delta=a->value.integer;
+        // Saturate before addition, including the ends of the signed 64-bit range.
+        uint64_t room=delta>0 ? (uint64_t)state->max.integer-(uint64_t)current
+                              : (uint64_t)current-(uint64_t)state->min.integer;
+        state->value.integer=(uint64_t)(delta>0 ? delta : -delta)>room
+            ? (delta>0 ? state->max.integer : state->min.integer) : current+delta;
+        return current!=state->value.integer;
+    }
     if (a->argument==PACK_LITERAL) state->value=a->value;
     else {
         int v=a->argument==PACK_EVENT_X ? x : a->argument==PACK_EVENT_Y ? y : value;

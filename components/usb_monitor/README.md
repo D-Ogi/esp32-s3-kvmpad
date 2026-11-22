@@ -1,5 +1,21 @@
 # USB monitor extension
 
+### BIOS Setup screenshots
+
+The `sdkconfig.uefi-capture` overlay adds **Extensions → USB monitor → BIOS screenshots / USB drive**.
+On first use the board creates a 32 MiB FAT16 image at `/KVM-CAP/CAPTURE.IMG` on microSD.
+The PC sees the private `KVMPADSHOT` volume, a boot keyboard, and a boot mouse.
+In Gigabyte Intel 700 BIOS Setup, use **F12 / Capture**, choose that volume if
+the firmware asks, and wait for its save confirmation. **View latest** detaches
+USB storage, restores normal HID and reads the most recent short-name BMP from
+the volume root. Uncompressed 24-bit and 32-bit BMPs are scaled to fit the LCD.
+**Start another capture** reconnects the volume. Each displayed image stays
+still until the next capture. The firmware screenshot command is available
+inside Setup. Early POST and ordinary Windows desktop output use different
+paths. [Gigabyte Intel 700 BIOS guide](https://download.gigabyte.com/FileList/Manual/mb_manual_intel700series-bios_e.pdf)
+
+The Windows extended-desktop trial used xfz1986 1.2.25.2. The catalog timestamp failed verification and the graphics DLL chained to an untrusted WDK test certificate. KVMpad does not recommend installing this package. The ordinary USB keyboard and mouse use the built-in Windows HID drivers. [USB and firmware compatibility](../../docs/COMPATIBILITY.md)
+
 While the receiver is open, `ui usb-monitor-status latency` reports microseconds spent receiving
 the JPEG payload, waiting for decoding, decoding, waiting for LVGL selection, and finishing the
 selected refresh. The last sample and session means use only frames whose final flush reached
@@ -27,7 +43,7 @@ When the 640×480 desktop stays completely black for one second, the footer sugg
 onto the monitor. Repeated black pictures keep the hint visible below the 640×480 desktop.
 A presentation with any nonzero RGB565 pixel clears the hint. USB suspend temporarily hides it.
 
-The `sdkconfig.usb-monitor-eval` profile adds **Extensions → USB monitor**. Open it locally to switch the device USB port to the display-only personality. Windows can extend the desktop onto the 640×480 monitor using the existing xfz1986 driver distributed by Espressif. **Home** closes the monitor and restores the normal HID device. At 640×480, Home remains outside the picture. At 1024×600, the picture fills the LCD. Tap anywhere on the picture to reveal Home for three seconds, then tap Home to leave. [Espressif example](https://github.com/espressif/esp-iot-solution/tree/master/examples/usb/device/usb_extend_screen) · [Windows driver documentation](https://github.com/espressif/esp-iot-solution/tree/master/examples/usb/device/usb_extend_screen/windows_driver)
+The `sdkconfig.usb-monitor-eval` profile adds **Extensions → USB monitor**. Open it locally to switch the device USB port to the display-only personality. In the Windows trial, xfz1986 sent the extended desktop to the 640×480 monitor. **Home** closes the monitor and restores the normal HID device. At 640×480, Home remains outside the picture. At 1024×600, the picture fills the LCD. Tap anywhere on the picture to reveal Home for three seconds, then tap Home to leave. [Espressif example](https://github.com/espressif/esp-iot-solution/tree/master/examples/usb/device/usb_extend_screen) · [Windows driver documentation](https://github.com/espressif/esp-iot-solution/tree/master/examples/usb/device/usb_extend_screen/windows_driver)
 
 The vendor interface advertises `R640x480_Ejpg4_Fps10_Bl96` or `R1024x600_Ejpg4_Fps10_Bl96` for the selected session. The firmware receives complete JPEG images through bulk OUT. The 16-byte little-endian header carries the format, rectangle, a 10-bit wrapping frame ID and a 22-bit payload length. Format 3 covers the full rectangle at (0,0). The receiver consumes unsupported records, including the optional zero-length END record. It accepts headers split across transfers and multiple records in one transfer. [Espressif receiver](https://github.com/espressif/esp-iot-solution/blob/master/examples/usb/device/usb_extend_screen/main/app_vendor.c) · [Driver capability string](https://github.com/chuanjinpang/win10_idd_xfz1986_usb_graphic_driver_display)
 

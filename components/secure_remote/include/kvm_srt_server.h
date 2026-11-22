@@ -27,6 +27,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "sdkconfig.h"
 #include "kvm_srt.h"
 #include "kvm_srt_identity.h"
 
@@ -103,6 +104,18 @@ bool kvm_srt_server_running(void);
 
 /** The port the server is listening on, or 0 when it is not running. */
 uint16_t kvm_srt_server_port(void);
+
+#if CONFIG_KVM_SSH_BOARD
+// Called once by the server owner after allocating the normal WSS and input tasks.
+void kvm_srt_server_start_ssh(void);
+typedef struct {
+    uint32_t sessions, approval_attempts, grants, accepted_commands, stack_free_min;
+    uint32_t kex, queries, queries_accepted, signatures_valid, authenticated, channels, subsystems, shells;
+    uint32_t kex_ms, phase_after_kex_ms, elapsed_ms;
+    const char *phase, *ended;
+} kvm_srt_ssh_stats_t;
+void kvm_ssh_listener_stats(kvm_srt_ssh_stats_t *out);
+#endif
 
 // ---- thread-safe wrappers over the core ----------------------------------------------------
 //

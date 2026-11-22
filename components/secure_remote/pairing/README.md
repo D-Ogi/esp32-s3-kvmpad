@@ -1,14 +1,11 @@
 # `secure_remote/pairing`
 
-> **Status:** `IMPLEMENTED_SW` — host tests pass, no hardware run yet. Normative format: ADR-029.
-
-The pairing core of TASK-100: the 6-digit-code window, EC-JPAKE on P-256 with channel binding, explicit key
-confirmation, token issue and the paired-client register (FR-721..727, SEC-101..106, ADR-022, ADR-023,
-ADR-029).
+This component implements the six-digit-code window, EC-JPAKE on P-256 with channel binding, explicit key
+confirmation, token issue and the paired-client register (FR-721..727, SEC-101..106).
 
 ## Why it has no ESP-IDF dependency
 
-The Windows CLIENT has to reproduce the DEVICE bit for bit (ADR-021, ADR-029 §1). Rather than write the
+The Windows CLIENT has to reproduce the DEVICE bit for bit. Rather than write the
 protocol twice, these sources compile unchanged for three targets:
 
 | Target | Random | Clock | Paired-client store |
@@ -61,6 +58,3 @@ it owns the code expiry, the 180 s cap, the Accept timeout, the toast and the en
 
 `test/pairing/` builds the pinned TF-PSA-Crypto from source and runs four host suites plus the interop
 vectors. See `test/pairing/CMakeLists.txt` for the exact commands.
-
-Governing documents: `AGENTS.md`, `docs/ADR/ADR-022-pairing-6-digit-pake.md`,
-`docs/ADR/ADR-029-pairing-wire-format-and-pake.md`.

@@ -96,7 +96,7 @@ Windows can stop delivering capture samples while the selected display is still.
 
 Telemetry contains `type`, `seq`, `topic`, `source`, `unit`, `value`, `ts_mono_ms` and `quality`. The value is a finite number or JSON null for `UNAVAILABLE` and negotiated `ERROR`. Timestamps are the HOST sample clock modulo 2³². The HOST also sends `age_ms`, the elapsed time from measurement to transmission, capped at 3,000 ms. The board adds local elapsed time since receipt. When an older peer omits the age, repeated source timestamps retain their first observed age. Only the selected subset of the six named simulator channels is accepted for the session.
 
-The host's framing reuses the desktop reference. The device checks session stream ID, payload size, sequence and CRC before decode. It admits the receive buffer, decode buffers and presenter separately. An admission failure ends the session. Cinepak uses one 960×540 intra strip, a full 256-entry color V1 book and raster-order vector indices. JPEG and H.264 use 512×512. H.264 sends a baseline Annex B access unit with SPS/PPS/IDR on every frame. A new codec or monitor requires a new session. [Media contract](../../docs/ADR/ADR-041-live-media.md)
+The host's framing reuses the desktop reference. The device checks session stream ID, payload size, sequence and CRC before decode. It admits the receive buffer, decode buffers and presenter separately. An admission failure ends the session. Cinepak uses one 960×540 intra strip, a full 256-entry color V1 book and raster-order vector indices. JPEG and H.264 use 512×512. H.264 sends a baseline Annex B access unit with SPS/PPS/IDR on every frame. A new codec or monitor requires a new session.
 
 ## Verification
 

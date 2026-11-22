@@ -17,7 +17,7 @@ namespace KVMpad.Client.App;
 
 internal sealed class UsbDisplayDialog : Form
 {
-    private readonly UsbMonitorDisplayService _service = new();
+    private readonly UsbMonitorDisplayService _service;
     private readonly Label _device = new() { AutoSize = true };
     private readonly Label _current = new() { AutoSize = true };
     private readonly Label _status = new() { AutoSize = true, Dock = DockStyle.Top, MaximumSize = new Size(410, 0) };
@@ -28,13 +28,19 @@ internal sealed class UsbDisplayDialog : Form
     private readonly LinkLabel _settings = new() { Text = "Windows display settings", AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly Timer _topologyChanged = new() { Interval = 400 };
     private UsbMonitorDisplay? _display;
+    private UsbMonitorDisplay? _applied;
     private readonly SessionLogic? _session;
     private readonly CancellationTokenSource _closed = new();
     private bool _busy;
+    private bool _observing;
+    private int _readVersion;
 
-    public UsbDisplayDialog(SessionLogic? session)
+    public UsbDisplayDialog(SessionLogic? session) : this(session, new UsbMonitorDisplayService()) { }
+
+    public UsbDisplayDialog(SessionLogic? session, UsbMonitorDisplayService service)
     {
         _session = session;
+        _service = service;
         Text = "KVMpad USB display";
         StartPosition = FormStartPosition.CenterParent;
         MinimizeBox = MaximizeBox = false;
@@ -73,17 +79,45 @@ internal sealed class UsbDisplayDialog : Form
         _refresh.Click += async (_, _) => await ReadOrApply();
         _apply.Click += async (_, _) => await ReadOrApply(_modes.SelectedItem as DisplayResolution?);
         Shown += async (_, _) => await ReadOrApply();
-        _topologyChanged.Tick += async (_, _) =>
+        _topologyChanged.Tick += async (_, _) => await ObserveDisplay();
+    }
+
+    // A driver restart can replace the source after Apply returned, including
+    // between display-change messages. Only explicit user actions can write a mode.
+    private async Task ObserveDisplay()
+    {
+        if (_busy || _observing) return;
+        _observing = true;
+        _topologyChanged.Stop();
+        int version = _readVersion;
+        try
         {
-            if (_busy) return;
-            _topologyChanged.Stop();
-            await ReadOrApply();
-        };
+            var actual = await Task.Run(_service.Read);
+            if (!IsDisposed && !Disposing && version == _readVersion)
+                ShowDisplay(actual, preserveChoice: true);
+        }
+        catch (InvalidOperationException error)
+        {
+            if (!IsDisposed && !Disposing && version == _readVersion) ShowUnavailable(error.Message);
+        }
+        finally
+        {
+            _observing = false;
+            ScheduleObservation();
+        }
+    }
+
+    private void ScheduleObservation()
+    {
+        if (_applied == null || IsDisposed || Disposing || _topologyChanged.Enabled) return;
+        _topologyChanged.Interval = 2000;
+        _topologyChanged.Start();
     }
 
     private async Task ReadOrApply(DisplayResolution? requested = null)
     {
         if (_busy || IsDisposed || Disposing) return;
+        ++_readVersion;
         _busy = true;
         _modes.Enabled = _apply.Enabled = _refresh.Enabled = false;
         var previous = _display;
@@ -97,22 +131,14 @@ internal sealed class UsbDisplayDialog : Form
                 return _service.Apply(previous, mode);
             }, token);
             if (IsDisposed || Disposing) return;
+            if (requested.HasValue) _applied = found;
             ShowDisplay(found);
-            _status.Text = found.UnavailableSignalMode ?? (found.Signal is { } signal && signal != found.Current
-                ? "Match the Windows desktop to the USB signal to use the full resolution."
-                : CanSwitch(found) ? "Changing the USB signal briefly reconnects this display."
-                : found.Modes.Count == 0 ? "Windows currently offers no compatible desktop resolutions."
-                : found.Modes.Count == 1 ? "Connect the paired CLIENT to select another USB signal size." : "");
         }
         catch (OperationCanceledException) when (IsDisposed || Disposing || _closed.IsCancellationRequested) { }
         catch (Exception e) when (e is InvalidOperationException or TimeoutException)
         {
             if (IsDisposed || Disposing) return;
-            _display = null;
-            _device.Text = "USB display";
-            _current.Text = "";
-            _modes.Items.Clear();
-            _status.Text = e.Message;
+            ShowUnavailable(e.Message);
             if (requested.HasValue)
             {
                 try
@@ -120,8 +146,8 @@ internal sealed class UsbDisplayDialog : Form
                     var actual = await Task.Run(_service.Read);
                     if (!IsDisposed && !Disposing)
                     {
-                        _topologyChanged.Stop();
                         ShowDisplay(actual);
+                        _status.Text = e.Message;
                     }
                 }
                 catch (InvalidOperationException) { /* Refresh can retry after reconnect. */ }
@@ -131,20 +157,43 @@ internal sealed class UsbDisplayDialog : Form
         {
             _busy = false;
             if (!IsDisposed && !Disposing) { _refresh.Enabled = true; UpdateApply(); }
+            ScheduleObservation();
         }
     }
 
     private bool CanSwitch(UsbMonitorDisplay display) =>
         _session?.State == ClientSessionState.Connected && _session.DisplaySerial == display.Serial;
 
-    private void ShowDisplay(UsbMonitorDisplay found)
+    private void ShowUnavailable(string message)
     {
+        _display = null;
+        _device.Text = "USB display";
+        _current.Text = "";
+        _modes.Items.Clear();
+        _modes.Enabled = _apply.Enabled = false;
+        _status.Text = message;
+    }
+
+    private void ShowDisplay(UsbMonitorDisplay found, bool preserveChoice = false)
+    {
+        var previous = _display;
         _display = found;
+        var choices = UsbMonitorDisplayService.Choices(found, CanSwitch(found));
+        if (preserveChoice && previous != null && found.HasSameSource(previous) && previous.Current == found.Current &&
+            previous.Signal == found.Signal && _modes.Items.Cast<DisplayResolution>().SequenceEqual(choices)) {
+            UpdateApply();
+            return;
+        }
         _device.Text = $"KVMpad  ·  {found.Serial}";
         _current.Text = found.Signal is { } signal && signal != found.Current
             ? $"Desktop  {found.Current}     USB signal  {signal}" : $"Desktop  {found.Current}";
+        _status.Text = found.ChangeSinceApply(_applied) ?? found.UnavailableSignalMode ?? (found.Signal is { } size && size != found.Current
+            ? "Match the Windows desktop to the USB signal to use the full resolution."
+            : CanSwitch(found) ? "Changing the USB signal briefly reconnects this display."
+            : found.Modes.Count == 0 ? "Windows currently offers no compatible desktop resolutions."
+            : found.Modes.Count == 1 ? "Connect the paired CLIENT to select another USB signal size." : "");
         _modes.Items.Clear();
-        foreach (var available in UsbMonitorDisplayService.Choices(found, CanSwitch(found))) _modes.Items.Add(available);
+        foreach (var available in choices) _modes.Items.Add(available);
         _modes.SelectedItem = found.Current;
         if (found.Signal != found.Current && found.Signal is { } signalSize && found.Modes.Contains(signalSize))
             _modes.SelectedItem = signalSize;
@@ -180,6 +229,7 @@ internal sealed class UsbDisplayDialog : Form
         if (m.Msg == WmDisplayChange && Visible && !Disposing && !IsDisposed)
         {
             _topologyChanged.Stop();
+            _topologyChanged.Interval = 400;
             _topologyChanged.Start();
         }
     }

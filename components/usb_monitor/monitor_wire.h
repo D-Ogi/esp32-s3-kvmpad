@@ -17,6 +17,9 @@ typedef struct {
     uint32_t headers, rejected;
     uint8_t header[16];
     unsigned used;
+    // After a discontinuity, retain a possible header followed by a JPEG prefix.
+    uint8_t search[19];
+    unsigned search_used;
     size_t remaining, written;
     uint8_t *destination;
 } monitor_wire_t;

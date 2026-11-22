@@ -5,7 +5,6 @@
 #include "hpe_panel.h"
 #include "hpe_access_config.h"
 #include "hid_dispatch.h"
-#if KVM_HID_HAS_HPE
 #include "lvgl.h"
 #include "ui_theme.h"
 #include <math.h>
@@ -16,8 +15,14 @@ enum { HOME, DIAL, STUDIO, ACCESS, OBS, TIMING };
 enum { DIAL_RADIUS = 208, DIAL_BUTTON_RADIUS = 84 };
 static void render(unsigned page);
 static void show_access_state(void);
-static lv_obj_t *bank_switch, *tiles[HPE_OBS_TILES];
+static lv_obj_t *bank_switch;
+#if KVM_HID_HAS_HPE
+static lv_obj_t *tiles[HPE_OBS_TILES];
 static hpe_studio_status_t bank_status;
+static bool fine, turning, angle_valid, held;
+static float last_angle, residual;
+static const char *const obs_names[] = {"Start recording", "Stop recording", "Mute input"};
+#endif
 static int scan_latched = -1;
 static bool paused, cooling, timing_loaded, select_down;
 static uint32_t select_at, cooldown_at;
@@ -26,16 +31,14 @@ static lv_obj_t *armed_tile;
 static uint32_t armed_peer;
 static hpe_access_timing_t timing = HPE_ACCESS_DEFAULTS;
 static hpe_access_timing_t edit_timing;
-static const char *const obs_names[] = {"Start recording", "Stop recording", "Mute input"};
 static lv_obj_t *screen, *body, *status, *selection;
 static lv_timer_t *timer;
 static void (*home_fn)(void);
 static unsigned view, sticky, scan_index;
 static uint32_t generation, scan_at, pressed_at, sticky_at;
-static bool switching, fine, turning, angle_valid, held, scanning, dwell, fired;
+static bool switching, scanning, dwell, fired;
 static int dwell_key;
 static lv_point_t dwell_origin;
-static float last_angle, residual;
 static const char *const keys[] = {"Tab", "Enter", "Escape", "Backspace", "Left", "Right"};
 static const uint8_t usages[] = {KVM_KEY_TAB, KVM_KEY_ENTER, KVM_KEY_ESCAPE, KVM_KEY_BACKSPACE,
                                  KVM_KEY_LEFT, KVM_KEY_RIGHT};
@@ -57,10 +60,13 @@ static lv_obj_t *button(lv_obj_t *parent, int x, int y, int w, int h, const char
 
 static void reset_controls(void)
 {
-    held = turning = angle_valid = scanning = fired = paused = cooling = select_down = false;
+    scanning = fired = paused = cooling = select_down = false;
+#if KVM_HID_HAS_HPE
+    held = turning = angle_valid = false;
+    residual = 0;
+#endif
     armed_tile = NULL;
     sticky = 0;
-    residual = 0;
     scan_latched = -1;
     dwell_key = -1;
     if (selection && view == ACCESS) show_access_state();
@@ -120,6 +126,7 @@ static bool fresh_click(lv_event_t *e, uint32_t peer)
     return send;
 }
 
+#if KVM_HID_HAS_HPE
 static void send_radial(bool pressed, int16_t delta)
 {
     kvm_hid_intent_t i = {.type = KVM_HID_RADIAL, .data.radial = {.pressed = pressed, .delta = delta}};
@@ -185,6 +192,8 @@ static void fine_click(lv_event_t *e)
     lv_label_set_text_static(lv_obj_get_child(lv_event_get_target_obj(e), 0), fine ? "Fine on" : "Fine off");
 }
 
+#endif
+
 static void key_tap(uint8_t usage, unsigned modifiers)
 {
     kvm_hid_burst_step_t steps[10];
@@ -198,6 +207,7 @@ static void key_tap(uint8_t usage, unsigned modifiers)
     if (hid_dispatch_burst_start(steps, n, NULL, 0) != ESP_OK) release();
 }
 
+#if KVM_HID_HAS_HPE
 static const char *const studio_names[] = {
     "Play / pause", "Previous", "Next", "Mute", "Volume down", "Volume up",
     "Undo", "Redo", "Copy", "Paste", "Save", "Select all"
@@ -252,6 +262,8 @@ static void obs_tap(lv_event_t *e)
         .data.studio={.tile_id=tile, .action_id=(uint16_t)(0x100 + tile), .peer_nonce=bank_status.peer_nonce}};
     if (hid_dispatch_local(&intent) != ESP_OK) release();
 }
+
+#endif
 
 static void switch_bank(lv_event_t *e)
 {
@@ -422,11 +434,14 @@ static void render(unsigned page)
     selection = NULL;
     lv_obj_clean(body);
     view = page;
+#if KVM_HID_HAS_HPE
     hid_dispatch_set_profile(page == DIAL ? HPE_DIAL_PROFILE : (page == ACCESS || page == TIMING) ? HPE_ACCESS_PROFILE : HPE_STUDIO_PROFILE);
+#endif
     if (page != DIAL) {
         lv_obj_set_hidden(bank_switch, false);
         lv_label_set_text_static(lv_obj_get_child(bank_switch,0), page == OBS ? "Studio Basic" : page == ACCESS ? "Access timing" : page == TIMING ? "Access controls" : "OBS bank");
     } else lv_obj_set_hidden(bank_switch, true);
+#if KVM_HID_HAS_HPE
     if (page == DIAL) {
         lv_obj_t *ring = button(body, 304, 38, DIAL_RADIUS*2, DIAL_RADIUS*2, "Press / Hold", dial, LV_EVENT_ALL, 0);
         lv_obj_set_style_radius(ring, LV_RADIUS_CIRCLE, 0);
@@ -457,7 +472,9 @@ static void render(unsigned page)
         lv_obj_set_pos(selection, 16, 334);
         hid_dispatch_studio_status(&bank_status);
         obs_refresh();
-    } else if (page == TIMING) {
+    } else
+#endif
+    if (page == TIMING) {
         render_timing();
     } else {
         for (unsigned i = 0; i < 6; i++)
@@ -498,6 +515,7 @@ static void tick(lv_timer_t *t)
                        snapshot.host_usb != KVM_HOST_USB_MOUNTED ? "Connect USB to host" :
                        mounted ? "USB connected" : "USB input paused";
     const char *agent = "", *mode = "";
+#if KVM_HID_HAS_HPE
     if (view == STUDIO || view == OBS) {
         hpe_studio_status_t studio;
         hid_dispatch_studio_status(&studio);
@@ -509,6 +527,7 @@ static void tick(lv_timer_t *t)
                     "   |   Studio agent connected" : "   |   No host agent";
         if (view == STUDIO) mode = "   |   Basic controls";
     }
+#endif
     char message[96];
     lv_snprintf(message, sizeof(message), "%s%s%s", host, agent, mode);
     if (strcmp(lv_label_get_text(status), message)) lv_label_set_text(status, message);
@@ -534,7 +553,9 @@ void hpe_panel_leave(void)
 {
     if (!screen) return;
     release();
+#if KVM_HID_HAS_HPE
     hid_dispatch_set_profile(HPE_MOUSE_PROFILE);
+#endif
     lv_timer_delete(timer);
     lv_obj_delete_async(screen);
     screen = body = status = selection = NULL;
@@ -552,21 +573,21 @@ bool hpe_panel_open(void (*home)(void))
     status = lv_label_create(screen);
     lv_label_set_text_static(status, "USB status pending");
     lv_obj_set_pos(status, 16, 10);
-    bank_switch = button(screen, 785, 0, 230, 44, "OBS bank", switch_bank, LV_EVENT_CLICKED, 0);
+    bank_switch = button(screen, 785, 0, 230, 44, "Access timing", switch_bank, LV_EVENT_CLICKED, 0);
     body = lv_obj_create(screen);
     lv_obj_remove_style_all(body);
     lv_obj_set_pos(body, 0, 44);
     lv_obj_set_size(body, 1024, 488);
     lv_obj_set_scrollable(body, false);
+#if KVM_HID_HAS_HPE
     static const char *const names[] = {"Home", "Dial", "Studio Basic", "Access"};
     for (unsigned i = 0; i < 4; i++) button(screen, (int)i * 256 + 3, 535, 250, 62, names[i], navigate, LV_EVENT_CLICKED, i);
+#else
+    button(screen, 3, 535, 250, 62, "Home", navigate, LV_EVENT_CLICKED, HOME);
+#endif
     timer = lv_timer_create(tick, 50, NULL);
-    render(DIAL);
+    render(KVM_HID_HAS_HPE ? DIAL : ACCESS);
     lv_screen_load(screen);
     tick(timer);
     return true;
 }
-#else
-bool hpe_panel_open(void (*home)(void)) { (void)home; return false; }
-void hpe_panel_leave(void) {}
-#endif

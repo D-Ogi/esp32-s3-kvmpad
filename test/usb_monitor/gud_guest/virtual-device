@@ -1,0 +1,45 @@
+#!/bin/sh
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+if [ "${REQUIRE_AUTOBIND:-0}" = 1 ]; then
+    modprobe dummy_hcd
+    modprobe usb_f_fs
+else
+    . /load-modules
+fi
+mkdir -p /sys/kernel/config
+mount -t configfs configfs /sys/kernel/config
+G=/sys/kernel/config/usb_gadget/test
+mkdir "$G"
+if [ "${REQUIRE_AUTOBIND:-0}" = 1 ]; then
+    # Only this guest-local gadget adopts the requested identity for strict binding tests.
+    echo "GUD_VIRTUAL_ID $VID:$PID dummy_udc.0"
+    printf '0x%s\n' "$VID" > "$G/idVendor"
+    printf '0x%s\n' "$PID" > "$G/idProduct"
+else
+    printf '0xffff\n' > "$G/idVendor"
+    printf '0xffff\n' > "$G/idProduct"
+fi
+printf 'full-speed\n' > "$G/max_speed"
+mkdir "$G/strings/0x409"
+printf A1B2C3D4E5F6 > "$G/strings/0x409/serialnumber"
+printf "KVMpad GUD" > "$G/strings/0x409/product"
+mkdir "$G/configs/c.1" "$G/functions/ffs.gud"
+ln -s "$G/functions/ffs.gud" "$G/configs/c.1/gud"
+mount -t functionfs gud /ffs
+if [ "${MOTION:-0}" = 1 ]; then
+    /fixture serve-motion &
+elif [ "${CONSOLE_TEST:-0}" = 1 ]; then
+    # Keep bulk/control chatter from interleaving the VT glyph raster on the serial stream.
+    /fixture serve-console > /tmp/gud-receiver.log &
+elif [ ! -f /target ]; then
+    /fixture serve-console &
+else
+    /fixture serve &
+fi
+for i in $(seq 1 100); do [ -e /ffs/ep1 ] && break; sleep 0.1; done
+[ -e /ffs/ep1 ]
+UDC=$(ls /sys/class/udc)
+[ "$UDC" = dummy_udc.0 ]
+printf '%s\n' "$UDC" > "$G/UDC"

@@ -11,24 +11,12 @@
 
 #include "src/libs/lodepng/lodepng.h"
 
-bool sim_image_render(lv_obj_t *obj, sim_image_t *out)
+static bool copy_rgb565(const lv_draw_buf_t *buf, sim_image_t *out)
 {
-    if (!obj || !out) {
-        return false;
-    }
-    memset(out, 0, sizeof(*out));
-    lv_obj_update_layout(obj);
-    lv_refr_now(NULL);
-    lv_draw_buf_t *buf = lv_snapshot_take(obj, LV_COLOR_FORMAT_RGB565);
-    if (!buf) {
-        printf("    render: lv_snapshot_take failed\n");
-        return false;
-    }
     const uint32_t w = buf->header.w;
     const uint32_t h = buf->header.h;
     uint8_t *rgb = malloc((size_t)w * h * 3u);
     if (!rgb) {
-        lv_draw_buf_destroy(buf);
         printf("    render: out of memory for %ux%u RGB888\n", w, h);
         return false;
     }
@@ -42,11 +30,41 @@ bool sim_image_render(lv_obj_t *obj, sim_image_t *out)
             dst[col * 3 + 2] = (uint8_t)((px & 0x1Fu) * 255u / 31u);
         }
     }
-    lv_draw_buf_destroy(buf);
     out->w = w;
     out->h = h;
     out->rgb = rgb;
     return true;
+}
+
+bool sim_image_render(lv_obj_t *obj, sim_image_t *out)
+{
+    if (!obj || !out) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    lv_display_t *display = lv_obj_get_display(obj);
+    lv_obj_update_layout(obj);
+    lv_refr_now(display);
+    // The test display has a single direct framebuffer. It includes the top layer
+    // which is outside the active screen's object tree (for example, diagnostics).
+    if (obj == lv_display_get_screen_active(display) &&
+        lv_obj_get_child_count(lv_display_get_layer_top(display)) > 0 &&
+        lv_display_get_render_mode(display) == LV_DISPLAY_RENDER_MODE_DIRECT) {
+        const lv_draw_buf_t *frame = lv_display_get_buf_active(display);
+        if (frame && frame->header.cf == LV_COLOR_FORMAT_RGB565 &&
+            frame->header.w == (uint32_t)lv_obj_get_width(obj) &&
+            frame->header.h == (uint32_t)lv_obj_get_height(obj)) {
+            return copy_rgb565(frame, out);
+        }
+    }
+    lv_draw_buf_t *buf = lv_snapshot_take(obj, LV_COLOR_FORMAT_RGB565);
+    if (!buf) {
+        printf("    render: lv_snapshot_take failed\n");
+        return false;
+    }
+    bool ok = copy_rgb565(buf, out);
+    lv_draw_buf_destroy(buf);
+    return ok;
 }
 
 // lodepng is the copy LVGL vendors: it allocates through lv_malloc and its *_file helpers go through lv_fs, so

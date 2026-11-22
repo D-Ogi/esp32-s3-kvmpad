@@ -64,6 +64,7 @@ void ui_store_apply(ui_store_t *s, const ui_state_snapshot_t *snap)
     const bool touch = (snap->sources & UI_SRC_TOUCH) != 0;
     const bool gest = (snap->sources & UI_SRC_GESTURE) != 0;
     set(s, UI_SUBJ_HOST_USB, hid, snap->host_usb_state);
+    set(s, UI_SUBJ_MOUSE_BOOT_PROTOCOL, hid, snap->mouse_boot_protocol);
     set(s, UI_SUBJ_OWNER_KIND, hid, snap->owner_kind);
     set(s, UI_SUBJ_OWNER_EPOCH, hid, (int32_t)(snap->owner_epoch & 0x7FFFFFFFu));
     set(s, UI_SUBJ_MODIFIERS, hid, snap->modifiers_down);
@@ -141,7 +142,8 @@ const char *ui_subject_name(ui_subject_id_t id)
 {
     static const char *const names[UI_SUBJ_COUNT] = {
         "host_usb", "client", "owner_kind", "owner_epoch", "wifi", "touch_ok", "drag_lock",
-        "modifiers", "mods_armed", "mods_locked", "caps_led", "maintenance", "error", "active_view", "overlay",
+        "modifiers", "mods_armed", "mods_locked", "caps_led", "maintenance", "error", "mouse_boot_protocol",
+        "active_view", "overlay",
     };
     return (unsigned)id < UI_SUBJ_COUNT ? names[id] : "?";
 }

@@ -14,6 +14,8 @@
 #include "sim_platform.h"
 #include "ui_theme.h"
 #if CONFIG_KVM_USB_MONITOR_EVAL
+#include "app_config.h"
+#include "gesture_engine.h"
 #include "console_damage.h"
 #include "pack_desktop_view.h"
 #include "pack_keyboard_surface.h"
@@ -40,6 +42,16 @@ static lv_obj_t *home_screen;
 static unsigned monitor_opens,monitor_closes,monitor_flushes,usb_changes;
 static bool usb_controls,usb_mounted,picture_waiting,memory_available=true;
 static bool receiver_native,next_nonblack=true;
+static bool scroll_enabled=true, scroll_natural=false;
+static kvm_gesture_speed_t pointer_speed=KVM_GEST_SPEED_NORMAL;
+static bool hold_right=true;
+void app_config_apply_mouse(kvm_gesture_cfg_t *gesture)
+{
+    gesture->scroll_enabled=scroll_enabled;
+    gesture->scroll_natural=scroll_natural;
+    gesture->speed=pointer_speed;
+    gesture->longpress_right_click=hold_right;
+}
 static bool led_known;
 static uint8_t host_leds;
 static unsigned mount_epoch, failed_allocations, failed_profiles;
@@ -882,6 +894,84 @@ static void screen_tap(bool portrait,int x,int y)
     sim_release();
 }
 
+static void rate_slider_view(const char *folder)
+{
+    assert(ui_theme_init());
+    for (unsigned portrait=0;portrait<2;portrait++) {
+        memset(&scene,0,sizeof(scene));
+        load_at(folder);
+        scene.portrait=portrait; // Identical local coordinates in both orientations.
+        lv_obj_t *screen=lv_obj_create(NULL);
+        lv_obj_remove_style_all(screen);
+        lv_obj_t *frame=pack_view_frame(screen,portrait);
+        lv_obj_t *content=lv_obj_create(frame);
+        lv_obj_remove_style_all(content);
+        lv_obj_set_pos(content,0,32);
+        lv_obj_set_size(content,portrait ? 600 : 1024,portrait ? 992 : 568);
+        assert(pack_view_open(content,&scene,PACK_PERM_UI));
+        lv_screen_load(screen); sim_settle();
+        lv_obj_t *up=visible_caption(content,LV_SYMBOL_UP);
+        assert(up && visible_caption(lv_obj_get_parent(up),LV_SYMBOL_DOWN));
+        lv_obj_t *meter=lv_obj_get_child_by_type(lv_obj_get_parent(up),0,&lv_slider_class);
+        assert(meter && lv_obj_is_visible(meter) && lv_slider_get_value(meter)==0);
+        pack_state_t *value=&scene.state[0];
+        screen_tap(portrait,44,124);
+        assert(value->value.integer==1000);
+        screen_press(portrait,44,54);
+        assert(value->value.integer==1100 && shows(content,"1100"));
+        lv_test_wait(340);
+        int64_t increasing=value->value.integer;
+        assert(increasing>=1400);
+        picture(portrait ? "rate-slider-portrait" : "rate-slider-landscape");
+        screen_pointer(portrait,44,124);
+        lv_test_wait(300); assert(value->value.integer==increasing);
+        screen_pointer(portrait,44,193);
+        sim_release();
+        assert(value->value.integer<increasing);
+        int64_t released=value->value.integer;
+        lv_test_wait(550); assert(value->value.integer==released);
+
+        // The authored wheel is x=12..75, y=44..203 below the system header.
+        // A finger that starts on the adjacent area cannot acquire the wheel.
+        screen_press(portrait,110,124);
+        screen_pointer(portrait,44,54);
+        lv_test_wait(200); sim_release();
+        assert(value->value.integer==released);
+        screen_press(portrait,44,124);
+        screen_pointer(portrait,44,24);
+        int64_t above=value->value.integer;
+        lv_test_wait(300);
+        assert(above>released && value->value.integer>=above+300);
+        screen_pointer(portrait,110,24); // Diagonal drift beyond the width keeps scrolling.
+        int64_t to_side=value->value.integer;
+        lv_test_wait(300);
+        assert(value->value.integer>=to_side+300);
+        screen_pointer(portrait,110,124); // The center is neutral even outside the width.
+        int64_t center=value->value.integer;
+        lv_test_wait(300); assert(value->value.integer==center);
+        screen_pointer(portrait,44,244);
+        int64_t below=value->value.integer;
+        lv_test_wait(300);
+        assert(below<center && value->value.integer<=below-300);
+        sim_release();
+        released=value->value.integer;
+        lv_test_wait(550); assert(value->value.integer==released);
+        value->value.integer=19950; screen_tap(portrait,44,54);
+        assert(value->value.integer==20000 && shows(content,"20000"));
+        value->value.integer=50; screen_tap(portrait,44,193);
+        assert(value->value.integer==0 && shows(content,"0"));
+        // Full int64 state bounds still saturate safely with the authored delta.
+        value->value.integer=INT64_MAX-1; value->max.integer=INT64_MAX;
+        screen_tap(portrait,44,54); assert(value->value.integer==INT64_MAX);
+        value->value.integer=INT64_MIN+1; value->min.integer=INT64_MIN;
+        screen_press(portrait,44,193); assert(value->value.integer==INT64_MIN);
+        pack_view_close(); home(); sim_release(); lv_test_wait(150); lv_obj_delete(screen);
+    }
+    assert(!reports && !subscriptions && !starts && !stops);
+    ui_theme_deinit();
+    puts("PASS RateSlider package, landscape and portrait, captured drag beyond both ends and sides, neutral, release, bounded int64 and close");
+}
+
 #if CONFIG_KVM_USB_MONITOR_EVAL
 static bool contacts(unsigned n,int x,int y,int x2,int y2)
 {
@@ -890,6 +980,38 @@ static bool contacts(unsigned n,int x,int y,int x2,int y2)
     const lv_point_t p[]={{x,y},{x2,y2}};
     clock+=10000;
     return pack_view_touchpad(n,p,ids,clock);
+}
+
+static void check_console_edge_motion(void)
+{
+    unsigned before=reports;
+    assert(contacts(1,110,530,0,0));
+    assert(contacts(1,110,712,0,0)); // Cross from the pad onto the keyboard.
+    for (unsigned i=0;i<3;i++) {
+        assert(contacts(1,110,712,0,0)); // Stay still outside.
+        assert(reports==before+2+i);
+        assert(recorded[reports-1].type==KVM_HID_MOUSE_MOVE);
+        assert(recorded[reports-1].data.mouse_move.dy>0 && recorded[reports-1].data.mouse_move.dx==0);
+    }
+    assert(contacts(1,110,530,0,0)); // Return to the pad and stay still.
+    assert(recorded[reports-1].type==KVM_HID_MOUSE_MOVE && recorded[reports-1].data.mouse_move.dy<0);
+    before=reports;
+    assert(contacts(1,110,530,0,0));
+    assert(contacts(0,0,0,0,0));
+    assert(reports==before);
+
+    assert(contacts(1,110,530,0,0));
+    assert(contacts(1,110,420,0,0)); // Release over the monitor.
+    assert(contacts(1,110,420,0,0));
+    assert(reports==before+2 && recorded[reports-1].type==KVM_HID_MOUSE_MOVE);
+    assert(recorded[reports-1].data.mouse_move.dy<0);
+    before=reports;
+    assert(contacts(0,0,0,0,0));
+    // A new press on the keyboard cannot acquire the pad by sliding into it.
+    assert(!contacts(1,110,712,0,0));
+    assert(!contacts(1,110,530,0,0));
+    assert(!contacts(0,0,0,0,0));
+    assert(reports==before);
 }
 
 static lv_obj_t *drawer_label(lv_obj_t *screen,const char *text)
@@ -999,11 +1121,13 @@ static void console_image(const char *folder,const char *filename)
     sim_image_free(&portrait);
 }
 
-static bool has_cap(lv_obj_t *matrix,const char *text)
+static bool has_cap(lv_obj_t *surface,const char *text)
 {
-    const char *const *map=lv_buttonmatrix_get_map(matrix);
-    for (unsigned i=0;map[i][0];i++) if (!strcmp(map[i],text)) return true;
-    return false;
+    lv_obj_t *caption=visible_caption(surface,text);
+    if (!caption) return false;
+    lv_obj_t *button=lv_obj_get_parent(caption);
+    return lv_obj_check_type(button,&lv_button_class) && lv_obj_get_parent(button)==surface &&
+           lv_obj_has_state(button,LV_STATE_CHECKED)==(!strcmp(text,"Caps\nOn"));
 }
 
 static void zoom_console(lv_obj_t *screen)
@@ -1255,9 +1379,20 @@ static void console_view(const char *output)
     assert(reports==2 && recorded[0].type==KVM_HID_KEY_DOWN && recorded[1].type==KVM_HID_KEY_UP);
     screen_tap(true,590,966); // Last pixel columns/rows of the authored bottom-right key.
     assert(reports==4 && recorded[2].data.key.usage_id==0x4f && recorded[3].type==KVM_HID_KEY_UP);
-    unsigned before_move=reports;
-    assert(contacts(1,110,530,0,0));assert(contacts(1,200,530,0,0));assert(contacts(0,0,0,0,0));
-    assert(reports>before_move && recorded[reports-1].type==KVM_HID_MOUSE_MOVE);
+    check_console_edge_motion();
+    // Exercise the alternate adapter's portrait frame on a landscape LVGL display.
+    lv_display_t *display=lv_obj_get_display(screen);
+    lv_display_set_rotation(display,LV_DISPLAY_ROTATION_0);
+    lv_obj_set_pos(frame,0,599);
+    lv_obj_set_style_transform_pivot_x(frame,0,0);
+    lv_obj_set_style_transform_pivot_y(frame,0,0);
+    lv_obj_set_style_transform_rotation(frame,2700,0);
+    sim_settle();
+    check_console_edge_motion();
+    lv_obj_set_style_transform_rotation(frame,0,0);
+    lv_obj_set_pos(frame,0,0);
+    lv_display_set_rotation(display,LV_DISPLAY_ROTATION_90);
+    sim_settle();
     for (unsigned y=0;y<480;y++) for (unsigned x=0;x<640;x++) {
         uint16_t color=y<240 ? (x<320 ? 0xf800 : 0x07e0) : (x<320 ? 0x001f : 0xffff);
         if ((x>=12 && x<28) || (x>=612 && x<628)) color=0xffe0;
@@ -1275,7 +1410,42 @@ static void console_view(const char *output)
     unsigned n=reports;
     assert(contacts(2,160,530,240,530));assert(contacts(2,160,557,240,557));
     assert(contacts(2,160,590,240,590));assert(contacts(0,0,0,0,0));
-    assert(reports>n && recorded[reports-1].type==KVM_HID_MOUSE_WHEEL && recorded[reports-1].data.wheel.vertical);
+    assert(reports>n && recorded[reports-1].type==KVM_HID_MOUSE_WHEEL && recorded[reports-1].data.wheel.vertical<0);
+    n=reports;
+    scroll_natural=true;
+    assert(contacts(2,160,530,240,530));
+    scroll_enabled=false; // A change during a gesture applies on the next contact.
+    assert(contacts(2,160,569,240,569));assert(contacts(0,0,0,0,0));
+    assert(reports>n && recorded[reports-1].type==KVM_HID_MOUSE_WHEEL && recorded[reports-1].data.wheel.vertical>0);
+    n=reports;
+    assert(contacts(2,160,530,240,530));assert(contacts(2,160,569,240,569));assert(contacts(0,0,0,0,0));
+    assert(reports==n);
+    scroll_enabled=true;scroll_natural=false;
+    int delta[3];
+    for (unsigned speed=0;speed<3;++speed) {
+        pointer_speed=(kvm_gesture_speed_t)speed;
+        assert(contacts(1,120,530,0,0));
+        pointer_speed=KVM_GEST_SPEED_NORMAL;
+        assert(contacts(1,132,530,0,0));
+        assert(recorded[reports-1].type==KVM_HID_MOUSE_MOVE);
+        delta[speed]=recorded[reports-1].data.mouse_move.dx;
+        assert(contacts(0,0,0,0,0));
+    }
+    assert(delta[0]>0 && delta[0]<delta[1] && delta[1]<delta[2]);
+    for (unsigned enabled=0;enabled<2;++enabled) {
+        n=reports;
+        hold_right=enabled!=0;
+        assert(contacts(1,120,530,0,0));
+        hold_right=!hold_right;
+        for (unsigned i=0;i<60;++i) assert(contacts(1,120,530,0,0));
+        assert(contacts(0,0,0,0,0));
+        assert(reports==n+2*enabled);
+        if (enabled) {
+            assert(recorded[n].type==KVM_HID_MOUSE_BTN_DOWN && recorded[n].data.mouse_button.button_id==KVM_MOUSE_BTN_RIGHT);
+            assert(recorded[n+1].type==KVM_HID_MOUSE_BTN_UP && recorded[n+1].data.mouse_button.button_id==KVM_MOUSE_BTN_RIGHT);
+        }
+    }
+    hold_right=true;
     n=reports;
     assert(contacts(1,110,530,0,0));assert(contacts(2,110,530,200,710));
     assert(!contacts(2,110,570,200,610));contacts(0,0,0,0,0);
@@ -1327,8 +1497,13 @@ static void console_view(const char *output)
     lv_indev_t *pointer=lv_test_indev_get_indev(LV_INDEV_TYPE_POINTER);
     lv_point_t point;
     lv_indev_get_point(pointer,&point);
-    lv_obj_t *key_surface=lv_indev_search_obj(screen,&point);
-    assert(key_surface && pack_keyboard_surface_buffered_target(key_surface));
+    lv_obj_t *key_button=lv_indev_search_obj(screen,&point);
+    assert(key_button && lv_obj_check_type(key_button,&lv_button_class));
+    assert(pack_keyboard_surface_buffered_target(key_button));
+    lv_obj_t *key_surface=lv_obj_get_parent(key_button);
+    assert(!pack_keyboard_surface_buffered_target(key_surface));
+    assert(lv_obj_get_width(key_surface)==584 && lv_obj_get_height(key_surface)==288);
+    assert(lv_obj_get_width(key_button)>=44 && lv_obj_get_height(key_button)>=44);
     assert(has_cap(key_surface,"Caps\nUnknown"));
     led_known=true;host_leds=2;pack_view_tick();
     assert(has_cap(key_surface,"Caps\nOn"));
@@ -1702,6 +1877,11 @@ int main(int argc, char **argv)
 {
     size_t baseline=sim_env_start();
     home_screen=lv_screen_active();
+    if (argc==1 || (argc==2 && !strcmp(argv[1],"--rate-slider"))) {
+        rate_slider_view(KVM_EXAMPLES "/../samples/rate-slider");
+        if (argc==2) { sim_env_stop(baseline); return 0; }
+        memset(&scene,0,sizeof(scene));
+    }
 #if CONFIG_KVM_USB_MONITOR_EVAL
     if (argc==4 && !strcmp(argv[1],"--usb-console")) {
         assert(ui_theme_init());load_at(argv[2]);console_view(argv[3]);
@@ -1744,7 +1924,9 @@ int main(int argc, char **argv)
         return 0;
     }
     if (argc==3 && !strcmp(argv[1],"--controls")) {
+        assert(ui_theme_init());
         local_controls_view(argv[2]);
+        ui_theme_deinit();
         sim_env_stop(baseline);
         return 0;
     }

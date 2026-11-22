@@ -207,7 +207,10 @@ static void native_touch(const kvm_touch_sample_t *sample)
 {
     if (!s_domain.pad_surface_enabled || !s_router.pad_enabled) return;
     hpe_frame_t frames[2];
-    int n = ptp_contacts_update(&s_active, &s_router.pad, sample, frames);
+    // The router hit-tests the initial contact. HID coordinates span the glass so a
+    // captured finger can keep moving after it crosses any edge of the on-screen pad.
+    const touch_rect_t glass = {.x2 = (int16_t)(s_cfg.h_res - 1), .y2 = (int16_t)(s_cfg.v_res - 1)};
+    int n = ptp_contacts_update(&s_active, &glass, sample, frames);
     if (n < 0) { cancel_pad(true); return; }
     for (int i = 0; i < n; i++) {
         kvm_hid_intent_t intent = {.type = KVM_HID_PTP_FRAME, .origin = KVM_ORIGIN_LOCAL,
@@ -283,6 +286,9 @@ static void handle(const msg_t *m)
         }
 #endif
         if (s_hid_on) {
+            if (ro.pad.valid && ro.pad.point_count && s_gesture.state == KVM_GEST_IDLE && s_cfg.apply_mouse_preferences) {
+                s_cfg.apply_mouse_preferences(&s_gesture.cfg);
+            }
             kvm_gesture_feed(&s_gesture, &ro.pad, &out);
             emit(&out);
         }
@@ -303,6 +309,8 @@ static void handle(const msg_t *m)
             portEXIT_CRITICAL(&s_mux);
         }
         touch_router_set_pad(&s_router, &m->u.pad.rect, m->u.pad.enabled);
+        kvm_gesture_set_pad_bounds(&s_gesture, m->u.pad.rect.x1, m->u.pad.rect.y1,
+                                   m->u.pad.rect.x2, m->u.pad.rect.y2);
         break;
     case MSG_CANCEL:
 #if KVM_HID_HAS_HPE

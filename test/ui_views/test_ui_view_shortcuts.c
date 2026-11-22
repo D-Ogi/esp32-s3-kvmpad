@@ -5,7 +5,7 @@
 // TASK-070C SHORTCUTS with the real LVGL 9.6 (headless 1024x600, LVGL test pointer, ASan + UBSan), the real
 // router, store, mailbox, theme and action gateway, and the real chord allowlist of hid_core:
 // - each of the six reference cards submits exactly one SHORTCUT_REQUEST carrying its chord id (FR-301..306);
-// - the Media row submits the ADR-018 / FR-311 Consumer chords;
+// - the Media row submits the ADR-018 / FR-311 Consumer chords only in profiles with a Consumer interface;
 // - the FR-744 layout chord follows the init parameter, and an unknown one disables the tile;
 // - FR-734 / ADR-023: with the policy on nothing goes out until Confirm, Cancel sends nothing, Confirm sends
 //   once; with the policy off the card submits directly;
@@ -264,13 +264,25 @@ static void test_media_row(void)
     };
     s_confirm_policy = false;
     CHECK(start());
+    const bool has_consumer = KVM_HID_ITFS > 2;
+    const char *expected_hint = has_consumer ? "Each command sends one short, complete chord."
+                                            : "Media controls are unavailable in the keyboard and mouse USB profile.";
+    CHECK(strcmp(lv_label_get_text(s_sc.hint), expected_hint) == 0);
+    CHECK(lv_obj_is_visible(s_sc.hint));
+    CHECK_EQ(lv_obj_get_style_opa(s_sc.hint, LV_PART_MAIN), LV_OPA_COVER);
     for (int i = 0; i < UI_SHORTCUT_MEDIA_COUNT; i++) {
         s_rec_n = 0;
+        CHECK_EQ(lv_obj_has_state(s_sc.media[i], LV_STATE_DISABLED), !has_consumer);
+        CHECK_EQ(ui_view_shortcuts_media_chord((ui_shortcut_media_t)i), expect[i]);
         click_obj(s_sc.media[i]);
+        if (!has_consumer) {
+            CHECK_EQ(s_rec_n, 0);
+            CHECK_EQ(s_sink_calls, 0);
+            continue;
+        }
         CHECK_EQ(s_rec_n, 1);
         CHECK_EQ(s_rec[0].type, UI_ACT_SHORTCUT_REQUEST);
         CHECK_EQ(s_rec[0].value, expect[i]);
-        CHECK_EQ(ui_view_shortcuts_media_chord((ui_shortcut_media_t)i), expect[i]);
         // ADR-018 / TECH-075: the Media group is Consumer Control, with a usage from the allowlist.
         const kvm_chord_t *c = kvm_chord_get(s_rec[0].value);
         CHECK(c != NULL);
@@ -278,6 +290,12 @@ static void test_media_row(void)
         CHECK(kvm_consumer_is_allowed(c->usage));
     }
     CHECK_EQ(s_policy_reads, 0);
+    // A boot-only user can still send keyboard shortcuts on this same mounted screen.
+    s_rec_n = 0;
+    click_obj(s_sc.card[UI_SHORTCUT_SCREENSHOT]);
+    CHECK_EQ(s_rec_n, 1);
+    CHECK_EQ(s_rec[0].type, UI_ACT_SHORTCUT_REQUEST);
+    CHECK_EQ(s_rec[0].value, KVM_CHORD_SCREENSHOT);
     stop();
 }
 
@@ -412,7 +430,8 @@ static void test_local_input_not_allowed(void)
     publish(KVM_HOST_USB_MOUNTED, OWNER_LOCAL, false);
     CHECK(ui_view_shortcuts_input_allowed(&s_sc));
     for (int i = 0; i < TARGETS; i++) {
-        CHECK(!lv_obj_has_state(t[i], LV_STATE_DISABLED));
+        const bool media = i >= UI_SHORTCUT_COMMAND_COUNT && i < TARGETS - 1;
+        CHECK_EQ(lv_obj_has_state(t[i], LV_STATE_DISABLED), media && KVM_HID_ITFS == 2);
     }
     click_obj(t[0]);
     CHECK_EQ(s_rec_n, 1);

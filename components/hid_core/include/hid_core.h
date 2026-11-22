@@ -127,7 +127,14 @@ typedef struct {
     }
 
 #define KVM_HID_QUEUE_CAP 128 // 02 §11.2: explicit cap of 128 critical events + coalescing mouse move
+#if defined(CONFIG_TINYUSB_HID_COUNT) && CONFIG_TINYUSB_HID_COUNT == 2
+#define KVM_HID_ITFS 2
+#else
 #define KVM_HID_ITFS (3 + KVM_HID_HAS_HPE)
+#endif
+// With selectable USB personalities, wait for every active HID to finish its
+// neutral report before allowing new input onto the bus.
+#define KVM_HID_HAS_NEUTRAL_BARRIER (KVM_HID_HAS_HPE || KVM_HID_ITFS == 2)
 
 typedef struct {
     uint32_t accepted;
@@ -170,10 +177,11 @@ typedef struct {
     kvm_owner_kind_t owner_kind;
     uint32_t owner_epoch;
     bool maintenance;
-#if KVM_HID_HAS_HPE
     uint32_t release_generation;  // any neutralization invalidates preceding touch capture
+    bool neutralizing;
+#if KVM_HID_HAS_HPE
     uint32_t pad_generation;
-    bool pad_native_requested, pad_surface_enabled, neutralizing;
+    bool pad_native_requested, pad_surface_enabled;
 #endif
     uint8_t modifiers_down; // ledger modifier bitmap (what the HOST was told)
     uint8_t mods_armed;     // ADR-016 one-shot modifiers
@@ -246,8 +254,9 @@ typedef struct {
     uint8_t keys[6];      // press order, 0 = empty slot
     uint8_t buttons;
     uint16_t consumer;
+    bool neutral_barrier;
 #if KVM_HID_HAS_HPE
-    bool radial_pressed, joystick_active, ptp_native, ptp_surface, neutral_barrier;
+    bool radial_pressed, joystick_active, ptp_native, ptp_surface;
     uint8_t ptp_inflight_tips;
     uint8_t control_neutral_phase;
     uint32_t ptp_generation;
@@ -301,6 +310,8 @@ void kvm_hid_core_on_report_failed(kvm_hid_core_t *core, uint8_t itf);
 
 /** Run the scheduler and the timers (lease expiry, completion timeout, keep-alive). Call often. */
 void kvm_hid_core_poll(kvm_hid_core_t *core, uint64_t now_us);
+/** Submit the current keyboard state when the host's HID idle interval expires. */
+void kvm_hid_core_repeat_keyboard(kvm_hid_core_t *core);
 
 /** 03 §4.3 on_local_input: LOCAL input with override. `intent->origin/epoch` are set by the core. */
 kvm_hid_err_t kvm_hid_core_local(kvm_hid_core_t *core, const kvm_hid_intent_t *intent, uint64_t now_us);

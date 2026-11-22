@@ -320,6 +320,58 @@ static void test_gesture_integration(void)
     CHECK_EQ(g.st.out_overflow, 0);
 }
 
+static void test_held_edge_motion(void)
+{
+    static const int directions[][2] = {{-1,0},{1,0},{0,-1},{0,1},{1,-1}};
+    for (unsigned i = 0; i < sizeof(directions) / sizeof(directions[0]); ++i) {
+        int dx = directions[i][0], dy = directions[i][1];
+        int x = dx < 0 ? PAD.x1 : dx > 0 ? PAD.x2 : PAD_X;
+        int y = dy < 0 ? PAD.y1 : dy > 0 ? PAD.y2 : PAD_Y;
+        pts_t inside = one(3, (int16_t)x, (int16_t)y);
+        pts_t outside = one(3, (int16_t)(x + dx), (int16_t)(y + dy));
+        kvm_gesture_cfg_t cfg = KVM_GESTURE_CFG_DEFAULT;
+        cfg.h_res = W;
+        cfg.v_res = H;
+        cfg.acceleration = false;
+        kvm_gesture_t g;
+        kvm_gesture_out_t out;
+        kvm_gesture_init(&g, &cfg);
+        kvm_gesture_set_pad_bounds(&g, PAD.x1, PAD.y1, PAD.x2, PAD.y2);
+        reset(true);
+        route(&inside);
+        kvm_gesture_feed(&g, &o.pad, &out);
+        route(&outside);
+        kvm_gesture_feed(&g, &o.pad, &out);
+        int total_x = 0, total_y = 0;
+        for (int held = 0; held < 10; ++held) {
+            route(&outside);
+            kvm_gesture_feed(&g, &o.pad, &out);
+            CHECK(!o.ptr_pressed);
+            CHECK_EQ(out.n, 1);
+            CHECK_EQ(out.ev[0].type, KVM_HID_MOUSE_MOVE);
+            total_x += out.ev[0].data.mouse_move.dx;
+            total_y += out.ev[0].data.mouse_move.dy;
+        }
+        int distance = dx && dy ? 42 : 60; // 100 ms at 600 units/s
+        CHECK_EQ(total_x, dx * distance);
+        CHECK_EQ(total_y, dy * distance);
+        route(&inside);
+        kvm_gesture_feed(&g, &o.pad, &out);
+        route(&inside);
+        kvm_gesture_feed(&g, &o.pad, &out);
+        CHECK_EQ(out.n, 0);
+        route(&outside);
+        kvm_gesture_feed(&g, &o.pad, &out);
+        kvm_gesture_tick(&g, s_t + cfg.gap_cancel_us + 1, &out);
+        CHECK_EQ(g.state, KVM_GEST_CANCELLED);
+        CHECK_EQ(out.n, 0);
+        route(NULL);
+        kvm_gesture_feed(&g, &o.pad, &out);
+        CHECK_EQ(out.n, 0);
+        CHECK_EQ(g.state, KVM_GEST_IDLE);
+    }
+}
+
 // Random samples: invariants hold for every output.
 static uint32_t rng(uint32_t *s)
 {
@@ -490,6 +542,7 @@ static void test_short_reversals_during_refresh(void)
         local_contacts_queue_t q={0};
         kvm_gesture_t gesture;
         kvm_gesture_init(&gesture,NULL);
+        gesture.cfg.scroll_natural = true; // This trace expects finger-down to produce wheel-up.
         uint32_t seq=0;
         gesture_trace_t trace={0};
         for (unsigned i=0;i<sizeof(steps)/sizeof(steps[0]);i++) {
@@ -647,6 +700,7 @@ int main(void)
     RUN(test_cancelled_ids_survive_controller_fault);
     RUN(test_cancel_blocks_until_lift);
     RUN(test_gesture_integration);
+    RUN(test_held_edge_motion);
     RUN(test_random_invariants);
     TEST_MAIN_END("test_touch_router");
 }

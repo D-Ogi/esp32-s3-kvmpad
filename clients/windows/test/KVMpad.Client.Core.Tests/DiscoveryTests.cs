@@ -65,15 +65,15 @@ public sealed class DiscoveryTests
     }
 
     [Theory]
-    [InlineData("KVMpad-229C")]
-    [InlineData("KVMpad-229C._kvmpad._tcp.local")]
-    [InlineData("KVMPAD-229C._KVMPAD._TCP.LOCAL.")]
+    [InlineData("KVMpad-ABCD")]
+    [InlineData("KVMpad-ABCD._kvmpad._tcp.local")]
+    [InlineData("KVMPAD-ABCD._KVMPAD._TCP.LOCAL.")]
     public void DiscoveryRetainsTheActualCredentialIdOnRefreshAndAfterRestart(string storedId)
     {
         var stored = new PairedDevice(storedId, "Old name", "192.0.2.10", 8443, new string('a', 64),
             "fixture", DateTimeOffset.UnixEpoch);
         var seen = Assert.Single(DeviceCollator.Collate([MdnsMessage.Parse(
-            BuildAnswer("KVMpad-229C", 9443, "New name", "1", false))]));
+            BuildAnswer("KVMpad-ABCD", 9443, "New name", "1", false))]));
 
         foreach (var result in new[] {
             DeviceListEntry.Merge([], [stored]),
@@ -95,7 +95,7 @@ public sealed class DiscoveryTests
     public void ManualPairingKeepsTheConfirmedBoardIdentityAcrossAddressAndNameChanges()
     {
         string pin = new string('a', 64), other = new string('b', 64);
-        const string name = "KVMpad-229C";
+        const string name = "KVMpad-ABCD";
         var saved = new PairedDevice(name + "._kvmpad._tcp.local", name, "192.0.2.10", 8443,
             pin, "fixture", DateTimeOffset.UnixEpoch);
         Assert.Equal(name, DeviceListEntry.IdForManualPairing([], name, pin));
@@ -122,24 +122,24 @@ public sealed class DiscoveryTests
     [Fact]
     public void WhenBothLegacyIdsExistTheLatestPairingWinsRegardlessOfEnumerationOrder()
     {
-        var older = new PairedDevice("KVMpad-229C._kvmpad._tcp.local", "Desk", "192.0.2.10", 8443,
+        var older = new PairedDevice("KVMpad-ABCD._kvmpad._tcp.local", "Desk", "192.0.2.10", 8443,
             new string('a', 64), "fixture-old", DateTimeOffset.UnixEpoch);
-        var newer = new PairedDevice("KVMpad-229C", "Desk", "192.0.2.10", 8443,
+        var newer = new PairedDevice("KVMpad-ABCD", "Desk", "192.0.2.10", 8443,
             new string('b', 64), "fixture-new", DateTimeOffset.UnixEpoch.AddDays(1));
         Assert.Same(newer, Assert.Single(DeviceListEntry.Merge([], [older, newer])).Paired);
         Assert.Same(newer, Assert.Single(DeviceListEntry.Merge([], [newer, older])).Paired);
     }
 
     [Theory]
-    [InlineData("KVMpad-229C")]
-    [InlineData("KVMPAD-229C._KVMPAD._TCP.LOCAL.")]
+    [InlineData("KVMpad-ABCD")]
+    [InlineData("KVMPAD-ABCD._KVMPAD._TCP.LOCAL.")]
     public async Task PairedCommandsUseCurrentAddressAndPortWithTheSelectedCredential(string storedId)
     {
         var paired = new PairedDevice(storedId, "Paired desk", "192.0.2.10", 8443, new string('a', 64),
             "fixture-token", DateTimeOffset.UnixEpoch);
         var devices = DeviceCollator.Collate([
             MdnsMessage.Parse(BuildAnswer("Other", 9999, "Paired desk", "1", false)),
-            MdnsMessage.Parse(BuildAnswer("KVMpad-229C", 9443, "Renamed desk", "1", false))
+            MdnsMessage.Parse(BuildAnswer("KVMpad-ABCD", 9443, "Renamed desk", "1", false))
         ]);
         int queries = 0;
         var current = await MdnsBrowser.ResolvePairedAsync(paired, CancellationToken.None, (window, _) => {

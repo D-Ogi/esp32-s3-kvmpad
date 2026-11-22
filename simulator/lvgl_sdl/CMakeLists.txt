@@ -67,6 +67,8 @@ add_library(ui_stack STATIC
     ${UI_THEME}/src/ui_icon_star.c
     ${UI_THEME}/src/kvm_control_icons.c
     ${UI_COMP}/src/ui_status_item.c ${UI_COMP}/src/ui_topbar.c ${UI_COMP}/src/ui_action_key.c
+    ${UI_COMP}/src/ui_rate_slider.c
+    ${UI_VIEWS}/src/ui_keyboard_surface.c
     ${UI_COMP}/src/ui_segmented.c ${UI_COMP}/src/ui_modal.c ${UI_COMP}/src/ui_toast.c
     ${UI_VIEWS}/src/ui_app.c ${UI_VIEWS}/src/ui_view_mouse.c ${UI_VIEWS}/src/ui_view_keyboard.c
     ${UI_VIEWS}/src/ui_view_shortcuts.c ${UI_VIEWS}/src/ui_view_status.c ${UI_VIEWS}/src/ui_remote_view.c
@@ -188,16 +190,22 @@ set(HPE_SCHEDULER
     ${REPO}/components/hid_core/src/hid_core.c ${REPO}/components/hid_core/src/hid_keymap.c
     ${REPO}/components/hid_core/src/kbd_fsm.c ${REPO}/components/usb_hid_device/src/usb_hid_reports.c
     ${REPO}/components/usb_hid_device/src/hpe_studio.c ${REPO}/components/usb_hid_device/src/hpe_reports.c)
-add_executable(test_hpe_input ${PACK_TEST}/hpe_input.c sim_platform.c ${REPO}/main/hpe_panel.c ${HPE_SCHEDULER})
-target_include_directories(test_hpe_input PRIVATE ${PACK_TEST}/view_shims ${REPO}/main)
-target_compile_definitions(test_hpe_input PRIVATE CONFIG_TINYUSB_HID_COUNT=4)
-target_compile_options(test_hpe_input PRIVATE -UNDEBUG -Wall -Wextra)
-if(KVM_SANITIZE)
-    target_compile_options(test_hpe_input PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all
-                           -fno-omit-frame-pointer)
-endif()
-target_link_libraries(test_hpe_input PRIVATE ui_stack)
-add_test(NAME test_hpe_input COMMAND test_hpe_input)
+foreach(hid_count 2 3 4)
+    set(suite test_access_hid${hid_count})
+    if(hid_count EQUAL 4)
+        set(suite test_hpe_input)
+    endif()
+    add_executable(${suite} ${PACK_TEST}/hpe_input.c sim_platform.c ${REPO}/main/hpe_panel.c ${HPE_SCHEDULER})
+    target_include_directories(${suite} PRIVATE ${PACK_TEST}/view_shims ${REPO}/main)
+    target_compile_definitions(${suite} PRIVATE CONFIG_TINYUSB_HID_COUNT=${hid_count})
+    target_compile_options(${suite} PRIVATE -UNDEBUG -Wall -Wextra)
+    if(KVM_SANITIZE)
+        target_compile_options(${suite} PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all
+                               -fno-omit-frame-pointer)
+    endif()
+    target_link_libraries(${suite} PRIVATE ui_stack)
+    add_test(NAME ${suite} COMMAND ${suite})
+endforeach()
 
 add_executable(test_yoke_input ${PACK_TEST}/yoke_input.c sim_platform.c ${HPE_SCHEDULER}
     ${PACK_KEYBOARD} ${PACK_TEST}/keyboard_layout.c

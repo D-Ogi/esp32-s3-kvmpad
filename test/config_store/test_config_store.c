@@ -141,6 +141,42 @@ static void test_init_recovers_from_corruption(void)
     CHECK(memcmp(kvm_config_store_get(&again), &defaults, sizeof defaults) == 0);
 }
 
+static void test_mouse_preferences_survive_reload(void)
+{
+    fake_nvs_t flash;
+    fake_nvs_reset(&flash);
+    kvm_config_store_t store;
+    open_store(&store, &flash, 0);
+    CHECK_EQ(kvm_config_store_get(&store)->two_finger_scroll, 1);
+    CHECK_EQ(kvm_config_store_get(&store)->natural_scroll, 0);
+    CHECK_EQ(kvm_config_store_get(&store)->mouse_sensitivity, KVM_MOUSE_SENS_NORMAL);
+    CHECK_EQ(kvm_config_store_get(&store)->longpress_right_click, 1);
+
+    CHECK(kvm_config_store_set_field(&store, KVM_CFG_F_NATURAL_SCROLL, 1, 0));
+    CHECK(kvm_config_store_set_field(&store, KVM_CFG_F_TWO_FINGER_SCROLL, 0, 0));
+    CHECK(kvm_config_store_set_field(&store, KVM_CFG_F_MOUSE_SENSITIVITY, KVM_MOUSE_SENS_FAST, 0));
+    CHECK(kvm_config_store_set_field(&store, KVM_CFG_F_LONGPRESS_RIGHT_CLICK, 0, 0));
+    CHECK(!kvm_config_store_tick(&store, QUIET_MS - 1));
+    CHECK(kvm_config_store_tick(&store, QUIET_MS));
+    open_store(&store, &flash, 0);
+    CHECK_EQ(store.load_status, KVM_CONFIG_LOAD_OK);
+    CHECK_EQ(kvm_config_store_get(&store)->two_finger_scroll, 0);
+    CHECK_EQ(kvm_config_store_get(&store)->mouse_sensitivity, KVM_MOUSE_SENS_FAST);
+    CHECK_EQ(kvm_config_store_get(&store)->longpress_right_click, 0);
+    CHECK_EQ(kvm_config_store_get(&store)->natural_scroll, 1);
+
+    CHECK(kvm_config_store_set_field(&store, KVM_CFG_F_TWO_FINGER_SCROLL, 1, 0));
+    CHECK(kvm_config_store_set_field(&store, KVM_CFG_F_MOUSE_SENSITIVITY, KVM_MOUSE_SENS_SLOW, 0));
+    CHECK(kvm_config_store_tick(&store, QUIET_MS));
+    open_store(&store, &flash, 0);
+    CHECK_EQ(store.load_status, KVM_CONFIG_LOAD_OK);
+    CHECK_EQ(kvm_config_store_get(&store)->two_finger_scroll, 1);
+    CHECK_EQ(kvm_config_store_get(&store)->natural_scroll, 1);
+    CHECK_EQ(flash.writes, 2);
+    CHECK_EQ(kvm_config_store_get(&store)->mouse_sensitivity, KVM_MOUSE_SENS_SLOW);
+    CHECK_EQ(kvm_config_store_get(&store)->longpress_right_click, 0);
+}
+
 static void test_init_read_error_recovers(void)
 {
     fake_nvs_t f;
@@ -839,6 +875,7 @@ int main(void)
     printf("config_store store tests\n");
     RUN(test_init_first_boot);
     RUN(test_init_reads_back_record);
+    RUN(test_mouse_preferences_survive_reload);
     RUN(test_init_recovers_from_corruption);
     RUN(test_init_read_error_recovers);
     RUN(test_init_repaired_record_is_rewritten);

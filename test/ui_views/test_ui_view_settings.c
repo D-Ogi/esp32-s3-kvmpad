@@ -179,6 +179,9 @@ static ui_settings_view_t defaults(uint32_t seq)
     v.confirm_alt_f4 = false;                       // FR-734 default OFF
     v.keepawake_enabled = false;                    // FR-711 default OFF
     v.keepawake_interval_s = 30u;                   // ADR-020 default
+    v.two_finger_scroll = true;                     // FR-504 default
+    v.mouse_sensitivity = KVM_MOUSE_SENS_NORMAL;
+    v.longpress_right_click = true;
     v.brightness = 80u;                             // FR-505 default
     v.unicode_mode = UI_UNICODE_MODE_HOST_IME;
     (void)snprintf(v.host_layout, sizeof(v.host_layout), "us");
@@ -526,6 +529,131 @@ static void test_keepawake_interval(void)
     CHECK(lv_obj_has_state(ui_view_settings_interval_button(&s_set, false), LV_STATE_DISABLED));
     click_obj(ui_view_settings_interval_button(&s_set, false));
     CHECK_EQ(s_change_n, 2);
+    stop();
+}
+
+static void test_mouse_scrolling(void)
+{
+    CHECK(start());
+    CHECK(open_card());
+    click_obj(s_set.tab[UI_SETTINGS_SEC_INPUT]);
+    CHECK_EQ(ui_view_settings_section(&s_set), UI_SETTINGS_SEC_INPUT);
+    const ui_setting_id_t ids[] = {UI_SETTING_TWO_FINGER_SCROLL, UI_SETTING_NATURAL_SCROLL};
+    for (unsigned i = 0; i < 2; i++) {
+        lv_obj_t *button = ui_view_settings_toggle(&s_set, ids[i]);
+        CHECK(lv_obj_has_state(button, LV_STATE_DISABLED));
+        CHECK(contains(ui_view_settings_toggle_text(&s_set, ids[i]), "Unknown"));
+        click_obj(button);
+    }
+    CHECK_EQ(s_change_n, 0);
+
+    ui_settings_view_t v = defaults(1u);
+    for (unsigned pass = 0; pass < 2; pass++) {
+        ui_view_settings_set(&s_set, &v);
+        lv_test_wait(20);
+        for (unsigned i = 0; i < 2; i++) {
+            bool on = i == 0 ? v.two_finger_scroll : v.natural_scroll;
+            lv_obj_t *button = ui_view_settings_toggle(&s_set, ids[i]);
+            CHECK(lv_obj_is_visible(button));
+            CHECK(!lv_obj_has_state(button, LV_STATE_DISABLED));
+            CHECK_EQ(lv_obj_has_state(button, LV_STATE_CHECKED), on);
+            click_obj(button);
+            CHECK_EQ(s_change_n, (int)(pass * 2 + i + 1));
+            CHECK_EQ(s_changes[s_change_n - 1].id, ids[i]);
+            CHECK_EQ(s_changes[s_change_n - 1].value, !on);
+            CHECK_EQ(lv_obj_has_state(button, LV_STATE_CHECKED), on); // the domain has not published it yet
+            lv_area_t row, body, target, pane;
+            lv_obj_t *container = s_set.toggle[ids[i]].row;
+            lv_obj_get_coords(container, &row);
+            lv_obj_get_coords(lv_obj_get_child(container, 0), &body);
+            lv_obj_get_coords(button, &target);
+            lv_obj_get_coords(s_set.pane[UI_SETTINGS_SEC_INPUT], &pane);
+            CHECK(body.x1 >= row.x1 && body.x2 < target.x1 && body.y1 >= row.y1 && body.y2 <= row.y2);
+            CHECK(target.x1 >= pane.x1 && target.y1 >= pane.y1 && target.x2 <= pane.x2 && target.y2 <= pane.y2);
+            CHECK(lv_area_get_width(&target) >= UI_TOUCH_MIN && lv_area_get_height(&target) >= UI_TOUCH_MIN);
+        }
+        v.seq++;
+        v.two_finger_scroll = !v.two_finger_scroll;
+        v.natural_scroll = !v.natural_scroll;
+    }
+    CHECK(strcmp(ui_setting_key(ids[0]), "mouse.two_finger_scroll") == 0);
+    CHECK(strcmp(ui_setting_key(ids[1]), "mouse.natural_scroll") == 0);
+    // The existing keep-awake and idle interval controls remain reachable below the gesture settings.
+    click_obj(ui_view_settings_toggle(&s_set, UI_SETTING_KEEPAWAKE_ENABLED));
+    click_obj(s_set.interval_up);
+    CHECK_EQ(s_change_n, 6);
+    CHECK_EQ(s_changes[4].id, UI_SETTING_KEEPAWAKE_ENABLED);
+    CHECK_EQ(s_changes[5].id, UI_SETTING_KEEPAWAKE_INTERVAL_S);
+    stop();
+}
+
+static void test_pointer_settings(void)
+{
+    CHECK(start());
+    CHECK(open_card());
+    click_obj(s_set.tab[UI_SETTINGS_SEC_INPUT]);
+    lv_obj_t *hold = ui_view_settings_toggle(&s_set, UI_SETTING_LONGPRESS_RIGHT_CLICK);
+    CHECK(strcmp(ui_setting_key(UI_SETTING_MOUSE_SENSITIVITY), "mouse.sensitivity") == 0);
+    CHECK(strcmp(ui_setting_key(UI_SETTING_LONGPRESS_RIGHT_CLICK), "mouse.longpress_right_click") == 0);
+    CHECK(strcmp(lv_label_get_text(s_set.sensitivity_value), "Unknown") == 0);
+    CHECK(lv_obj_has_state(hold, LV_STATE_DISABLED));
+    click_obj(hold);
+    click_obj(s_set.sensitivity_up);
+    click_obj(s_set.sensitivity_down);
+    CHECK_EQ(s_change_n, 0);
+
+    ui_settings_view_t v = defaults(1u);
+    const char *const speeds[] = {"Slow", "Normal", "Fast"};
+    for (uint8_t speed = KVM_MOUSE_SENS_SLOW; speed <= KVM_MOUSE_SENS_FAST; speed++) {
+        v.mouse_sensitivity = speed;
+        v.longpress_right_click = speed != KVM_MOUSE_SENS_NORMAL;
+        v.seq++;
+        ui_view_settings_set(&s_set, &v);
+        CHECK(strcmp(lv_label_get_text(s_set.sensitivity_value), speeds[speed]) == 0);
+        CHECK_EQ(lv_obj_has_state(hold, LV_STATE_CHECKED), v.longpress_right_click);
+        for (unsigned direction = 0; direction < 2; direction++) {
+            lv_obj_t *step = direction ? s_set.sensitivity_up : s_set.sensitivity_down;
+            int next = (int)speed + (direction ? 1 : -1);
+            int before = s_change_n;
+            bool enabled = next >= KVM_MOUSE_SENS_SLOW && next <= KVM_MOUSE_SENS_FAST;
+            CHECK_EQ(lv_obj_has_state(step, LV_STATE_DISABLED), !enabled);
+            click_obj(step);
+            CHECK_EQ(s_change_n, before + enabled);
+            if (enabled) {
+                CHECK_EQ(s_changes[before].id, UI_SETTING_MOUSE_SENSITIVITY);
+                CHECK_EQ(s_changes[before].value, next);
+            }
+            CHECK(strcmp(lv_label_get_text(s_set.sensitivity_value), speeds[speed]) == 0);
+        }
+        int before = s_change_n;
+        click_obj(hold);
+        CHECK_EQ(s_change_n, before + 1);
+        CHECK_EQ(s_changes[before].id, UI_SETTING_LONGPRESS_RIGHT_CLICK);
+        CHECK_EQ(s_changes[before].value, !v.longpress_right_click);
+        CHECK_EQ(lv_obj_has_state(hold, LV_STATE_CHECKED), v.longpress_right_click);
+    }
+    v.mouse_sensitivity = UINT8_MAX;
+    ui_view_settings_set(&s_set, &v);
+    CHECK(strcmp(lv_label_get_text(s_set.sensitivity_value), "Unknown") == 0);
+    CHECK(lv_obj_has_state(s_set.sensitivity_down, LV_STATE_DISABLED));
+    CHECK(lv_obj_has_state(s_set.sensitivity_up, LV_STATE_DISABLED));
+
+    lv_obj_t *pane = s_set.pane[UI_SETTINGS_SEC_INPUT];
+    lv_obj_update_layout(pane);
+    CHECK(lv_obj_get_scroll_bottom(pane) <= 0); // all six rows fit on the board at once
+    for (uint32_t i = 0; i < lv_obj_get_child_count(pane); i++) {
+        lv_obj_t *row = lv_obj_get_child(pane, i);
+        if (lv_obj_get_child_count(row) == 0) continue; // host gesture note
+        lv_obj_t *copy = lv_obj_get_child(row, 0);
+        lv_obj_t *controls = lv_obj_get_child(row, 1);
+        lv_area_t r, c, b;
+        lv_obj_get_coords(row, &r);
+        lv_obj_get_coords(copy, &c);
+        lv_obj_get_coords(controls, &b);
+        CHECK(c.y1 >= r.y1 && c.y2 <= r.y2 && c.x2 < b.x1);
+        CHECK(b.x1 >= r.x1 && b.x2 <= r.x2 && b.y1 >= r.y1 && b.y2 <= r.y2);
+        CHECK(lv_area_get_width(&b) >= UI_TOUCH_MIN && lv_area_get_height(&b) >= UI_TOUCH_MIN);
+    }
     stop();
 }
 
@@ -1301,6 +1429,38 @@ static void test_without_a_sink_nothing_is_offered(void)
     s_sink_on = true;
 }
 
+static void test_diagnostics_overlay_setting(void)
+{
+    CHECK(start());
+    CHECK(open_card());
+    click_obj(s_set.tab[UI_SETTINGS_SEC_ABOUT]);
+    lv_obj_t *toggle = ui_view_settings_toggle(&s_set, UI_SETTING_DIAG_OVERLAY);
+    CHECK(toggle && lv_obj_is_visible(toggle));
+    CHECK(strcmp(ui_setting_key(UI_SETTING_DIAG_OVERLAY), "diag.overlay") == 0);
+    CHECK(lv_obj_has_state(toggle, LV_STATE_DISABLED));
+    CHECK(strcmp(ui_view_settings_toggle_text(&s_set, UI_SETTING_DIAG_OVERLAY), "Unknown") == 0);
+    click_obj(toggle);
+    CHECK_EQ(s_change_n, 0);
+
+    ui_settings_view_t v = defaults(1u);
+    for (unsigned i = 0; i < 2; i++) {
+        ui_view_settings_set(&s_set, &v);
+        CHECK(!lv_obj_has_state(toggle, LV_STATE_DISABLED));
+        CHECK_EQ(lv_obj_has_state(toggle, LV_STATE_CHECKED), v.diag_overlay);
+        click_obj(toggle);
+        CHECK_EQ(s_change_n, (int)i + 1);
+        CHECK_EQ(s_changes[i].id, UI_SETTING_DIAG_OVERLAY);
+        CHECK_EQ(s_changes[i].value, !v.diag_overlay);
+        CHECK(strcmp(ui_view_settings_toggle_text(&s_set, UI_SETTING_DIAG_OVERLAY),
+                     v.diag_overlay ? "On" : "Off") == 0);
+        v.diag_overlay = !v.diag_overlay;
+        v.seq++;
+    }
+    ui_view_settings_set(&s_set, &v);
+    CHECK(!lv_obj_has_state(toggle, LV_STATE_CHECKED));
+    stop();
+}
+
 /** FR-751 / TECH-084: About carries the Required Notice and the generated third-party text. */
 static void test_about_carries_the_required_notice(void)
 {
@@ -1613,6 +1773,8 @@ int main(void)
     RUN_MEM(test_relax_control_approval);
     RUN_MEM(test_paired_clients);
     RUN_MEM(test_keepawake_interval);
+    RUN_MEM(test_mouse_scrolling);
+    RUN_MEM(test_pointer_settings);
     RUN_MEM(test_appearance_palette);
     RUN_MEM(test_display_brightness);
     RUN_MEM(test_unicode_mode_stepper);
@@ -1630,6 +1792,7 @@ int main(void)
     RUN_MEM(test_pair_entry_point);
     RUN_MEM(test_without_a_sink_nothing_is_offered);
     RUN_MEM(test_about_carries_the_required_notice);
+    RUN_MEM(test_diagnostics_overlay_setting);
     RUN_MEM(test_navigation_and_close);
     RUN_MEM(test_geometry_of_every_section);
     RUN_MEM(test_lifecycle);

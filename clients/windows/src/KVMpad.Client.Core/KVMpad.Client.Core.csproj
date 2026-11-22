@@ -21,6 +21,7 @@
     <!-- The token-decryption layout and the base64url helper are internal because nothing outside the pairing
          run may call them; the tests still need to pin their behavior. -->
     <InternalsVisibleTo Include="KVMpad.Client.Core.Tests" />
+    <InternalsVisibleTo Include="KVMpad.Client.DialogTests" />
   </ItemGroup>
 
 </Project>

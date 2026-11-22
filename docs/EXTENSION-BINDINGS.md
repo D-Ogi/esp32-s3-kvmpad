@@ -45,10 +45,22 @@ Section 14.3 of extension specification v1.3.1 names these controls and events. 
 | --- | --- | --- |
 | TouchArea | `label` defaults to `Touch area`. Minimum 48 × 48 pixels. | A short tap emits `tap`. Moving at least eight pixels on either axis starts `drag` with local pixel coordinates. Holding still emits one `long_press` at the LVGL input threshold (400 ms by default). A drag or hold consumes the tap. Leaving the area cancels the gesture. |
 | Dial | `label` defaults to `Dial`. Integer `min` and `max` default to 0 and 100. Both fit in signed 16 bits and min is below max. Initial `value` defaults to min. Minimum 72 × 80 pixels. | Turn the 270° arc to emit `rotate` on a value change. The preview also supports arrow keys and the Home and End keys while the dial has keyboard focus. |
+| RateSlider | Empty properties. Minimum 48 × 96 pixels. The Studio palette starts at 64 × 160. | Touch the slider, then move up for `step_up` or down for `step_down`. Moving farther from the center repeats faster. Beyond either end, steps continue at the maximum rate, even if your finger drifts sideways. Return to center to pause or lift anywhere to stop. |
 | TabStrip | `tabs` holds two to four distinct captions, each 1–24 UTF-8 bytes. Defaults are `["Tab 1","Tab 2"]`. Zero-based `selected` defaults to 0. Allow at least 48 pixels per tab and 42 pixels in height. | Selecting a different tab emits `change`. Optional `pages` names one sibling Column, Row or Grid per tab. Only the selected page is visible. Each page belongs to one strip. A scene can contain up to 32 tab captions in total. |
 | StatusChip | `label` defaults to `Status`. Existing `text` takes precedence. Choose **Status chip role** in the Studio widget inspector or set `props.status` to `neutral` (default), `capability`, `permission`, `info`, `success`, `warning` or `error`. Each role has a distinct symbol, and its colors follow the device palette. | A text binding updates the label and retains the authored role. The Flight checklist example uses an `info` chip for both `Pending` and `Complete`. Telemetry text can also show `Stale` and `Unavailable`. |
 
 TouchArea, Dial and TabStrip accept local `state.set` actions. A literal follows the target state's usual type rules. An integer state can also receive the current dial value or selected tab index with `"value":{"event":"value"}`, or a drag coordinate with `"value":{"event":"x"}` or `"value":{"event":"y"}`. The target range must include every possible event value. A 200-pixel-wide TouchArea, for example, emits x values from 0 to 199. Control selections and gesture tracking reset when the profile opens.
+
+For a local setpoint, add a `RateSlider` in Studio and bind its two events to separate actions. The following entries in `bindings.json` adjust a declared integer state named `altitude` by 100 feet per step. In `ui.json`, give the slider the ID `wheel` and set `"events":{"step_up":"increase","step_down":"decrease"}`.
+
+```json
+[
+  {"id":"increase","trigger":"wheel.step_up","type":"state.adjust","capability":"ui.basic","args":{"name":"altitude","delta":100}},
+  {"id":"decrease","trigger":"wheel.step_down","type":"state.adjust","capability":"ui.basic","args":{"name":"altitude","delta":-100}}
+]
+```
+
+`state.adjust` reads the current local integer, adds a nonzero signed 32-bit `delta` and stops at the state's `min` or `max`. An omitted bound uses the corresponding signed 64-bit limit. Either direction may also invoke `state.set`. Both actions work offline and use the package's event budget. The sample opens in Extension Studio, displays the selected altitude and needs only `ui.basic`. It requires SDK and firmware support for `RateSlider`. [Altitude selector sample](../tools/kvmpack/samples/rate-slider)
 
 ```json
 {"id":"set_trim","type":"state.set","capability":"ui.basic","trigger":"trim.rotate",
@@ -93,11 +105,13 @@ Use `usb.mode = "monitor_controls"` for a package combining a USB desktop with l
 | `KeyboardSurface` | `hid.keyboard` | 440 × 176 |
 | `TouchpadSurface` | `hid.mouse` | 132 × 88 |
 
+To keep moving the pointer, slide your finger past an edge of the touchpad and hold it there. The pointer keeps moving toward that edge while your finger rests over the keyboard or monitor. Slide back onto the pad to resume ordinary pointer movement, or lift your finger to stop.
+
 Tap **Gestures** on the touchpad to open a side panel with instructions for moving, clicking, scrolling and dragging. With the USB monitor connected, **Left click**, **Right click** and **Middle click** click at the current pointer position and close the panel. Tap **Close** or anywhere outside the panel to return without clicking. The gesture guide is also available offline.
 
 Once Windows connects, tap **1:1** on the desktop to show each incoming USB pixel at its original size. Drag the picture to inspect areas outside the viewport. The separate touchpad continues to move the Windows pointer. Tap the picture to hide or show **Fit** and **Stop**. Switching pages keeps the zoom, the area you were viewing and the visibility of the controls. A larger viewport shows more of the desktop around that area, up to its edges. **Fit** restores the entire picture. A new session starts in Fit with visible controls.
 
-`KeyboardSurface` follows the device's configured host keyboard layout. **123** opens the number and symbol keys, including the extra physical keys on JIS and Brazilian ABNT2 keyboards. On layouts with input-method keys, **IME** switches the bottom row to conversion controls such as **Henkan** or **Han/Eng**. Tap **IME** again to return to the usual controls.
+`KeyboardSurface` embeds the system's compact keyboard. Its keycaps, palette and configured host layout come from KVMpad. The system Keyboard view also uses this surface when space is too narrow for its full rows. **123** opens the number and symbol keys, including the extra physical keys on JIS and Brazilian ABNT2 keyboards. On layouts with input-method keys, **IME** switches the bottom row to conversion controls such as **Henkan** or **Han/Eng**. Tap **IME** again to return to the usual controls.
 
 **Caps** sends the Caps Lock key. Its second line shows the host keyboard LED report. **Unknown** (shown as **?** on compact surfaces) means that the keyboard is offline or the current USB connection has yet to receive a report. Letter and symbol legends follow the selected Shift and AltGr layers.
 

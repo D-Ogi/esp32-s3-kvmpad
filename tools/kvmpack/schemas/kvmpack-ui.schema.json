@@ -81,6 +81,7 @@
             "TouchArea",
             "AxisPad",
             "Dial",
+            "RateSlider",
             "GaugeNeedle",
             "GaugeArc",
             "Horizon",
@@ -143,6 +144,14 @@
       },
       "then": {"properties": {"type": {"const": "Button"}}},
       "allOf": [
+        {
+          "if": {"properties": {"type": {"const": "RateSlider"}}},
+          "then": {"properties": {
+            "bounds": {"properties": {"w": {"minimum": 48}, "h": {"minimum": 96}}},
+            "props": {"maxProperties": 0}, "children": {"maxItems": 0},
+            "events": {"propertyNames": {"enum": ["step_up", "step_down"]}}
+          }}
+        },
         {
           "if": {"properties": {"type": {"enum": ["MonitorViewport", "KeyboardSurface", "TouchpadSurface"]}}},
           "then": {

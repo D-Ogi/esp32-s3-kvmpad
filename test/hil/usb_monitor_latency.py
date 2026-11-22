@@ -15,7 +15,7 @@ from threading import Timer
 import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from usb_monitor_pattern import panel_lines, save_result, verify_uart
+from usb_monitor_pattern import DesktopUnavailable, panel_lines, pattern_output, save_result, verify_uart
 
 
 class WindowsClock:
@@ -220,9 +220,7 @@ def confirm_initial(board):
 
 
 def run_steps(pattern, board, clock, steps, result, mode="640x480", receiver_stages=False):
-    for line in pattern.stdout:
-        if line.strip() == b"PATTERN_UNAVAILABLE input_desktop":
-            raise ValueError("The Windows session has no access to the active desktop")
+    for line in pattern_output(pattern):
         if line.strip() == f"PATTERN_READY {mode} RGBW".encode():
             break
         if line.startswith(b"PATTERN_READY "):
@@ -240,7 +238,7 @@ def run_steps(pattern, board, clock, steps, result, mode="640x480", receiver_sta
         requested = clock.now()
         pattern.stdin.write(b"NEXT\n")
         pattern.stdin.flush()
-        for line in pattern.stdout:
+        for line in pattern_output(pattern):
             if line.startswith(b"PATTERN_STEP "):
                 break
         else:
@@ -304,6 +302,10 @@ def main():
                     pattern.stdin.close()
                     if pattern.wait(timeout=5) != 0:
                         raise ValueError("Windows could not maintain the display target")
+                except (ValueError, OSError) as exc:
+                    if pattern.poll() == 3 and not isinstance(exc, DesktopUnavailable):
+                        raise DesktopUnavailable() from exc
+                    raise
                 finally:
                     watchdog.cancel()
                     if pattern.poll() is None:
@@ -312,7 +314,8 @@ def main():
         result["median_upper_ms"] = median(s["upper_ms"] for s in result["samples"])
         result["status"] = "PASS"
     except (KeyboardInterrupt, ImportError, OSError, ValueError, subprocess.TimeoutExpired) as exc:
-        result.update(status="FAIL", error=str(exc) or "Interrupted")
+        result.update(status="INCONCLUSIVE" if isinstance(exc, DesktopUnavailable) else "FAIL",
+                      error=str(exc) or "Interrupted")
         print(result["error"], file=sys.stderr)
     result["finished_utc"] = datetime.now(timezone.utc).isoformat()
     save_result(args.result, result)

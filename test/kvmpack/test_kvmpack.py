@@ -25,9 +25,42 @@ import card
 
 
 class PackTests(unittest.TestCase):
+    def test_rate_slider_contract(self):
+        files = pack.read_members(SDK / "samples/rate-slider")
+        self.archive.write_bytes(pack.build(files))
+        self.assertEqual(pack.read_members(self.archive), files)
+        for kind, field, value in [
+            ("action", "delta", 0), ("action", "delta", 1 << 31), ("action", "delta", True),
+            ("action", "name", "unknown"), ("widget", "props", {"value": 2}),
+            ("widget", "bounds", {"x": 0, "y": 0, "w": 47, "h": 96}),
+            ("widget", "bounds", {"x": 0, "y": 0, "w": 48, "h": 95}),
+            ("widget", "type", "Button"),
+        ]:
+            with self.subTest(field=field, value=value):
+                name = "bindings.json" if kind == "action" else "ui.json"
+                doc = json.loads(files[name])
+                node = doc["actions"][0]["args"] if kind == "action" else doc["root"]["children"][-1]
+                node[field] = value
+                with self.assertRaises(ValueError):
+                    pack.validate_scene({**files, name: json.dumps(doc).encode()})
+
+    @unittest.skipUnless(shutil.which("node"), "Node is required for preview interactions")
+    def test_rate_slider_preview(self):
+        files = pack.read_members(SDK / "samples/rate-slider")
+        preview = self.archive.with_suffix(".html")
+        self.addCleanup(preview.unlink, missing_ok=True)
+        preview.write_text(pack.preview_html(files), encoding="utf-8")
+        subprocess.run(["node", Path(__file__).with_name("rate_slider_preview.cjs"), preview], check=True)
+
     def test_usb_console_contract(self):
         files = pack.read_members(SDK.parents[1] / "extensions/usb-monitor-console")
         pack.validate_scene(files)
+        limited = json.loads(files["manifest.json"])
+        limited["limits"]["max_memory_kib"] = 80
+        candidate = {**files, "manifest.json": json.dumps(limited).encode()}
+        with self.assertRaisesRegex(pack.ProfileBudgetError, "KeyboardSurface"):
+            pack.validate_scene(candidate)
+        pack.validate_scene(candidate, editing=True)
         for cap in ("usb.monitor", "hid.keyboard", "hid.mouse"):
             for field in ("permissions", "required_permissions", "usb"):
                 with self.subTest(cap=cap, field=field):

@@ -10,6 +10,7 @@ idf_component_register(
     SRCS "src/ui_status_item.c"
          "src/ui_topbar.c"
          "src/ui_action_key.c"
+         "src/ui_rate_slider.c"
          "src/ui_segmented.c"
          "src/ui_modal.c"
          "src/ui_toast.c"

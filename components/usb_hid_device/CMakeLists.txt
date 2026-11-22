@@ -16,6 +16,20 @@ endif()
 if(CONFIG_KVM_USB_MONITOR_EVAL)
     idf_component_optional_requires(PRIVATE usb_monitor)
     target_sources(${COMPONENT_LIB} PRIVATE src/usb_monitor_port.c)
+    if(CONFIG_KVM_USB_SCREENSHOT)
+        idf_component_optional_requires(PRIVATE esp_blockdev screenshot_volume)
+        target_sources(${COMPONENT_LIB} PRIVATE src/usb_screenshot.c)
+        target_link_options(${COMPONENT_LIB} INTERFACE
+            "-Wl,--wrap=mscd_xfer_cb" "-Wl,--wrap=mscd_control_xfer_cb"
+            "-Wl,--wrap=msc_storage_mount_to_app" "-Wl,--wrap=msc_storage_mount_to_usb")
+    endif()
+    if(CONFIG_KVM_USB_GUD)
+        target_sources(${COMPONENT_LIB} PRIVATE src/usb_gud_port.c)
+        if(KVM_GUD_GUEST_CHECK)
+            target_sources(${COMPONENT_LIB} PRIVATE "${CMAKE_CURRENT_LIST_DIR}/../../test/usb_monitor/gud_guest/winusb_bridge.c")
+            target_compile_definitions(${COMPONENT_LIB} PRIVATE KVM_GUD_GUEST_CHECK=1)
+        endif()
+    endif()
     target_link_options(${COMPONENT_LIB} INTERFACE
         "-Wl,--wrap=tud_descriptor_device_cb"
         "-Wl,--wrap=tud_descriptor_configuration_cb"

@@ -326,7 +326,15 @@ demo.onclick = () => {
 function dispatch(id, event = {}) {
     const action = actions.get(id);
     if (!action) return;
-    if (action.type === "state.set") {
+    if (action.type === "state.adjust") {
+        const name = action.args.name;
+        const def = pack.bindings.state.find(s => s.id === name);
+        const next = state[name] + BigInt(action.args.delta);
+        const lo = BigInt(def.int_low), hi = BigInt(def.int_high);
+        state[name] = next < lo ? lo : next > hi ? hi : next;
+        statusLine.textContent = String(state[name]);
+        bind(name, state[name], statusLine.textContent);
+    } else if (action.type === "state.set") {
         const name = action.args.name;
         const arg = action.args.value;
         const value = arg && typeof arg === "object" ? event[arg.event] : arg;
@@ -445,6 +453,62 @@ function dial(node,el,label) {
     set(p.value ?? lo,false);
 }
 
+function rateSlider(node,el) {
+    const rail=document.createElement("span"), knob=document.createElement("span");
+    el.style.touchAction="none";
+    Object.assign(rail.style,{position:"relative",height:"72%",width:"12px",background:"var(--edge)",borderRadius:"8px"});
+    Object.assign(knob.style,{position:"absolute",height:"14px",width:"26px",left:"50%",top:"50%",
+        transform:"translate(-50%,-50%)",borderRadius:"8px",background:"var(--accent)"});
+    el.style.display="grid"; el.style.placeItems="center"; el.style.alignContent="normal";
+    el.style.padding="0"; el.replaceChildren(rail); rail.append(knob);
+    el.tabIndex=0; el.setAttribute("role","slider"); el.setAttribute("aria-label",node.id);
+    el.setAttribute("aria-orientation","vertical"); el.setAttribute("aria-valuemin","-100"); el.setAttribute("aria-valuemax","100");
+    let pointer=null, level=0, timer=null;
+    function fire() { dispatch(node.events?.[level>0 ? "step_up" : "step_down"]); }
+    function period() { return 480-Math.trunc((Math.abs(level)-12)*415/88); }
+    let last=0;
+    function repeat() {
+        timer=null;
+        if (!level || el.getBoundingClientRect().height===0) { cancel(); return; }
+        last=clock(); fire();
+        if (level) timer=setTimeout(repeat,period());
+    }
+    function update(value) {
+        if (Math.abs(value)<=12) value=0;
+        if (timer!==null) clearTimeout(timer);
+        timer=null;
+        const reverse=Math.sign(level)!==Math.sign(value);
+        level=value;
+        knob.style.top=(50-level/2)+"%"; el.setAttribute("aria-valuenow",String(level));
+        if (!level) return;
+        if (reverse || clock()-last>=period()) { last=clock(); fire(); }
+        if (level) timer=setTimeout(repeat,Math.max(1,period()-(clock()-last)));
+    }
+    function move(e) {
+        const b=el.getBoundingClientRect();
+        if (!b.height) { cancel(); return; }
+        const y=e.clientY-b.top;
+        update(Math.max(-100,Math.min(100,Math.trunc((.5-y/b.height)*200/.72))));
+    }
+    function cancel() { pointer=null; update(0); }
+    el.addEventListener("pointerdown",e => {
+        if (pointer!==null) return;
+        const b=el.getBoundingClientRect(), x=e.clientX-b.left, y=e.clientY-b.top;
+        if (x<0 || y<0 || x>=b.width || y>=b.height) return;
+        pointer=e.pointerId; el.setPointerCapture(pointer); move(e);
+    });
+    el.addEventListener("pointermove",e => { if (pointer===e.pointerId) move(e); });
+    for (const type of ["pointerup","pointercancel","lostpointercapture"])
+        el.addEventListener(type,e => { if (pointer===e.pointerId) cancel(); });
+    el.addEventListener("keydown",e => {
+        if (e.key==="ArrowUp" || e.key==="ArrowDown") {
+            e.preventDefault(); dispatch(node.events?.[e.key==="ArrowUp" ? "step_up" : "step_down"]);
+        }
+    });
+    cancel();
+    return cancel;
+}
+
 function tabs(node,el) {
     const p=node.props || {}, titles=p.tabs || ["Tab 1","Tab 2"];
     let selected=p.selected ?? 0;
@@ -464,7 +528,12 @@ function tabs(node,el) {
         buttons.forEach((button,i) => {
             button.setAttribute("aria-selected",String(selected===i));
             const page=widgets.get(p.pages?.[i]);
-            if (page) page.element.hidden=selected!==i;
+            if (page && page.element.hidden!==(selected!==i)) {
+                page.element.hidden=selected!==i;
+                if (page.element.hidden) for (const view of widgets.values()) {
+                    if (view.element.dataset.kind==="RateSlider" && page.element.contains(view.element)) view.cancel();
+                }
+            }
         });
     }
     return show;
@@ -777,7 +846,8 @@ function draw(node, parent) {
         } else if (node.type === "TouchArea") {
             label.textContent=p.label || "Touch area";
             view.cancel=touchArea(node,el);
-        } else if (node.type === "Dial") dial(node,el,label);
+        } else if (node.type === "RateSlider") view.cancel = rateSlider(node,el);
+        else if (node.type === "Dial") dial(node,el,label);
         else if (node.type === "TabStrip") view.show=tabs(node,el);
         else if (node.type === "ChartViewer") {
             const chart = chartViewer(el, p.charts);

@@ -25,7 +25,11 @@ extern "C" {
 #else
 #define KVM_HPE_FOUR           0
 #define KVM_HID_ITF_CONSUMER   2
+#if defined(CONFIG_TINYUSB_HID_COUNT) && CONFIG_TINYUSB_HID_COUNT == 2
+#define KVM_HID_ITF_COUNT      2
+#else
 #define KVM_HID_ITF_COUNT      3
+#endif
 #endif
 
 #define KVM_HID_PROTOCOL_BOOT   0   // HID 1.11 §7.2.6 SET_PROTOCOL wValue

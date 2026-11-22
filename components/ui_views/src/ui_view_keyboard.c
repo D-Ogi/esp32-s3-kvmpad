@@ -29,6 +29,7 @@
 #include "hid_keymap.h"
 #include "kvm_control_icons.h"
 #include "ui_overlay.h"
+#include "ui_keyboard_surface.h"
 #include "ui_view_mouse.h"
 #include "ui_view_shortcuts.h"
 #include "ui_theme.h"
@@ -370,6 +371,8 @@ static void strip_short_id(const kbd_layout_t *lay, char *out, size_t cap)
     out[n] = '\0';
 }
 
+static void apply_rows(ui_view_keyboard_t *k);
+
 static void apply_layout(ui_view_keyboard_t *k)
 {
     if (k->root == NULL) {
@@ -452,6 +455,7 @@ static void apply_layout(ui_view_keyboard_t *k)
         }
         lv_obj_set_hidden(k->hint, lay == NULL);
     }
+    apply_rows(k);
     k->c.relabels++;
 }
 
@@ -723,6 +727,7 @@ static void hybrid_mouse_edge(uint16_t ctrl, bool pressed, void *ctx)
 
 static void release_workspace(ui_view_keyboard_t *k)
 {
+    if (k->compact) ui_keyboard_surface_cancel(k->compact);
     release_held(k, true);
     for (size_t i = 0; i < 2; ++i) hybrid_mouse_edge(mouse_keys[i].control_id, false, k);
 }
@@ -755,6 +760,8 @@ static void refresh(ui_view_keyboard_t *k)
         return;
     }
     const bool host = host_mounted(k);
+    lv_obj_set_hidden(k->hybrid_scroll_hint, !k->two_finger_scroll ||
+                      ui_store_get(k->store, UI_SUBJ_MOUSE_BOOT_PROTOCOL) == 1);
     if (host != k->keys_enabled) {
         if (!host) {
             // The HOST is gone: the owed UP goes out now, as a forced release. Disabling the cap afterwards
@@ -837,6 +844,7 @@ static void refresh(ui_view_keyboard_t *k)
 
     // FR-206: the indicator is the HOST LED report, or the word "Unknown" - never a guess.
     const int32_t caps = ui_store_get(k->store, UI_SUBJ_CAPS_LED);
+    if (k->compact) ui_keyboard_surface_set_caps(k->compact, caps != UI_STORE_UNKNOWN, caps == 1);
     if (k->caps_sub != NULL) {
         lv_label_set_text_static(k->caps_sub, caps == UI_STORE_UNKNOWN ? "Unknown" : (caps == 1 ? "On" : "Off"));
     }
@@ -930,6 +938,7 @@ static void set_hangul(ui_view_keyboard_t *k, bool on, uint16_t ctrl)
     if (k->row_compose != NULL) {
         lv_obj_set_hidden(k->row_compose, !on);
     }
+    apply_rows(k);
     refresh(k);
 }
 
@@ -1490,7 +1499,61 @@ static void flick_event_cb(lv_event_t *e)
     }
 }
 
-/** Which rows show: the flick pad replaces the number, F and letter rows while it is on. */
+static bool compact_ready(void *ctx)
+{
+    ui_view_keyboard_t *k = ctx;
+    return host_mounted(k) && k->compact && lv_obj_is_visible(k->compact) &&
+           (!k->router || !ui_overlay_blocking(k->router));
+}
+
+static bool compact_edge(void *ctx, bool down, uint8_t usage)
+{
+    return submit(ctx, down ? UI_ACT_KEY_DOWN : UI_ACT_KEY_UP, UI_CTRL_KBD_BASE, usage);
+}
+
+static void compact_release(void *ctx)
+{
+    (void)submit(ctx, UI_ACT_TEXT_CANCEL, UI_CTRL_KBD_BASE, 0);
+}
+
+static bool fit_compact(ui_view_keyboard_t *k)
+{
+    int width = lv_obj_get_content_width(k->field);
+    int height = lv_obj_get_content_height(k->field) - lv_obj_get_height(k->row_util) -
+                 lv_obj_get_style_pad_row(k->field, LV_PART_MAIN);
+    // Fourteen full-width caps need at least 44 pixels each.
+    bool use = width >= 440 && width < 14 * 44 && height >= 176 &&
+               !k->fn_layer && !k->converting && !k->hangul;
+    const kbd_layout_t *layout = k->layout;
+    if (use && !layout) layout = kbd_layouts_find("us");
+    if (k->compact && (!use || layout != k->compact_layout ||
+                       width != k->compact_width || height != k->compact_height)) {
+        ui_keyboard_surface_cancel(k->compact);
+        lv_obj_delete(k->compact);
+        k->compact = NULL;
+    }
+    if (use && layout && !k->compact) {
+        ui_keyboard_surface_hooks_t hooks = {
+            .ready = compact_ready, .edge = compact_edge, .release_all = compact_release, .ctx = k
+        };
+        k->compact = ui_keyboard_surface_create(k->field, width, height, layout, &hooks);
+        if (k->compact) {
+            k->compact_width = width;
+            k->compact_height = height;
+            k->compact_layout = layout;
+            int32_t caps = ui_store_get(k->store, UI_SUBJ_CAPS_LED);
+            ui_keyboard_surface_set_caps(k->compact, caps != UI_STORE_UNKNOWN, caps == 1);
+        }
+    }
+    return k->compact != NULL;
+}
+
+static void field_resized(lv_event_t *event)
+{
+    apply_rows(lv_event_get_user_data(event));
+}
+
+/** The compact field and the flick pad each replace the physical keyboard rows. */
 static void apply_rows(ui_view_keyboard_t *k)
 {
     if (k->root == NULL) {
@@ -1498,11 +1561,13 @@ static void apply_rows(ui_view_keyboard_t *k)
     }
     const bool ja = k->converting && k->conv_layer == UI_KBD_LAYER_JA;
     const bool pad = ja && k->flick;
-    lv_obj_set_hidden(k->row_number, pad || k->fn_layer);
+    const bool compact = fit_compact(k);
+    lv_obj_set_hidden(k->row_bottom, compact);
+    lv_obj_set_hidden(k->row_number, pad || compact || k->fn_layer);
     lv_obj_set_hidden(k->row_fn, pad || !k->fn_layer);
-    lv_obj_set_hidden(k->row_top, pad);
-    lv_obj_set_hidden(k->row_mid, pad);
-    lv_obj_set_hidden(k->row_low, pad);
+    lv_obj_set_hidden(k->row_top, pad || compact);
+    lv_obj_set_hidden(k->row_mid, pad || compact);
+    lv_obj_set_hidden(k->row_low, pad || compact);
     lv_obj_set_hidden(k->flick_pad, !pad);
     lv_obj_set_hidden(k->flick_toggle, !ja);
     ui_action_key_set_label(k->flick_toggle, k->flick ? "QWERTY" : "Flick");
@@ -2834,6 +2899,7 @@ static bool make_hybrid_panel(ui_view_keyboard_t *k, lv_obj_t *root)
     lv_obj_t *title = lv_label_create(k->hybrid_pad);
     lv_obj_t *hint = lv_label_create(k->hybrid_pad);
     if (!icon || !title || !hint) return false;
+    k->hybrid_scroll_hint = hint;
     lv_image_set_src(icon, &kvm_icon_mouse);
     lv_image_set_inner_align(icon, LV_IMAGE_ALIGN_CENTER);
     lv_obj_set_size(icon, UI_TOUCH_MIN, UI_TOUCH_MIN);
@@ -3178,6 +3244,7 @@ static lv_obj_t *create_cb(void *ctx, lv_obj_t *slot)
     k->keys_enabled = true; // UiActionKey caps are created enabled; refresh() below reconciles it
     k->hint = hint;
     lv_obj_move_to_index(hint, -1); // after the caps of the utility row, which were created later
+    lv_obj_add_event_cb(field, field_resized, LV_EVENT_SIZE_CHANGED, k);
     apply_rows(k);
     apply_layout(k); // FR-742: draw the field for the layout Settings selected, if it already did
     k->held = UI_VIEW_KBD_NO_KEY;
@@ -3189,6 +3256,7 @@ static lv_obj_t *create_cb(void *ctx, lv_obj_t *slot)
     }
     restore_language(k);
     lv_subject_add_observer_obj(ui_store_subject(k->store, UI_SUBJ_HOST_USB), subject_cb, root, k);
+    lv_subject_add_observer_obj(ui_store_subject(k->store, UI_SUBJ_MOUSE_BOOT_PROTOCOL), subject_cb, root, k);
     lv_subject_add_observer_obj(ui_store_subject(k->store, UI_SUBJ_MODS_ARMED), subject_cb, root, k);
     lv_subject_add_observer_obj(ui_store_subject(k->store, UI_SUBJ_MODS_LOCKED), subject_cb, root, k);
     lv_subject_add_observer_obj(ui_store_subject(k->store, UI_SUBJ_CAPS_LED), subject_cb, root, k);
@@ -3263,7 +3331,9 @@ static void destroy_cb(void *ctx)
     k->lang_card = NULL; // the router's teardown calls lang_on_close(); nulling it here is safe either way
     memset(k->pick_btn, 0, sizeof(k->pick_btn));
     k->root = NULL;
+    k->compact = NULL;
     k->field = k->hybrid_pad = k->hybrid_panel = k->hybrid_tools = NULL;
+    k->hybrid_scroll_hint = NULL;
     k->workspace_button = k->window_shortcut = NULL;
     k->hybrid_rail = k->rail_body = k->rail_handle = NULL;
     memset(k->rail_nav, 0, sizeof(k->rail_nav));
@@ -3288,10 +3358,18 @@ static void destroy_cb(void *ctx)
     k->keys_enabled = false;
 }
 
+void ui_view_keyboard_set_scrolling(ui_view_keyboard_t *k, bool two_finger_scroll)
+{
+    if (k->two_finger_scroll == two_finger_scroll) return;
+    k->two_finger_scroll = two_finger_scroll;
+    refresh(k);
+}
+
 void ui_view_keyboard_init(ui_view_keyboard_t *k, ui_store_t *store, ui_actions_t *actions,
                            uint64_t (*now_us)(void))
 {
     memset(k, 0, sizeof(*k));
+    k->two_finger_scroll = true;
     k->store = store;
     k->actions = actions;
     k->now_us = now_us;

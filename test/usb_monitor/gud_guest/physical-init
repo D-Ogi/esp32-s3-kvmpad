@@ -1,0 +1,208 @@
+#!/bin/sh
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
+set -eu
+reject() { echo "GUD_REJECT $1"; exit 1; }
+
+# Validate all descriptors of the sole configuration, including descriptor order.
+check_layout() {
+    raw=$(od -An -tx1 -v "$1" | tr -d '[:space:]')
+    vendor="0904000001ff0000000705${3}02400000"
+    keyboard=09040100010301010009211101000122410007058203080001
+    mouse=090402000103010200092111010001224d0007058303080001
+    # The WinUSB passthrough fixture groups all three interfaces into one function.
+    # Accept that IAD only for this exact test identity, revision and configuration.
+    lab_device=12011002ef02014009120100030101020301
+    case "$raw" in
+        "$lab_device"*)
+            lab_config=0902530003010080fa080b0003ff000000
+            [ "$2" = 3 ] && [ "$3" = 01 ] &&
+                [ "$raw" = "$lab_device$lab_config$vendor$keyboard$mouse" ] || reject layout
+            echo 'GUD_PROFILE controls'
+            return ;;
+    esac
+    case "$2" in
+        1) count=01; length=19; interfaces=$vendor; profile=display ;;
+        3) count=03; length=4b; interfaces=$vendor$keyboard$mouse; profile=controls ;;
+        *) reject configuration ;;
+    esac
+    # Retain the independent manufacturer/product/serial/VID/PID and speed checks.
+    # bNumConfigurations=1, configuration value 1 and no configuration string.
+    printf '%s\n' "$raw" | grep -Eq "^1201[0-9a-f]{30}010902${length}00${count}0100[0-9a-f]{4}${interfaces}$" || reject layout
+    [ "$4" = 0 ] || [ "$profile" = controls ] || reject controls-required
+    echo "GUD_PROFILE $profile"
+}
+
+# The pinned x86_64 kernel prints input capability words most significant first.
+has_bit() {
+    bit=$2
+    [ -r "$1" ] || return 1
+    set -- $(cat "$1")
+    word=$(( $# - bit / 64 ))
+    [ "$word" -gt 0 ] || return 1
+    shift $(( word - 1 ))
+    [ $(( (0x${1} >> (bit % 64)) & 1 )) -eq 1 ]
+}
+
+check_hid() {
+    interface=$1
+    role=$2
+    for tick in $(seq 1 60); do
+        if [ "$(basename "$(readlink "$interface/driver")")" = usbhid ]; then
+            for hid in "$interface"/0003:*; do
+                [ "$(basename "$(readlink "$hid/driver")")" = hid-generic ] || continue
+                for event in "$hid"/input/input*/event*; do
+                    [ -f "$event/dev" ] && [ -c "/dev/input/$(basename "$event")" ] || continue
+                    caps=$(dirname "$event")/capabilities
+                    has_bit "$caps/ev" 1 || continue # EV_KEY
+                    if [ "$role" = keyboard ]; then
+                        has_bit "$caps/key" 30 && has_bit "$caps/key" 28 || continue # KEY_A and KEY_ENTER
+                    else
+                        has_bit "$caps/ev" 2 && has_bit "$caps/rel" 0 && has_bit "$caps/rel" 1 &&
+                            has_bit "$caps/key" 272 || continue # EV_REL, REL_X, REL_Y and BTN_LEFT
+                    fi
+                    checked_event=/dev/input/$(basename "$event")
+                    echo "GUD_HID $role interface=$(basename "$interface") usbhid hid-generic $(basename "$event")"
+                    return
+                done
+            done
+        fi
+        sleep 0.1
+    done
+    reject "$role-input"
+}
+
+# Read-only entry point for validating archived or synthetic descriptor bytes.
+if [ "${1:-}" = --check-layout ]; then
+    [ "$#" = 5 ] || exit 2
+    check_layout "$2" "$3" "$4" "$5"
+    exit 0
+fi
+if [ "${1:-}" = --check-input ]; then
+    [ "$#" = 3 ] && { [ "$3" = keyboard ] || [ "$3" = mouse ]; } || exit 2
+    check_hid "$2" "$3"
+    exit 0
+fi
+. /target
+# PID 1 powers off as soon as this script returns. Give emulated serial a chance
+# to deliver the final rejection/completion before QEMU closes its TCP chardev.
+trap 'sleep 1' EXIT
+# Only the verified interface may trigger a DRM bind or a modeset.
+D=
+for tick in $(seq 1 80); do
+    for path in /sys/bus/usb/devices/*; do
+        [ -f "$path/idVendor" ] || continue
+        [ "$(cat "$path/idVendor")" = "$VID" ] && [ "$(cat "$path/idProduct")" = "$PID" ] || continue
+        [ -z "$D" ] || reject ambiguous
+        D=$path
+    done
+    [ -z "$D" ] || break
+    sleep 0.1
+done
+[ -n "$D" ] || reject absent
+I=$D:1.0
+for tick in $(seq 1 50); do [ -f "$I/bNumEndpoints" ] && break; sleep 0.1; done
+[ "$(cat "$D/serial")" = "$SERIAL" ] || reject serial
+[ "$(cat "$D/product")" = 'KVMpad GUD' ] || reject product
+[ "$(cat "$D/speed")" = 12 ] || reject configuration
+[ "$(cat "$I/bInterfaceClass")" = ff ] && [ "$(cat "$I/bNumEndpoints")" = 01 ] || reject interface
+endpoint=01
+# FunctionFS maps its first bulk OUT onto ep2 on the pinned dummy controller.
+[ "$VIRTUAL" = 0 ] || endpoint=02
+count=$(cat "$D/bNumInterfaces")
+if [ "${REQUIRE_CONTROLS:-0}" = 1 ]; then
+    echo "GUD_DESCRIPTORS $(od -An -N128 -tx1 -v "$D/descriptors" | tr -d '[:space:]')"
+fi
+# Linux sysfs prints bNumInterfaces with a leading space on some kernels.
+check_layout "$D/descriptors" "$((count))" "$endpoint" "${REQUIRE_CONTROLS:-0}"
+if [ "${REQUIRE_CONTROLS:-0}" = 1 ]; then
+    check_hid "$D:1.1" keyboard
+    keyboard_event=$checked_event
+    check_hid "$D:1.2" mouse
+    mouse_event=$checked_event
+fi
+echo "GUD_TARGET $VID:$PID $SERIAL"
+modalias=$(cat "$I/modalias")
+patterns=$(modinfo -F alias gud) || reject module-aliases
+[ -n "$patterns" ] || reject module-aliases
+matched=none
+while IFS= read -r pattern; do
+    case "$modalias" in
+        $pattern) matched=$pattern; break ;;
+    esac
+done <<EOF
+$patterns
+EOF
+echo "GUD_MODALIAS $modalias match=$matched"
+if [ "$REQUIRE_AUTOBIND" = 1 ] && [ "$matched" = none ]; then
+    echo 'GUD_BIND none'
+    reject no-upstream-alias
+fi
+if [ "$REQUIRE_AUTOBIND" = 1 ]; then
+    if [ -d /sys/module/gud ]; then
+        echo 'GUD_LOAD preloaded'
+    else
+        modprobe "$modalias" || reject module-load
+        [ -d /sys/module/gud ] || reject module-load
+        echo 'GUD_LOAD modalias'
+    fi
+elif [ "$VIRTUAL" = 0 ]; then
+    insmod /mods/lz4_compress.ko
+    insmod /mods/gud.ko
+fi
+if [ "$matched" != none ]; then
+    for tick in $(seq 1 50); do [ -L "$I/driver" ] && break; sleep 0.1; done
+fi
+if [ -L "$I/driver" ]; then
+    [ "$(basename "$(readlink "$I/driver")")" = gud ] || reject driver
+    echo 'GUD_BIND upstream'
+elif [ "$REQUIRE_AUTOBIND" = 1 ]; then
+    echo 'GUD_BIND none'
+    reject upstream-unbound
+else
+    echo 'GUD_NEW_ID guest'
+    printf '%s %s ff\n' "$VID" "$PID" > /sys/bus/usb/drivers/gud/new_id
+    echo 'GUD_BIND runtime'
+fi
+for tick in $(seq 1 100); do
+    for card in "$I"/drm/card[0-9]*; do [ -f "$card/dev" ] && break; done
+    [ -f "$card/dev" ] && break
+    sleep 0.1
+done
+[ "$(basename "$(readlink "$I/driver")")" = gud ] && [ -f "$card/dev" ] || reject drm
+node=$(basename "$card")
+[ "$(cat "/sys/class/drm/$node-USB-1/status")" = connected ] || reject connector
+if [ "${CONSOLE_TEST:-0}" = 1 ]; then
+    target_path=$(readlink -f "$I")
+    fb=
+    for tick in $(seq 1 80); do
+        for path in /sys/class/graphics/fb[0-9]*; do
+            case "$(readlink -f "$path")" in
+                "$target_path"/*) fb=/dev/$(basename "$path"); break ;;
+            esac
+        done
+        [ -z "$fb" ] || break
+        sleep 0.1
+    done
+    [ -c "$fb" ] || reject target-framebuffer
+    if [ "${CHECK_INPUT_EVENTS:-0}" = 1 ]; then
+        set -- "$D:1.1"/0003:*/hidraw/hidraw*
+        [ "$#" = 1 ] && [ -f "$1/dev" ] || reject keyboard-hidraw
+        export PROBE_KEYBOARD_HIDRAW=/dev/$(basename "$1")
+        /fixture console-ack-input "$fb" "$keyboard_event" "$mouse_event" "$INPUT_TIMEOUT"
+    elif [ "$VIRTUAL" = 1 ]; then /fixture console-ack-virtual "$fb"; else /fixture console-ack "$fb"; fi
+    echo 'GUD_CONSOLE_COMPLETE'
+    exit 0
+elif [ "${MODESET_TEST:-0}" = 1 ]; then
+    if [ "$VIRTUAL" = 1 ]; then /fixture draw-modes-ack-virtual "/dev/dri/$node"; else /fixture draw-modes-ack "/dev/dri/$node"; fi
+elif [ "${BLANK_WAKE:-0}" = 1 ]; then
+    /fixture draw-blank "/dev/dri/$node"
+elif [ "${MOTION:-0}" = 1 ]; then
+    /fixture draw-motion "/dev/dri/$node"
+elif [ "$VIRTUAL" = 1 ]; then
+    /fixture draw-ack-virtual "/dev/dri/$node"
+else
+    /fixture draw-ack "/dev/dri/$node"
+fi
+echo 'GUD_DRAW_COMPLETE'

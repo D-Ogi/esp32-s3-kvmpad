@@ -65,6 +65,15 @@ typedef struct {
 esp_err_t usb_hid_device_start(void);
 
 #if CONFIG_KVM_USB_MONITOR_EVAL
+#if CONFIG_KVM_USB_SCREENSHOT
+#include <stdio.h>
+/** Serialized card worker only. The regular binary update stream remains
+ * caller-owned. After a successful begin it is exclusive to USB until end
+ * returns, including when end reports a storage or reconnect error. */
+esp_err_t usb_hid_device_screenshot_begin(FILE *image);
+esp_err_t usb_hid_device_screenshot_end(void);
+bool usb_hid_device_screenshot_present(bool (*card_present)(void));
+#endif
 const char *usb_hid_device_serial(void);
 /** Local monitor panel only. Re-enumerate the native port after a disconnect interval.
  * The most recent selection wins, including while a previous switch is in flight. */
@@ -73,6 +82,9 @@ esp_err_t usb_hid_device_set_monitor_mode(bool active, bool native);
 /** Local extension only. Select the display with boot keyboard and mouse, or return to normal HID. */
 esp_err_t usb_hid_device_set_monitor_controls(bool active, bool native);
 esp_err_t usb_hid_device_set_monitor_windows(bool controls);
+#if CONFIG_KVM_USB_GUD
+esp_err_t usb_hid_device_set_gud(bool active);
+#endif
 /** True while the host has configured either display profile and its bus is awake. */
 bool usb_hid_device_monitor_mounted(void);
 /** Display link state: detached, mounted or suspended. */
@@ -95,6 +107,9 @@ typedef struct {
     void (*pump)(void *ctx);
     void (*on_state)(void *ctx, kvm_usb_state_t state, uint32_t usb_epoch);
     void (*on_complete)(void *ctx, uint8_t itf);
+    // Unnumbered keyboard, mouse and Consumer Control input state for EP0.
+    size_t (*get_input_report)(void *ctx, uint8_t itf, uint8_t protocol, uint8_t report[8]);
+    void (*repeat_keyboard)(void *ctx);
     void (*on_ptp_route)(void *ctx, bool native, bool surface_enabled, uint32_t generation);
     uint8_t (*get_profile)(void *ctx);
     bool (*on_studio_output)(void *ctx, const hpe_packet_t *packet);

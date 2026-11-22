@@ -227,12 +227,20 @@ void kvm_rp_send_hello_ack(kvm_rp_t *rp, kvm_rp_session_t *s, uint64_t reply_to)
     kvm_rp_wb_lit(&w, ",\"payload\":{\"protocol\":1,\"device_id\":");
     kvm_rp_wb_jstr(&w, ascii_id_safe(st.device_id) ? st.device_id : "kvm");
     kvm_rp_wb_lit(&w, ",\"capabilities\":[\"keyboard\",\"mouse\",\"shortcuts\"");
+    bool ssh = rp->hooks.ssh_bind_key && s->authenticated && s->operator_role &&
+               st.ssh_host_key_sha256[64] == '\0' && strspn(st.ssh_host_key_sha256, "0123456789abcdefABCDEF") == 64;
+    if (ssh)
+        kvm_rp_wb_lit(&w, ",\"ssh_key_binding\"");
     if (rp->hooks.display_profile && s->authenticated && s->operator_role && st.usb_serial[12]=='\0' &&
         strspn(st.usb_serial, "0123456789ABCDEF")==12) {
         kvm_rp_wb_lit(&w, ",\"usb_display_profile\"],\"usb_serial\":");
         kvm_rp_wb_jstr(&w, st.usb_serial);
     } else {
         kvm_rp_wb_lit(&w, "]");
+    }
+    if (ssh) {
+        kvm_rp_wb_lit(&w, ",\"ssh_host_key_sha256\":");
+        kvm_rp_wb_jstr(&w, st.ssh_host_key_sha256);
     }
     kvm_rp_wb_lit(&w, ",\"host\":");
     kvm_rp_wb_jstr(&w, host_state_name(rp->host_usb));

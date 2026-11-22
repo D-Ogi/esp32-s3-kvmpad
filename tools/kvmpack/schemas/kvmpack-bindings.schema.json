@@ -69,11 +69,19 @@
         "required": ["id", "trigger", "type", "capability", "args"],
         "properties": {
           "id": {"$ref": "#/$defs/name"},
-          "trigger": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,47}\\.(press|release|change|drag|rotate|tap|long_press)$"},
-          "type": {"enum": ["hid.key_tap", "hid.pointer_button", "hid.joystick.set_axes", "hid.radial.rotate", "host.command", "ui.navigate", "state.set", "stream.start", "stream.stop"]},
+          "trigger": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,47}\\.(press|release|change|drag|rotate|tap|long_press|step_up|step_down)$"},
+          "type": {"enum": ["hid.key_tap", "hid.pointer_button", "hid.joystick.set_axes", "hid.radial.rotate", "host.command", "ui.navigate", "state.set", "state.adjust", "stream.start", "stream.stop"]},
           "capability": {"$ref": "#/$defs/permission"},
           "args": {"type": "object", "maxProperties": 16}
-        }
+        },
+        "if": {"properties": {"type": {"const": "state.adjust"}}},
+        "then": {"properties": {
+          "capability": {"const": "ui.basic"},
+          "trigger": {"pattern": "\\.(step_up|step_down)$"},
+          "args": {"required": ["name", "delta"], "additionalProperties": false,
+                   "properties": {"name": {"$ref": "#/$defs/name"},
+                                  "delta": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647, "not": {"const": 0}}}}
+        }}
       }
     }
   },

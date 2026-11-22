@@ -58,6 +58,11 @@ bool usb_monitor_view_has_link(bool (*set_monitor)(bool));
 bool usb_monitor_view_change_mode(bool native, bool (*set_profile)(bool native));
 void usb_monitor_view_close(void);
 bool usb_monitor_view_active(void);
+#ifdef KVM_GUD_PANEL
+bool usb_monitor_gud_open(void (*home)(void), bool (*select)(bool));
+void usb_monitor_gud_close(void);
+bool usb_monitor_gud_active(void);
+#endif
 #ifdef KVM_USB_MOTION_CHECK
 void usb_monitor_view_merge_test_regions(bool merge);
 void usb_monitor_view_test_wait_period(bool wait);

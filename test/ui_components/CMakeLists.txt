@@ -55,6 +55,7 @@ set(UI_SOURCES
     ${UI_COMP}/src/ui_status_item.c
     ${UI_COMP}/src/ui_topbar.c
     ${UI_COMP}/src/ui_action_key.c
+    ${UI_COMP}/src/ui_rate_slider.c
     ${UI_COMP}/src/ui_segmented.c
     ${UI_COMP}/src/ui_modal.c
     ${UI_COMP}/src/ui_toast.c)

@@ -1,73 +1,45 @@
 # KVMpad repository layout
 
-Directory map consistent with specification v1.1.0 (`docs/spec/02` §3.1 + `docs/spec/07` §2).
-Every component directory has a `README.md` with its role, task, spec references and rules.
+| Directory | Contents |
+|---|---|
+| `main/` | Firmware entry point and integration between board, UI, input, display and network components. |
+| `components/` | Board drivers, input handling, UI, USB and network services. |
+| `clients/windows/` | .NET Windows CLIENT, its native pairing library and desktop tests. |
+| `hosts/windows/` | Windows HOST software. |
+| `extensions/` | Extension packs, including the USB monitor console and pilot panel. |
+| `tools/` | Extension SDK and Studio, generators for keyboard layouts, fonts and IME data, and repository checks. |
+| `simulator/` | Desktop LVGL runner, scenarios and reference screenshots. |
+| `test/` | Host unit tests, fuzz targets, hardware probes and component integration tests. |
+| `docs/` | Hardware compatibility, firmware update instructions and extension bindings. |
+| `hardware/` | Board identification and measured Flash and PSRAM sizes. |
+| `reference/` | HTML mockup and screenshots used as UI references. |
 
-```text
-esp32-s3-kvmpad/
-├── AGENTS.md, AGENTS-UI.md   # work contract (part of the spec package, not modified)
-├── CONTRIBUTING.md           # rules for working in the repo: paths, ADRs, PRs, license, tools
-├── LICENSE.md                # PolyForm Noncommercial 1.0.0 (+ Required Notice)
-├── THIRD_PARTY_NOTICES.md    # vendored third-party paths + licenses (read by the header checker, rendered in About)
-├── docs/
-│   ├── spec/                 # specification v1.1.0 01–07 + README + MANIFEST (frozen, SHA256)
-│   ├── ADR/                  # new ADRs (ADR-014+); ADR-001..013 are in spec/06
-│   ├── EXTENSIONS.md         # index of requirements added after spec v1.1.0 (ADR-017+)
-│   ├── ROADMAP.md            # milestones, gates, ADR-added tasks, current status (05 §2 + ADRs)
-│   ├── prior-art/            # analyses of other people's projects (what we take, what we do not)
-│   └── REPO-LAYOUT.md        # this file
-├── reference/                # HTML mockup + PNG — UX reference, not firmware code
-├── hardware/boards.md        # board unit record (ADR-009: Flash/PSRAM — measured)
-├── main/                     # app_main.c                                    [TASK-000]
-├── components/
-│   ├── board_hal/            # I²C, CH422G, USB_SEL, LCD init, backlight     [TASK-010/020]
-│   ├── touch_input/          # GT911 0..5 points, track_id — the ONLY reader [TASK-030]
-│   ├── gesture_engine/       # pure gesture FSM, host-testable               [TASK-040]
-│   ├── hid_core/             # ledger, InputArbiter, RELEASE_ALL, scheduler  [TASK-050]
-│   ├── usb_hid_device/       # TinyUSB: boot kbd + boot mouse, USB states    [TASK-050]
-│   ├── ui_platform/          # LVGL ↔ esp_lcd adapter, LVGL owner            [TASK-060A]
-│   ├── ui_core/              # store/mailbox, router, overlay, actions       [TASK-060B/C]
-│   ├── ui_theme/             # tokens, styles, fonts                         [TASK-060D]
-│   ├── ui_components/        # status item, topbar, action key, modal, toast [TASK-060D]
-│   ├── ui_touch_bridge/      # 1 GT911 sample → LVGL indev + GestureFSM      [TASK-060E]
-│   ├── ui_views/             # Mouse / Keyboard / Shortcuts / Settings       [TASK-070A–C]
-│   ├── kbd_layouts/          # generated layout tables, Unicode delivery     [TASK-071]
-│   ├── ime_engine/           # JP/zh/ko composition (ADR-024)                [TASK-072]
-│   ├── config_store/         # NVS schema + migrations                       [TASK-090]
-│   ├── net_status/           # Wi-Fi STA link owner + network status (ADR-015) [TASK-080]
-│   ├── remote_protocol/      # CLIENT v1: parser, validation, sessions       [TASK-100] 🔒
-│   ├── secure_remote/        # TLS/WSS, pairing, leases                      [TASK-100] 🔒
-│   ├── update_manager/       # signed OTA, rollback                          [TASK-110]
-│   └── diagnostics/          # metrics, counters, ring log                   [TASK-120]
-├── test/
-│   ├── host_unit/  fuzz/  hil/          # L1 / L2 / L3–L4 (spec 04)
-│   ├── ui_store/  ui_nav/  ui_touch/  ui_components/ # UI Core tests (AGENTS-UI)
-│   ├── net_status/  config_store/      # TASK-080 / TASK-090 host tests
-│   ├── ui_views/                        # TASK-070A-C views and the product shell (ui_app)
-│   ├── remote_protocol/  pairing/       # TASK-100 protocol layer and pairing core
-│   ├── update_manager/                  # TASK-110 OTA state machine
-│   └── reports/                          # test reports (04 §12 format)
-├── simulator/{lvgl_sdl,fixtures,golden,tools}/ # LVGL 9.6 headless 1024×600, goldens [TASK-070D]
-├── clients/windows/          # native Windows CLIENT, .NET 9 (ADR-021, ADR-028)      [TASK-105]
-└── tools/                    # verify_spec_manifest.py, check_license_headers.py, kbd_layouts/ generator, flash, statistics
-```
+## Firmware components
 
-🔒 = blocked until a working `release_all`/epoch + HIL USB (05 §4). ADR-002 resolved by ADR-021 (native Windows CLIENT).
+| Component | Responsibility |
+|---|---|
+| `board_hal`, `touch_input` | Board I²C, display, backlight and USB selection. The touch driver reads contacts and tracking IDs from the GT911. |
+| `gesture_engine`, `ui_touch_bridge` | Recognize gestures and route touch samples to LVGL or the gesture state machine. |
+| `hid_core`, `usb_hid_device` | Track held keys and buttons, arbitrate input sources, schedule reports and expose USB HID interfaces. |
+| `ui_platform`, `ui_core` | Own the LVGL display, presentation state, navigation, overlays and action delivery. |
+| `ui_theme`, `ui_components`, `ui_views` | Supply fonts, styles, reusable controls and the product screens. |
+| `kbd_layouts`, `ime_engine` | Translate host layouts and handle on-device input composition. |
+| `config_store`, `net_status` | Persist settings, handle migrations and publish Wi-Fi station status. |
+| `remote_protocol`, `secure_remote` | Validate CLIENT messages and manage pairing, sessions and control leases. |
+| `update_manager` | Verify signed updates and handle rollback. |
+| `usb_monitor`, `live_view`, `pack_runtime` | Support USB display sessions, streamed views and extension packages. |
+
+## Build files
+
+The root `CMakeLists.txt` configures the ESP-IDF firmware project. The application declares its sources and component dependencies in `main/CMakeLists.txt`. Use `sdkconfig.defaults` for defaults, `dependencies.lock` for pinned dependencies and `partitions.csv` for the flash layout, including the OTA slots and the IME data partition.
+
+The Windows CLIENT uses a separate .NET solution. The SDL simulator and host tests have their own build instructions. [Windows CLIENT](../clients/windows/README.md) · [Simulator](../simulator/README.md) · [Tests](../test/README.md)
 
 ## Repository boundary
 
-The repository contains **only what is published**. The workspace directory **above** the repo (outside git) holds:
+Keep tools, virtual environments, test output, raw measurement logs and working notes outside the repository. The board record describes the measurements that determine the firmware configuration. [Board record](../hardware/boards.md)
 
-| Directory (relative to the repo) | Contents |
-|---|---|
-| `../.tools/` | tool venvs (esptool etc.) — we do not install anything inside the repo |
-| `../spec-source/` | the original ZIP of specification v1.1.0 |
-| `../evidence/` | raw measurement and test logs; the key lines + the file's SHA256 stay in the repo |
-| `../notes/` | working notes, settings of the project page on GitHub |
-
-Rule: the product and its documentation → the repo; logs, dumps, venvs, notes → next to the repo.
-
-## Dependency rules (07 §2, 02 §3)
+## Dependency rules
 
 ```text
 ui_views ──► ui_components ──► ui_theme
@@ -76,43 +48,8 @@ touch_input ──► ui_touch_bridge ──► { LVGL indev , gesture_engine �
 remote_protocol ◄── secure_remote          (remote → hid_core only via InputArbiter)
 ```
 
-- `lvgl.h` is allowed only in `ui_*`. The domain core (`hid_core`, `gesture_engine`, …) does not import it.
-- `tusb.h` / `tinyusb.h` is allowed only in `usb_hid_device`.
-- `gesture_engine` and the core of `hid_core` — pure C, testable on the host without ESP-IDF.
+- The domain cores, including `hid_core` and `gesture_engine`, are independent of LVGL.
+- `usb_hid_device` owns the TinyUSB device interfaces.
+- The gesture engine and HID core are pure C and can be tested on the host without ESP-IDF.
 
-## Why the spec is split across three places
-
-The original package had a flat structure. The target locations were taken from the specification:
-documents → `docs/spec/` (02 §3.1: `docs/`), `AGENTS*.md` → root (the "read this first" requirement),
-mockup → `reference/` (02 §3.1). The repository holds the English edition of the package; the original ZIP stays in the
-workspace (`../spec-source/`, outside git). The package is frozen — its SHA256 manifest is verified like this:
-
-```sh
-python -I tools/verify_spec_manifest.py
-```
-
-Read references in the spec of the form `02-TECHNICAL-SPECIFICATION.md` as `docs/spec/02-…`.
-The name "KVM Essential" in the spec = KVMpad; the `kvm-essential/` tree in 02 §3.1 = this repo.
-
-## Deliberately NOT created yet
-
-| Item | When | Why not now |
-|---|---|---|
-| `CMakeLists.txt`, `main/CMakeLists.txt`, `sdkconfig.defaults`, `idf_component.yml`, `dependencies.lock` | TASK-000 | TECH-002: they arise from a **working** `idf.py build` (ESP-IDF v6.1), not "from memory" |
-| `partitions.csv` | TASK-000 | ADR-009 resolved: 16 MiB Flash, 8 MiB PSRAM (`hardware/boards.md`); a table with ≥ 2 OTA slots plus a read-only `ime_data` partition for IME dictionaries (ADR-024 TECH-081) is created once the real binary size is known |
-| `.github/workflows/` | TASK-000 | CI requires a settled toolchain |
-| `clients/windows/` | TASK-105 | created 2026-11-02 (ADR-028 ACCEPTED); build output stays in its gitignored `bin/`/`obj/`, the NuGet cache and `DOTNET_CLI_HOME` live outside the repository (`../.tools/`) |
-
-**Will never be created (ADR-014):** `components/ui_generated/`, `design/` — EEZ Studio, LVGL Pro Editor
-and other UI generators are out; TASK-061 cancelled. UI = LVGL 9.6 + native Observer + KVMpad UI Core, by hand in C.
-
-## Gaps in the specification (to be resolved by an ADR, we do not guess)
-
-1. **TASK-080 (Wi-Fi STA/provisioning, status service, USB state publisher)** — the 02 §3.1 tree does not indicate a component.
-   Candidates: a new `net_status/` or `diagnostics/` + `usb_hid_device/`. → ADR-015 (ACCEPTED 2026-11-02: a new
-   `components/net_status/`; the USB state stays in `usb_hid_device/`).
-2. **`kbd_map` / `kbd_fsm` (TASK-070)** — `hid_core` has a "key map", but the place for the modifier FSM (one-shot/locked, Fn) is not specified.
-   Recommendation: the FSM in `hid_core` (the source of truth for the DOWN state), the view only a projection. → ADR-016
-   (ACCEPTED 2026-11-02, implemented as `components/hid_core/src/kbd_fsm.c`).
-3. **`ui_bindings`** — listed in 07 §8, absent from the 07 §2 tree; TASK-061 cancelled (ADR-014), so it will not resolve this.
-   Recommendation: `ui_core/ui_bindings.c` (subject ↔ snapshot), resolved by TASK-060B.
+The `net_status` component owns Wi-Fi station status. USB state belongs to `usb_hid_device`. The keyboard modifier state machine lives in `components/hid_core/src/kbd_fsm.c`. The UI reads its state and submits actions through `ui_core`.

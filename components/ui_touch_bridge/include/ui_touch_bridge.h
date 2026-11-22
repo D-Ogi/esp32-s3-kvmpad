@@ -33,6 +33,8 @@ typedef struct {
     bool (*local_contacts)(unsigned count, const kvm_touch_point_t points[2], uint64_t timestamp_us);
     // Opt in to completed presses between LVGL polls. Called with the currently hit widget.
     bool (*buffered_target)(struct _lv_obj_t *target);
+    // Sampled at the first contact of each software mouse gesture.
+    void (*apply_mouse_preferences)(kvm_gesture_cfg_t *gesture);
 } ui_touch_bridge_cfg_t;
 
 typedef struct {

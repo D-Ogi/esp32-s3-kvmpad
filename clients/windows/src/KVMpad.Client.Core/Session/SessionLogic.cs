@@ -113,9 +113,34 @@ public sealed class SessionLogic
         public ulong Sequence;
         public TaskCompletionSource Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
-    private readonly Dictionary<bool, PendingCommand> _commands = new(); // independent HOST and display requests
+    private enum CommandGroup { Host, Display, Ssh }
+    private readonly Dictionary<CommandGroup, PendingCommand> _commands = new();
+
+    private sealed record SshKeyFingerprint(string Hex) : IClientPayload
+    {
+        public void WriteTo(Utf8JsonWriter writer)
+        {
+            writer.WriteStartObject();
+            writer.WriteString("sha256", Hex);
+            writer.WriteEndObject();
+        }
+    }
+
+    /// <summary>Bind an OpenSSH public-key blob's SHA-256 digest for this paired TLS session.</summary>
+    public Task BindSshKeyAsync(ReadOnlyMemory<byte> fingerprint, CancellationToken cancellationToken)
+    {
+        if (fingerprint.Length != 32) throw new ArgumentException("Expected a SHA-256 fingerprint.", nameof(fingerprint));
+        lock (_gate)
+        {
+            if (!HasAuthenticatedSession || SshHostKeySha256 == null)
+                throw new InvalidOperationException("The paired device does not offer SSH key binding.");
+            return RequestAsync(new("ssh.key.bind", "ssh.key.bound", new SshKeyFingerprint(Convert.ToHexString(fingerprint.Span))),
+                                CommandGroup.Ssh, cancellationToken);
+        }
+    }
 
     public string? DisplaySerial { get; private set; }
+    public string? SshHostKeySha256 { get; private set; }
 
     public Task RequestDisplayProfileAsync(string serial, bool native, CancellationToken cancellationToken)
     {
@@ -125,7 +150,7 @@ public sealed class SessionLogic
                 !serial.All(char.IsAsciiHexDigit) || serial != DisplaySerial)
                 throw new InvalidOperationException("Connect to this USB KVMpad and release remote input control first.");
             return RequestAsync(new("display.profile.request", "display.profile.queued", new DisplayProfile(serial, native)),
-                                display: true, cancellationToken);
+                                CommandGroup.Display, cancellationToken);
         }
     }
 
@@ -133,28 +158,28 @@ public sealed class SessionLogic
     {
         if (port is < 1 or > 65535 || leaf.Length is < 1 or > 1024)
             throw new ArgumentException("Invalid HOST listener information.");
-        return RequestAsync(new("host.attach", "host.attached", new HostOffer(port, Convert.ToBase64String(leaf))), false, cancellationToken);
+        return RequestAsync(new("host.attach", "host.attached", new HostOffer(port, Convert.ToBase64String(leaf))), CommandGroup.Host, cancellationToken);
     }
 
     public Task DetachHostAsync(CancellationToken cancellationToken)
-        => RequestAsync(new("host.detach", "host.detached", new EmptyPayload()), false, cancellationToken);
+        => RequestAsync(new("host.detach", "host.detached", new EmptyPayload()), CommandGroup.Host, cancellationToken);
 
-    private async Task RequestAsync(PendingCommand command, bool display, CancellationToken cancellationToken)
+    private async Task RequestAsync(PendingCommand command, CommandGroup group, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         lock (_gate)
         {
             if (!HasAuthenticatedSession)
                 throw new InvalidOperationException("Connect to the paired device first.");
-            if (!_commands.TryAdd(display, command))
-                throw new InvalidOperationException(display ? "A display change is already pending." : "A HOST request is already pending.");
+            if (!_commands.TryAdd(group, command))
+                throw new InvalidOperationException($"A {group} request is already pending.");
         }
         try { await command.Result.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false); }
         finally
         {
             lock (_gate)
             {
-                if (ReferenceEquals(_commands.GetValueOrDefault(display), command)) _commands.Remove(display);
+                if (ReferenceEquals(_commands.GetValueOrDefault(group), command)) _commands.Remove(group);
             }
         }
     }
@@ -283,6 +308,10 @@ public sealed class SessionLogic
                     SessionId = message.SessionId;
                     DeviceId = message.PayloadString("device_id");
                     DeviceCapabilities = ReadCapabilities(message);
+                    var sshPin = message.PayloadString("ssh_host_key_sha256");
+                    SshHostKeySha256 = DeviceCapabilities.Contains("ssh_key_binding") &&
+                        sshPin is { Length: 64 } && sshPin.All(char.IsAsciiHexDigit) && !sshPin.All(c => c == '0')
+                        ? sshPin.ToUpperInvariant() : null;
                     DisplaySerial = DeviceCapabilities.Contains("usb_display_profile") ? message.PayloadString("usb_serial") : null;
                     byte[] statusRequest = Encode(MessageTypes.StatusGet, null, new EmptyPayload());
                     SetState(ClientSessionState.Connected);
@@ -326,20 +355,23 @@ public sealed class SessionLogic
                 case "host.attached":
                 case "host.detached":
                 case "display.profile.queued":
-                    if (_commands.TryGetValue(message.Type == "display.profile.queued", out var cmd) &&
-                        cmd.Sequence != 0 && message.SessionId == SessionId && cmd.Reply == message.Type &&
-                        message.PayloadInt64("ack_seq") == (long)cmd.Sequence &&
-                        (message.ReplyToSeq == null || message.ReplyToSeq == cmd.Sequence))
-                        cmd.Result.TrySetResult();
+                case "ssh.key.bound":
+                    foreach (var cmd in _commands.Values)
+                        if (cmd.Sequence != 0 && message.SessionId == SessionId && cmd.Reply == message.Type &&
+                            message.PayloadInt64("ack_seq") == (long)cmd.Sequence &&
+                            (message.ReplyToSeq == null || message.ReplyToSeq == cmd.Sequence))
+                            cmd.Result.TrySetResult();
                     return Array.Empty<byte[]>();
 
                 case MessageTypes.Error:
-                    foreach (var (display, pending) in _commands)
+                    foreach (var (group, pending) in _commands)
                     {
                         if (pending.Sequence == 0 || message.SessionId != SessionId || message.ReplyToSeq != pending.Sequence) continue;
-                        pending.Result.TrySetException(display
-                            ? new InvalidOperationException("The device declined the USB profile change. Keep its USB monitor open and retry.")
-                            : new HostFailure(HostFailureReason.Rejected, message.ErrorCode));
+                        pending.Result.TrySetException(group switch {
+                            CommandGroup.Display => new InvalidOperationException("The device declined the USB profile change. Keep its USB monitor open and retry."),
+                            CommandGroup.Ssh => new InvalidOperationException("The device declined the SSH key binding."),
+                            _ => new HostFailure(HostFailureReason.Rejected, message.ErrorCode)
+                        });
                         if (!ErrorCodes.IsFatalForConnection(message.ErrorCode ?? ErrorCodes.BadFrame))
                             return Array.Empty<byte[]>();
                     }
@@ -428,7 +460,7 @@ public sealed class SessionLogic
                 return [Encode(MessageTypes.Ping, null, new PingPayload(nonce))];
             }
 
-            foreach (var (display, pending) in _commands)
+            foreach (var (group, pending) in _commands)
             {
                 if (pending.Sequence != 0 || pending.Result.Task.IsCompleted) continue;
                 try
@@ -439,7 +471,7 @@ public sealed class SessionLogic
                 }
                 catch (ProtocolFrameException)
                 {
-                    pending.Result.TrySetException(display ? new InvalidOperationException("Invalid USB profile request.")
+                    pending.Result.TrySetException(group != CommandGroup.Host ? new InvalidOperationException($"Invalid {group} request.")
                         : new HostFailure(HostFailureReason.CertificateSize));
                 }
             }
@@ -622,8 +654,9 @@ public sealed class SessionLogic
         if (state == ClientSessionState.Disconnected)
         {
             DisplaySerial = null;
-            foreach (var (display, pending) in _commands)
-                pending.Result.TrySetException(display ? new InvalidOperationException("The paired CLIENT session closed.")
+            SshHostKeySha256 = null;
+            foreach (var (group, pending) in _commands)
+                pending.Result.TrySetException(group != CommandGroup.Host ? new InvalidOperationException("The paired CLIENT session closed.")
                     : new HostFailure(HostFailureReason.SessionClosed));
             _commands.Clear();
         }
