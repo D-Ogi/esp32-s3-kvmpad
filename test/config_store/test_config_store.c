@@ -29,6 +29,15 @@ static void seed_from_config(fake_nvs_t *f, const kvm_config_t *cfg)
     fake_nvs_seed(f, rec, n);
 }
 
+static void stamp_crc(uint8_t *rec, size_t n)
+{
+    uint32_t crc = kvm_config_crc32(rec + 8, n - 8u);
+    rec[4] = (uint8_t)(crc & 0xFFu);
+    rec[5] = (uint8_t)((crc >> 8) & 0xFFu);
+    rec[6] = (uint8_t)((crc >> 16) & 0xFFu);
+    rec[7] = (uint8_t)((crc >> 24) & 0xFFu);
+}
+
 // Rewrite the schema of a stored record and fix its CRC, as if newer firmware had written it.
 static void seed_with_schema(fake_nvs_t *f, const kvm_config_t *cfg, uint16_t schema)
 {
@@ -37,11 +46,7 @@ static void seed_with_schema(fake_nvs_t *f, const kvm_config_t *cfg, uint16_t sc
     CHECK(n > 0u);
     rec[8] = (uint8_t)(schema & 0xFFu);
     rec[9] = (uint8_t)((schema >> 8) & 0xFFu);
-    uint32_t crc = kvm_config_crc32(rec + 8, n - 8u);
-    rec[4] = (uint8_t)(crc & 0xFFu);
-    rec[5] = (uint8_t)((crc >> 8) & 0xFFu);
-    rec[6] = (uint8_t)((crc >> 16) & 0xFFu);
-    rec[7] = (uint8_t)((crc >> 24) & 0xFFu);
+    stamp_crc(rec, n);
     fake_nvs_seed(f, rec, n);
 }
 
@@ -179,8 +184,13 @@ static void test_mouse_preferences_survive_reload(void)
 
 static void test_init_read_error_recovers(void)
 {
+    kvm_config_t saved;
+    kvm_config_defaults(&saved);
+    CHECK(kvm_config_set_layout_id(&saved, "pl"));
+    CHECK(kvm_config_set(&saved, KVM_CFG_F_BRIGHTNESS, 35));
     fake_nvs_t f;
     fake_nvs_reset(&f);
+    seed_from_config(&f, &saved);
     f.fail_read = true;
 
     kvm_config_store_t s;
@@ -188,6 +198,16 @@ static void test_init_read_error_recovers(void)
     CHECK_EQ(s.load_status, KVM_CONFIG_LOAD_RECOVERED);
     CHECK(s.recovered);
     CHECK(kvm_config_store_is_dirty(&s));
+    CHECK_EQ(s.cfg.brightness, 80);
+    const uint8_t ap[6] = {2, 0, 0, 0, 0, 1};
+    f.fail_read = false;
+    CHECK(kvm_config_store_set_wifi_cache(&s, ap, 6, 100));
+    CHECK(!kvm_config_store_tick(&s, DEFER_MS));
+    CHECK(!kvm_config_store_flush(&s, DEFER_MS));
+    CHECK_EQ(f.writes, 0);
+    open_store(&s, &f, 0);
+    CHECK_EQ(s.load_status, KVM_CONFIG_LOAD_OK);
+    CHECK(memcmp(&s.cfg, &saved, sizeof saved) == 0);
 }
 
 static void test_init_repaired_record_is_rewritten(void)
@@ -222,7 +242,7 @@ static void test_init_future_schema_holds_writes(void)
 
     fake_nvs_t f;
     fake_nvs_reset(&f);
-    seed_with_schema(&f, &saved, (uint16_t)(KVM_CONFIG_SCHEMA_VERSION + 1u));
+    seed_with_schema(&f, &saved, UINT16_MAX);
     uint8_t before[KVM_CONFIG_RECORD_MAX];
     size_t before_len = f.len;
     memcpy(before, f.blob, before_len);
@@ -237,6 +257,12 @@ static void test_init_future_schema_holds_writes(void)
     kvm_config_defaults(&defaults);
     CHECK(memcmp(kvm_config_store_get(&s), &defaults, sizeof defaults) == 0);
 
+    // Reconnecting to Wi-Fi and updating the picker history happen automatically.
+    const uint8_t ap[6] = {2, 0, 0, 0, 0, 1};
+    CHECK(kvm_config_store_set_wifi_cache(&s, ap, 11, 10u));
+    kvm_config_store_clear_wifi_cache(&s, 20u);
+    CHECK(kvm_config_store_set_layout(&s, "us", 30u)); // already selected
+    CHECK(kvm_config_store_note_layout_use(&s, "us", 30u));
     // No tick and no explicit flush may overwrite it.
     CHECK(!kvm_config_store_tick(&s, 1000000u));
     CHECK(!kvm_config_store_flush(&s, 1000000u));
@@ -258,6 +284,30 @@ static void test_init_future_schema_holds_writes(void)
     CHECK_EQ(kvm_config_store_get(&again)->brightness, 55);
 }
 
+static void test_migration_survives_interrupted_rewrite(void)
+{
+    // Complete schema-1 blob from its frozen wire format, including the CRC32.
+    const uint8_t record[] = {'K','V','C','S', 0x1b,0x1f,0x4e,0xfa, 1,0,8,0, 2,1,0,1,7,35,0,1};
+    fake_nvs_t f;
+    fake_nvs_reset(&f);
+    fake_nvs_seed(&f, record, sizeof record);
+    kvm_config_store_t s;
+    open_store(&s, &f, 0);
+    CHECK_EQ(s.load_status, KVM_CONFIG_LOAD_MIGRATED);
+    CHECK_EQ(s.cfg.brightness, 35);
+    f.power_loss = true;
+    CHECK(!kvm_config_store_tick(&s, QUIET_MS));
+    CHECK_EQ(f.len, sizeof record);
+    CHECK(memcmp(f.blob, record, sizeof record) == 0);
+    open_store(&s, &f, 0);
+    CHECK_EQ(s.load_status, KVM_CONFIG_LOAD_MIGRATED);
+    CHECK(kvm_config_store_tick(&s, QUIET_MS));
+    open_store(&s, &f, 0);
+    CHECK_EQ(s.load_status, KVM_CONFIG_LOAD_OK);
+    CHECK_EQ(s.cfg.brightness, 35);
+    CHECK_EQ(s.cfg.pair_require_accept, 1);
+}
+
 static void test_store_without_backend(void)
 {
     kvm_config_store_t s;
@@ -265,13 +315,13 @@ static void test_store_without_backend(void)
     CHECK_EQ(s.debounce.quiet_ms, 1500u);
     CHECK(kvm_config_store_is_dirty(&s));
 
-    // Writes fail loudly instead of pretending to persist.
+    CHECK(s.hold_writes && !kvm_config_store_tick(&s, 100000u));
+    // A requested change still works in RAM and reports a persistence failure.
+    CHECK(kvm_config_store_set_field(&s, KVM_CFG_F_BRIGHTNESS, 30, 0));
     CHECK(!kvm_config_store_tick(&s, 100000u));
     CHECK_EQ(s.stats.write_failures, 1);
     CHECK(kvm_config_store_is_dirty(&s));
 
-    // Settings still work in RAM, which is what keeps LOCAL USB usable.
-    CHECK(kvm_config_store_set_field(&s, KVM_CFG_F_BRIGHTNESS, 30, 0));
     CHECK_EQ(kvm_config_store_get(&s)->brightness, 30);
     CHECK(!kvm_config_store_factory_reset(&s, 0));
     CHECK_EQ(kvm_config_store_get(&s)->brightness, 80);
@@ -512,13 +562,23 @@ static void test_oversized_stored_blob_recovers(void)
 {
     fake_nvs_t f;
     fake_nvs_reset(&f);
-    f.present = true;
-    f.len = sizeof f.blob; // a full-size blob whose content is not a record
-    memset(f.blob, 0x5C, sizeof f.blob);
+    kvm_config_t saved;
+    kvm_config_defaults(&saved);
+    seed_with_schema(&f, &saved, UINT16_MAX);
+    f.len = KVM_CONFIG_RECORD_MAX + 1u;
+    const size_t payload = f.len - KVM_CONFIG_RECORD_HEADER_LEN;
+    f.blob[10] = (uint8_t)payload;
+    f.blob[11] = (uint8_t)(payload >> 8);
+    stamp_crc(f.blob, f.len);
 
     kvm_config_store_t s;
     open_store(&s, &f, 0);
     CHECK_EQ(s.load_status, KVM_CONFIG_LOAD_RECOVERED);
+    CHECK(s.hold_writes);
+    CHECK(!kvm_config_store_tick(&s, DEFER_MS));
+    CHECK(!kvm_config_store_flush(&s, DEFER_MS));
+    CHECK_EQ(f.writes, 0);
+    CHECK_EQ(f.len, KVM_CONFIG_RECORD_MAX + 1u);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -880,6 +940,7 @@ int main(void)
     RUN(test_init_read_error_recovers);
     RUN(test_init_repaired_record_is_rewritten);
     RUN(test_init_future_schema_holds_writes);
+    RUN(test_migration_survives_interrupted_rewrite);
     RUN(test_store_without_backend);
     RUN(test_debounce_coalesces_a_burst);
     RUN(test_debounce_bounds_a_long_drag);

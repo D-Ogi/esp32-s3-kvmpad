@@ -4,7 +4,7 @@
 //
 // ESP-IDF binding of the settings store (TASK-090): the record lives in one NVS blob in this
 // component's own namespace. The pure-C store in config_store.h holds the policy; this file only
-// moves bytes and recovers an unusable NVS partition.
+// transfers the record between RAM and NVS.
 #pragma once
 
 #include "config_store.h"
@@ -21,14 +21,9 @@ extern "C" {
 
 // Bring up NVS and load the record into `store`.
 //
-// `nvs_flash_init()` reporting ESP_ERR_NVS_NO_FREE_PAGES or ESP_ERR_NVS_NEW_VERSION_FOUND means the
-// partition cannot be used as it stands: it is erased and initialized again, and the store comes up
-// on the factory defaults (AT-FAULT-02/10). `debounce` may be NULL for the defaults.
-//
-// Returns ESP_OK when the store is usable — including every recovery path, because a device that
-// lost its settings must still work on LOCAL USB. Only a failure to initialize NVS at all is
-// reported as an error. Inspect `store->load_status`, `store->recovered` and
-// `store->future_schema` for what actually happened.
+// Returns an NVS mount error to the caller without formatting the partition.
+// After a successful mount, inspect `store->load_status` for the record outcome.
+// Pass NULL for `debounce` to use the default timings.
 esp_err_t config_store_nvs_init(kvm_config_store_t *store, const kvm_config_debounce_t *debounce,
                                 uint64_t now_ms);
 

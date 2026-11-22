@@ -19,7 +19,7 @@
 extern "C" {
 #endif
 
-/** Load the record (after nvs_flash_init) and start the writer task. Safe to call once. */
+/** Initialize NVS, load settings and start the writer task. */
 esp_err_t app_config_start(void);
 
 struct kvm_gesture_cfg;

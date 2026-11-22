@@ -21,7 +21,6 @@
 #include "kvm_notice.h"
 #include "net_status.h"
 #include "nvs.h"
-#include "nvs_flash.h"
 #include "touch_input.h"
 #include "hid_dispatch.h"
 #include "remote_glue.h"
@@ -51,16 +50,6 @@ uint32_t kvm_boot_count(void)
 
 static void nvs_boot_counter(void)
 {
-    esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_LOGW(TAG, "NVS partition reformatted (%s)", esp_err_to_name(err));
-        nvs_flash_erase();
-        err = nvs_flash_init();
-    }
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "NVS init: %s", esp_err_to_name(err));
-        return;
-    }
     nvs_handle_t h;
     if (nvs_open("kvm", NVS_READWRITE, &h) == ESP_OK) {
         nvs_get_u32(h, "boot_count", &s_boot_count);
@@ -110,11 +99,11 @@ void app_main(void)
         }
     }
 
-    nvs_boot_counter();
-    // Settings record (TASK-090): loaded once NVS is up; a missing or damaged record means defaults, never a halt.
     esp_err_t cerr = app_config_start();
     if (cerr != ESP_OK) {
         ESP_LOGE(TAG, "app_config_start: %s", esp_err_to_name(cerr));
+    } else {
+        nvs_boot_counter();
     }
     static app_config_settings_t settings;
     uint32_t brightness;

@@ -43,8 +43,7 @@ static kvm_config_io_t backend_read(void *ctx, void *buf, size_t cap, size_t *ou
         return KVM_CONFIG_IO_ABSENT;
     }
     if (err != ESP_OK) {
-        // ESP_ERR_NVS_INVALID_LENGTH means the stored blob is larger than any record this
-        // firmware can produce, i.e. corrupt: the store falls back to the defaults.
+        // A larger blob can belong to a newer firmware. Preserve it on a read error.
         ESP_LOGW(TAG, "nvs_get_blob failed: %s", esp_err_to_name(err));
         return KVM_CONFIG_IO_ERROR;
     }
@@ -180,17 +179,6 @@ esp_err_t config_store_nvs_init(kvm_config_store_t *store, const kvm_config_debo
     }
 
     esp_err_t err = nvs_flash_init();
-    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        // The partition is full of stale pages or was written by a newer NVS format. Neither can
-        // be read; erasing it is the only way back and costs the settings, not the firmware.
-        ESP_LOGW(TAG, "NVS unusable (%s), erasing the partition", esp_err_to_name(err));
-        esp_err_t erase_err = nvs_flash_erase();
-        if (erase_err != ESP_OK) {
-            ESP_LOGE(TAG, "nvs_flash_erase failed: %s", esp_err_to_name(erase_err));
-            return erase_err;
-        }
-        err = nvs_flash_init();
-    }
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "nvs_flash_init failed: %s", esp_err_to_name(err));
         return err;

@@ -131,13 +131,15 @@ One serialization buffer of 810 bytes lives on the stack of whichever task calls
 | valid, current schema | loaded as written |
 | valid, older schema | migrated, then rewritten through the normal debounce |
 | values out of range | repaired to the defaults, then rewritten |
-| bad magic / length / CRC, or an unreadable backend | factory defaults, `recovered` set, the broken record replaced through the normal debounce so a boot loop cannot become a write loop |
+| bad magic / length / CRC in a successfully read blob | factory defaults, `recovered` set, the broken record replaced through the normal debounce |
+| backend read error, including a blob too large to read | factory defaults, `recovered` set, saved bytes preserved until an explicit settings change |
 | newer schema | factory defaults, `future_schema` set, and the stored record left untouched until the first user change |
 
-`config_store_nvs_init()` handles `ESP_ERR_NVS_NO_FREE_PAGES` and `ESP_ERR_NVS_NEW_VERSION_FOUND`
-by erasing the partition and initializing it again. It returns `ESP_OK` for every recovery path,
-because a device that lost its settings must still work on LOCAL USB; only a failure to bring NVS
-up at all is an error.
+After a read error or a newer schema, automatic Wi-Fi and layout history updates affect only RAM until the user changes a setting.
+
+If NVS cannot mount the partition, startup reports the error and skips the boot counter.
+This preserves settings and pairings if the partition uses a newer format.
+The local USB keyboard and mouse start before the settings store.
 
 Factory reset (PROC-010) erases the namespace, returns every setting to its default, clears the
 pairing register and the Wi-Fi cache and writes the defaults back at once (AT-FAULT-10).

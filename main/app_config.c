@@ -9,6 +9,7 @@
 #include "app_config.h"
 #include "sdkconfig.h"
 #include "hpe_access_config.h"
+#include "ui_theme.h"
 
 #include <inttypes.h>
 #include <stdatomic.h>
@@ -115,7 +116,7 @@ uint8_t app_config_control_palette(void)
 
 bool app_config_set_control_palette(uint8_t value)
 {
-    if (!s_task || value > 2) return false;
+    if (!s_task || value >= UI_PALETTE_COUNT) return false;
     if (atomic_exchange(&s_palette, value) != value) xTaskNotifyGive(s_task);
     return true;
 }
@@ -161,7 +162,11 @@ esp_err_t app_config_start(void)
     }
     uint64_t timing_word;
     if (config_store_nvs_access_read(&timing_word) == ESP_OK) s_access = hpe_access_unpack(timing_word);
-    if (config_store_nvs_palette_read(&s_saved_palette) == ESP_OK) atomic_store(&s_palette, s_saved_palette);
+    uint8_t palette;
+    if (config_store_nvs_palette_read(&palette) == ESP_OK && palette < UI_PALETTE_COUNT) {
+        s_saved_palette = palette;
+        atomic_store(&s_palette, palette);
+    }
     s_seq = 1;
     publish_mouse();
     s_ready = true;

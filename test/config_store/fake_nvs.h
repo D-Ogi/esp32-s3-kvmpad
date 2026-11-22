@@ -21,7 +21,7 @@
 #include "config_store.h"
 
 typedef struct {
-    uint8_t blob[KVM_CONFIG_RECORD_MAX];
+    uint8_t blob[KVM_CONFIG_RECORD_MAX + 1u]; // can retain a blob too large for this firmware to read
     size_t len;
     bool present;
 

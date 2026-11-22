@@ -22,6 +22,8 @@
 //   * a record written by newer firmware is not parsed and not overwritten: the store runs on
 //     defaults with `future_schema` set and holds every write back until the user changes a
 //     setting, so downgrading a device does not destroy its configuration;
+//   * an unreadable record also holds automatic writes. Reconnecting to Wi-Fi or updating
+//     layout history may change RAM while the original record is preserved;
 //   * a factory reset erases the backing store, clears the pairing register and the Wi-Fi cache
 //     and writes the defaults back immediately.
 #pragma once
@@ -76,7 +78,7 @@ typedef struct {
     uint32_t write_failures;   // backend write errors
     uint32_t immediate_writes; // writes that bypassed the debounce
     uint32_t erases;           // factory resets
-    uint32_t holds;            // writes suppressed because of a future schema
+    uint32_t holds;            // writes suppressed for a newer or unreadable saved record
 } kvm_config_store_stats_t;
 
 typedef struct {
@@ -86,7 +88,7 @@ typedef struct {
 
     kvm_config_load_status_t load_status;
     kvm_config_repair_t load_repair;
-    bool recovered;     // the stored record was unusable and was replaced by defaults
+    bool recovered;     // the read or validation failed and defaults are active in RAM
     bool future_schema; // the stored record came from newer firmware
     bool hold_writes;   // do not touch the stored record until the user changes a setting
 

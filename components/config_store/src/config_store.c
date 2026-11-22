@@ -30,11 +30,8 @@ static bool backend_usable(const kvm_config_store_t *store)
     return store && store->backend.ops;
 }
 
-// A deliberate change made by the person at the device. Clears the future-schema hold: once the
-// user has touched a setting, keeping the newer record is no longer the safer option.
-static void mark_user_change(kvm_config_store_t *store, uint64_t now_ms)
+static void mark_change(kvm_config_store_t *store, uint64_t now_ms)
 {
-    store->hold_writes = false;
     store->stats.changes++;
     if (store->dirty) {
         store->stats.coalesced++;
@@ -43,6 +40,14 @@ static void mark_user_change(kvm_config_store_t *store, uint64_t now_ms)
         store->dirty_since_ms = now_ms;
     }
     store->last_change_ms = now_ms;
+}
+
+// An explicit settings or pairing change authorizes replacing the stored record.
+// Background cache and history updates use mark_change() and preserve an existing hold.
+static void mark_user_change(kvm_config_store_t *store, uint64_t now_ms)
+{
+    store->hold_writes = false;
+    mark_change(store, now_ms);
 }
 
 // A change that did not come from the user (a record repaired or migrated at load time).
@@ -111,6 +116,9 @@ kvm_config_load_status_t kvm_config_store_init(kvm_config_store_t *store,
         store->load_status = KVM_CONFIG_LOAD_DEFAULTS;
     } else if (io != KVM_CONFIG_IO_OK) {
         store->load_status = KVM_CONFIG_LOAD_RECOVERED;
+        // A transient read failure or an oversized blob gives us no evidence
+        // that the saved settings are corrupt. Preserve them across this boot.
+        store->hold_writes = true;
     } else {
         store->load_status =
             kvm_config_deserialize(buf, len, &store->cfg, &store->load_repair);
@@ -124,8 +132,7 @@ kvm_config_load_status_t kvm_config_store_init(kvm_config_store_t *store,
     case KVM_CONFIG_LOAD_RECOVERED:
     case KVM_CONFIG_LOAD_MIGRATED:
     case KVM_CONFIG_LOAD_REPAIRED:
-        // The stored record is broken or stale: schedule a replacement through the normal
-        // debounce so a boot loop cannot turn into a write loop.
+        // Debounce repairs. A backend read error above keeps the pending write on hold.
         mark_internal_change(store, now_ms);
         break;
     case KVM_CONFIG_LOAD_FUTURE_SCHEMA:
@@ -268,7 +275,7 @@ bool kvm_config_store_note_layout_use(kvm_config_store_t *store, const char *id,
     }
     memcpy(store->cfg.host_recent, candidate.host_recent, sizeof store->cfg.host_recent);
     store->cfg.host_recent_count = candidate.host_recent_count;
-    mark_user_change(store, now_ms);
+    mark_change(store, now_ms);
     return true;
 }
 
@@ -313,7 +320,7 @@ bool kvm_config_store_set_wifi_cache(kvm_config_store_t *store, const uint8_t bs
         return true;
     }
     store->cfg.wifi = candidate.wifi;
-    mark_user_change(store, now_ms);
+    mark_change(store, now_ms);
     return true;
 }
 
@@ -326,7 +333,7 @@ void kvm_config_store_clear_wifi_cache(kvm_config_store_t *store, uint64_t now_m
         return;
     }
     memset(&store->cfg.wifi, 0, sizeof store->cfg.wifi);
-    mark_user_change(store, now_ms);
+    mark_change(store, now_ms);
 }
 
 // ---------------------------------------------------------------------------------------------
