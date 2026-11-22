@@ -1,13 +1,8 @@
 # KVMpad Windows CLIENT
 
-The native Windows application that controls the HOST remotely through a KVMpad device over Wi-Fi
-(ADR-021). It speaks protocol v1 over WSS with certificate pinning; it never touches USB itself.
+Run KVMpad CLIENT on the operator PC to send input over Wi-Fi. The KVMpad board forwards the keystrokes and mouse movements to the **target computer** over USB. The target uses its built-in keyboard and mouse drivers.
 
-Glossary, as the specification uses the terms: the **DEVICE** is the KVMpad board, the **HOST** is the
-computer the board is plugged into over USB, and the **CLIENT** is this application.
-
-Stack, dependencies and the decisions behind them: `docs/ADR/ADR-028-windows-client-stack.md`.
-The pairing protocol itself is `docs/ADR/ADR-029-pairing-wire-format-and-pake.md`.
+The protocol specification calls the USB target the **HOST** and the board the **DEVICE**. The Windows application named **KVMpad HOST** is a companion that CLIENT starts on its own PC. Screen sharing captures a monitor on that PC. [Windows HOST guide](../../hosts/windows/README.md)
 
 ## Direct SSH input
 
@@ -31,9 +26,7 @@ Windows OpenSSH Client supplies `ssh.exe` and `ssh-keyscan.exe`. On first use, C
 
 There are two build steps and the native one comes first, because the managed tests load its output.
 
-Nothing may be installed on drive `C:` or globally, so the package cache and the `dotnet` CLI home are
-pointed outside the repository before any command (project rule 2 and `CONTRIBUTING.md`). `bin/` and `obj/`
-stay inside this directory and are ignored.
+The build example keeps the package cache and `dotnet` CLI home in the workspace. Build outputs go in `bin/` and `obj/`.
 
 ### 1. The native pairing library
 
@@ -109,20 +102,15 @@ If discovery is unavailable, choose **Advanced…**, select the saved KVMpad, en
 For first-time setup at a known address, select **Pair a new KVMpad**, open the pairing window on the board and choose **Continue to PIN**.
 Connect, Extension Studio and the standalone HOST look up the paired board before connecting. They use its saved address when discovery is unavailable. Advanced uses the address and port you enter.
 If Windows selects a proxy and the TCP connection is refused, the CLIENT reports the proxy route. The KVMpad handshake has not started at that point.
-The standard PIN pairing was exercised on unit 1. The release retained one saved CLIENT after an OTA reboot,
-and the device admitted the paired control connection. A successful desktop share additionally requires
-selection of a display in Windows and confirmation on the board. [HOST guide](../../hosts/windows/README.md)
 
 Windows controls use the system light, dark or contrast palette. Icons keep their text labels and scale
 with display DPI. On KVMpad, open the gear in the top bar and choose **Settings → Appearance**.
 Select **Day**, **Night** or **High contrast**. The same pane controls the panel backlight.
 [Shared control icons](../../design/assets/control-icons)
 
-## Development options
-- There is no layout picker in the window yet. The layout follows the device's `host_layout` when it is
-  published, and otherwise the `HostLayoutId` setting, which has to be edited in the settings file by hand.
-
 ## Host layouts
+
+CLIENT uses the keyboard layout reported by the board. If the board does not report a layout, CLIENT uses `HostLayoutId` from its settings file.
 
 `HostLayoutCatalog` (Core, `TypeText/HostLayoutCatalog.cs`) indexes `layouts/kbd_layouts.json` once — id, name,
 geometry and the two flags per entry, plus the byte range of that entry — and builds a character table only for

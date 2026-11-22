@@ -1,6 +1,6 @@
 # Windows HOST bridge
 
-Run this interactive application on the PC attached to the board's USB port. The Windows CLIENT starts the HOST using the selected device's existing PIN pairing. The HOST window grants display, simulator and OBS access for one board and one active profile. **Stop session** or closing the window ends all current grants.
+KVMpad HOST shares a monitor or connects a simulator or OBS session from the Windows PC where it runs. KVMpad CLIENT starts HOST locally using the board's existing PIN pairing. To share a monitor on the USB target, run CLIENT and HOST on that Windows computer. The HOST window grants access for one board and one active profile. **Stop session** or closing the window ends all current grants.
 
 ## Start the HOST
 

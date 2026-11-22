@@ -1,10 +1,10 @@
 # KVMpad
 
-KVMpad lets you control a computer from a **Waveshare ESP32-S3-Touch-LCD-7B** or from another PC on the network. The board plugs into the target computer as a USB keyboard and mouse. You can type and scroll on its touchscreen, send input from the paired Windows CLIENT, or issue keyboard and mouse commands over SSH. Its 7-inch LCD can also show a magnified area of a Windows monitor from the paired HOST. Extended desktop over USB remains experimental.
+KVMpad turns the **Waveshare ESP32-S3-Touch-LCD-7B** into a touchscreen keyboard and touchpad. Plug its native USB port into the computer you want to control. Type on the 7-inch screen or send input over Wi-Fi from another PC using the Windows CLIENT or SSH.
 
 ## Screen gallery
 
-These Day-theme screenshots come from the physical 7B framebuffer. The autopilot shows Pilot Panel's Demo mode. Open any image to see the captured detail.
+Captured on the board in the Day theme. The portrait autopilot is running in Demo mode.
 
 ![Mouse screen with a touchpad, scroll wheel and mouse buttons on the physical 7B in Day mode](docs/images/day-mouse.png)
 
@@ -16,56 +16,43 @@ These Day-theme screenshots come from the physical 7B framebuffer. The autopilot
 | **Checklist extension** | **Pilot Panel autopilot** |
 | [![Before takeoff checklist with touch controls](docs/images/day-checklist.png)](docs/images/day-checklist.png) | [<img src="docs/images/pilot-autopilot-lcd.png" width="200" alt="Heading, altitude and vertical speed on the portrait autopilot screen">](docs/images/pilot-autopilot-lcd.png) |
 
-## Control a computer remotely
+## Use the touchscreen
 
-Connect the board's native USB port to the **target computer**. On the **operator PC**, open KVMpad CLIENT. Enable remote access on the board, tap **Pair a client**, then choose **Discover → Pair** on the PC. Enter the six-digit PIN and approve it on the LCD. In the CLIENT, choose **Connect → Host input** and request control. You can then capture keyboard and mouse input, send a shortcut, or type text on the target. [Windows CLIENT guide](clients/windows/README.md)
+With the board connected, open **Mouse** to move the pointer, click or scroll. The hybrid keyboard keeps the touchpad within reach while you type. Place it above the keys, on the left or on the right. Hold a finger past the edge of the pad to keep the pointer moving. For a different theme or backlight level, open **Settings → Appearance**.
 
-| What you want to do | Signal path and requirements |
-| --- | --- |
-| Send keys and mouse movements | Operator PC → encrypted WebSocket (WSS) over Wi-Fi → KVMpad → USB HID → target. The target receives ordinary keyboard and mouse reports without a KVMpad application running on it. |
-| Control the target through SSH to KVMpad | SSH is built into the 7B firmware. In a connected, paired Windows CLIENT, choose **Host input → SSH command…** and select your public key. Run the generated command and approve control on the board. Keep CLIENT connected for the SSH session. [Operator guide](clients/windows/README.md#direct-ssh-input) · [Command syntax](components/ssh_control/include/ssh_control.h) |
-| Operate a BIOS or UEFI setup screen | The 7B exposes a USB Boot Keyboard and Boot Mouse. Physical UEFI input testing is pending. Live Setup video over the board's native USB port would require compatible graphics support in the target firmware. Live UEFI graphics over this cable have not been demonstrated on a physical PC. [USB HID test status](components/usb_hid_device/README.md) · [Preboot USB graphics](docs/COMPATIBILITY.md) |
-| View a running Windows desktop on the board | The Windows HOST companion sends an approved monitor region to Cursor Magnifier on the LCD. The separate USB desktop was demonstrated with an external driver that failed signature verification. [HOST capture guide](hosts/windows/README.md) · [USB monitor guide](components/usb_monitor/README.md) |
+## Control another computer
 
-## What works today
+**Operator PC → Wi-Fi → KVMpad → USB → target computer**
 
-On the 7B, open **Extensions → USB monitor → Monochrome / Linux GUD** to use the experimental Linux monitor. Tap **Home** to leave the monitor and use the USB keyboard and mouse again. The board displayed an independent 640×480 monochrome X11 desktop, and Linux switched to 800×600 and back while connected. Separate tests verified pre-login console output with keyboard and mouse on the same cable, and a moving VGA pattern at 2 Hz. The Linux guest used its distribution's GUD driver with a manually registered test device ID. Automatic monitor discovery on stock Linux remains open. [Linux monitor qualification](components/usb_monitor/README.md)
+The **operator PC** is the computer you sit at. The **target** is the computer plugged into KVMpad. Its built-in USB keyboard and mouse drivers handle remote input, so there is nothing to install on the target.
 
-| Use case | How it works |
-| --- | --- |
-| Keyboard and mouse | Local USB input works offline. Place the touchpad above the keyboard or beside it on either side. In the top layout you can move the controls to the left or right. Day, Night, High contrast and backlight settings are under **Settings → Appearance**. |
-| Windows remote control | Subsequent connections verify the saved device certificate. The HOST companion reuses the same pairing for extensions that need access to the PC. [CLIENT setup](clients/windows/README.md) |
-| USB monitor | The standalone screen and portrait console are experimental. KVMpad does not recommend installing the tested Windows graphics package (xfz1986 1.2.25.2). Windows keyboard and mouse input uses Microsoft's built-in drivers. [Driver verification](docs/COMPATIBILITY.md) · [Portrait console](extensions/usb-monitor-console/) |
-| Live magnifier | Cursor Magnifier shows the area around the pointer on a Windows monitor. Choose the monitor in the Windows picker and approve it on the board. The HOST supports JPEG, Cinepak and H.264. [Capture setup and codec requirements](hosts/windows/README.md) |
-| Offline video | The 7B plays H.264 video from microSD. The Windows CLIENT can prepare companion files for clips that exceed the board's decoder memory. Open **Extensions → Video files** on the board to select a clip. [Card preparation](clients/windows/README.md#prepare-an-h264-video-for-offline-playback) |
-| Extensions | Install a package from a FAT32 or exFAT microSD card and review its permissions on the LCD. Swipe up from the bottom of a multi-screen extension to switch screens or return Home. Pilot Panel includes an offline kneeboard with charts and checklists, plus radio, transponder and autopilot demos. [Pilot Panel](extensions/pilot-panel/) · [Extension examples](tools/kvmpack/examples/) |
+1. On KVMpad, enable remote access and tap **Pair a client**.
+2. On the operator PC, open **KVMpad CLIENT**, choose **Discover → Pair**, enter the six-digit PIN and confirm on the touchscreen.
+3. Select **Connect → Host input** in CLIENT to send keystrokes, mouse movements or shortcuts. [Windows CLIENT guide](clients/windows/README.md)
 
-On the Mouse screen, hold the ridged wheel above or below center to scroll. For continuous pointer movement in Mouse, a hybrid keyboard or USB Console, slide a finger from the touchpad past its edge and hold. Move back onto the pad for ordinary pointer control.
+For **SSH**, choose **Host input → SSH command…** in the paired CLIENT and select your public key. Run the generated command on the operator PC, approve control on the touchscreen and keep CLIENT connected. The SSH server runs on KVMpad. It translates commands such as `mouse move 20 0` into USB input for the target. [SSH setup](clients/windows/README.md#direct-ssh-input) · [Command syntax](components/ssh_control/include/ssh_control.h)
 
-## Hardware and development status
+## What can I see on the KVMpad screen?
 
-The 7B runs one firmware image on every target computer. It starts as a USB keyboard and mouse. Select a monitor mode on the LCD when you want to use the board as a display. You can move the cable between computers without reflashing the board.
+**A magnified Windows desktop.** Open **Cursor Magnifier** on KVMpad. The Windows CLIENT starts a companion called **KVMpad HOST** on the same PC as CLIENT. Choose a monitor on that PC and approve it on the board. HOST sends the area around its pointer to the LCD over Wi-Fi. If CLIENT is on your operator PC, the magnifier shows your operator PC’s screen. To magnify the target’s desktop, the Windows capture software must run on the target itself. [Cursor Magnifier setup](hosts/windows/README.md)
 
-The development board has a **1024 × 600 RGB565 panel**, a five-point GT911 touch controller, 16 MiB of flash and 8 MiB of PSRAM. Use the **native USB** connector for keyboard, mouse and display traffic. The separate **USB-UART** connector provides the development console. The original 800 × 480 specification predates the change to the 7B. [Measured board record](hardware/boards.md)
+**An extra USB display (experimental).** The computer plugged into KVMpad can send a desktop to the LCD through its USB display driver. The portrait USB Monitor Console combines that desktop with a keyboard and touchpad. Linux requires GUD and manual device setup. The tested Windows display driver failed signature verification, so we do not recommend installing it. BIOS/UEFI video over this cable is unverified. [USB compatibility](docs/COMPATIBILITY.md)
 
-The firmware runs on the physical 7B. Hardware trials include typing into Windows while the portrait console displayed the desktop, returning to the regular HID interfaces on exit, and playing all 73 frames of a prepared 1080p H.264 test clip. Playback speed depends on the clip and playback mode. [USB Monitor Console](extensions/usb-monitor-console/) · [Video preparation](clients/windows/README.md#prepare-an-h264-video-for-offline-playback)
+**A video from microSD.** Play H.264 clips under **Extensions → Video files**. Playback runs on the board. The Windows CLIENT can prepare clips that exceed the decoder’s available memory. [Prepare a video](clients/windows/README.md#prepare-an-h264-video-for-offline-playback)
 
-Windows displayed test images on the 7B at **640 × 480** and **1024 × 600** using the external driver. On one switch back to VGA, Windows restarted the driver and restored the previous resolution. The two fixed-size choices are available on the LCD. [USB compatibility](docs/COMPATIBILITY.md)
+## Extensions
 
-## Getting started
+Install extensions from a FAT32 or exFAT microSD card using **Extensions → Install from card**. Review the permissions on the touchscreen. In a multi-screen extension, swipe up from the bottom edge to choose another screen or return Home.
 
-- **Try the UI on a computer.** The desktop simulator runs the firmware's LVGL views and includes reproducible touch and keyboard scenarios. [Simulator build and run instructions](simulator/README.md)
-- **Connect a flashed board.** Start with the native USB port for local input. To control it over Wi-Fi, enable remote access on the board, choose **Pair a client**, then **Discover → Pair** in the Windows CLIENT. [Windows CLIENT build and pairing](clients/windows/README.md) · [HOST setup](hosts/windows/README.md)
-- **Create an extension.** Open **Tools → Extension Studio** in the Windows CLIENT, or run `py -3 tools/kvmpack/kvmpack.py studio` from the repository root with Python, Tk, Pillow and jsonschema installed. The SDK guide walks through building a checklist, previewing it and staging it for the card. [Extension SDK guide](tools/extension_sdk/README.md) · [Widget bindings](docs/EXTENSION-BINDINGS.md)
-- **Build the firmware.** Prepare the Xtensa H.264 decoder and signing key, then run `idf.py build` with ESP-IDF v6.1. Use the same image with every target computer. It includes a boot keyboard and mouse, USB monitor modes, H.264 playback and paired SSH input. [Firmware build instructions](docs/HANDBOOK.md#build-the-7b-firmware) · [Firmware signing](docs/OTA.md)
+**Pilot Panel** includes an offline kneeboard for charts and checklists, plus radio, transponder and autopilot demos. To build your own extension, open **Tools → Extension Studio** in the Windows CLIENT. [Pilot Panel](extensions/pilot-panel/) · [Extension SDK tutorial](tools/extension_sdk/README.md) · [Example packages](tools/kvmpack/examples/)
 
-## Project documentation
+## Build and development
 
-See the [7B firmware handbook](docs/HANDBOOK.md), [USB compatibility table](docs/COMPATIBILITY.md) and [extension guide](docs/EXTENSIONS.md). The [protocol specification](docs/spec/03-CONTRACTS-AND-PROTOCOLS.md) describes the original wire contracts.
+The 7B runs one firmware image with every target computer. It has a 1024 × 600 display, 16 MiB of flash and 8 MiB of PSRAM. Use the **USB-UART** connector for the development console. [Board details](hardware/boards.md)
 
-## Contributing
-
-See the [contribution guide](CONTRIBUTING.md) for the repository layout, development workflow and test requirements. Report simulator and hardware results separately.
+- [Build the 7B firmware](docs/HANDBOOK.md#build-the-7b-firmware) with ESP-IDF v6.1, the Xtensa H.264 decoder and an OTA signing key.
+- [Run the desktop simulator](simulator/README.md) to try the touchscreen layouts on a computer.
+- See the [contribution guide](CONTRIBUTING.md) for the repository layout and test instructions.
 
 ## License
 
