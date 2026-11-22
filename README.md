@@ -52,6 +52,18 @@ Select the paired board in CLIENT. Select **Connect**. On the **Host input** tab
 
 For a single shortcut, choose **Alt+Tab** and select **Send shortcut**. For direct keyboard and mouse control, select **Start capture**. The default key to stop capture is **Scroll Lock**. Select **Release control** when you finish. The Linux example shows a guest that received the CLIENT keystrokes through a virtual USB keyboard. [Windows CLIENT guide](clients/windows/README.md)
 
+### Switch to another paired device
+
+To control the Windows PC attached to **B208**, release control of **A104**. Select **Disconnect**. In **Devices**, select **KVMpad-B208**. Its **Paired** column shows **yes**, so select **Connect**. Select **Request control**. Approve the session on B208.
+
+| Operator PC · Choose B208 from four devices | Operator PC · Choose a shortcut for the Windows target |
+| --- | --- |
+| [![Devices lists A104, B208, D416 and C312 with the paired B208 selected](docs/images/client-select-paired.png)](docs/images/client-select-paired.png) | [![Host input shows Controlling with Task Manager selected and Send shortcut available](docs/images/client-paired-shortcut.png)](docs/images/client-paired-shortcut.png) |
+
+Select **Send shortcut** to open Task Manager on the target. Both screenshots show the Windows CLIENT with simulated devices.
+
+### Send input through SSH
+
 The **SSH server** runs on KVMpad. It translates commands such as `mouse move 20 0` into USB input for the target. [Command syntax](components/ssh_control/include/ssh_control.h)
 
 1. Select **Host input → SSH command…** in the paired CLIENT.

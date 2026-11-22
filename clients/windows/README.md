@@ -16,6 +16,15 @@ CLIENT binds the public key to the current connection. It checks the board's SSH
 
 Windows OpenSSH Client supplies `ssh.exe` and `ssh-keyscan.exe`. On first use, CLIENT checks the SSH host key against the fingerprint from the paired connection and saves it under `~/.ssh/kvmpad/`. On later connections, CLIENT verifies the saved key against the current fingerprint. The generated command uses that file for strict host verification even if the board's IP address changes.
 
+For example, open a text editor on the target. Place the pointer over its text area. Enter these lines in the open SSH session on the operator PC. The first two lines click the editor. The next two press and release Enter to insert a line break.
+
+```text
+mouse down left
+mouse up left
+key down 0x28
+key up 0x28
+```
+
 ## Layout
 
 | Path | Target | Contents |
