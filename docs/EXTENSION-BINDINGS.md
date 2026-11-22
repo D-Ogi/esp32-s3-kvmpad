@@ -89,7 +89,7 @@ These instruments use the local UI permission. A package can contain one widget 
 
 ## Joystick controls
 
-The Flight Yoke template uses `hid.joystick.set_axes` for pitch, roll, yaw, throttle, buttons and the eight-way point-of-view hat. The package must declare `hid.joystick` permission and USB capability. The panel admits it when the installed firmware supports the capability and the operator grants it.
+The Flight Yoke template uses `hid.joystick.set_axes` for pitch, roll, yaw, throttle, buttons and the eight-way point-of-view hat. The package must declare `hid.joystick` permission and USB capability. The host-side joystick harness exercises these bindings. The standard 7B firmware exposes a boot keyboard and mouse and does not advertise a USB joystick.
 
 Each hat direction uses one Button with a pair of actions. For example, bind the button's `press` to `{"hat":2}` in the action's `args` for east and its `release` to `{"hat":8}` for neutral. The directions run clockwise from north (0) through northwest (7). A canceled press also releases the hat. Hat actions preserve throttle and the other controls.
 

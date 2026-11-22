@@ -203,7 +203,7 @@ typedef struct {
     kvm_rp_err_t (*host_attach)(void *ctx, uint64_t session, const kvm_json_doc_t *doc, int payload);
     bool (*host_detach)(void *ctx, uint64_t session);
     bool (*display_profile)(void *ctx, uint64_t session, const char *serial, bool native);
-    /** Optional SSH transport. Bind an SSH public-key fingerprint to this paired TLS session. */
+    /** SSH transport. Bind an SSH public-key fingerprint to this paired TLS session. */
     kvm_rp_err_t (*ssh_bind_key)(void *ctx, uint64_t session, const kvm_json_doc_t *doc, int payload);
 
     void *ctx;

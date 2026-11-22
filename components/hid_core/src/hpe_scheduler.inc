@@ -63,7 +63,7 @@ static uint8_t hpe_neutral(kvm_hid_core_t *core, uint8_t itf, uint8_t *wire)
         }
         }
     }
-    return (uint8_t)kvm_hid_build_neutral(itf, protocol_of(core, itf), wire);
+    return (uint8_t)kvm_hid_build_neutral(itf, KVM_HID_PROTOCOL_REPORT, wire);
 }
 
 static void hpe_process(kvm_hid_core_t *core, kvm_hid_qentry_t *e, uint8_t itf)

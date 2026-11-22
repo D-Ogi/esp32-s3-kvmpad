@@ -25,7 +25,7 @@ VSYNC and completed frames while LVGL owns the panel.
 On the dual-core Waveshare 7B, the standard 1024×600, 30 MHz `DOUBLE_PARTIAL` profile uses a 12-line internal draw
 strip and allocates LCD VSYNC and GDMA refill interrupts on CPU1. Configure normally for this profile. For the
 CPU0 comparison with the media player, use a separate engineering build with
-`-DKVM_MEDIA_SYNTHETIC_DIAG=ON -DKVM_LCD_IRQ_CORE1=OFF`. Standard 7B media firmware rejects
+`-DKVM_MEDIA_SYNTHETIC_DIAG=ON -DKVM_LCD_IRQ_CORE1=OFF`. The standard 7B firmware rejects
 the experimental CPU0 setting during configuration. Use `-DKVM_LCD_IRQ_CORE1=AUTO`
 to return an existing comparison build directory to its default. After several frames, `lcd stats` reports
 `irq_mask_vsync=0x2 irq_mask_frame=0x2` for CPU1 and `0x1` for CPU0. Raw display benchmarks with other buffer

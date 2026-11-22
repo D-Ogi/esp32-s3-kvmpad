@@ -235,6 +235,42 @@ static void wheel_report_and_boot_fallback(void)
     CHECK_EQ(host.log[0].len, 3);
 }
 
+static void mouse_retry_uses_current_protocol(void)
+{
+    fh_setup(&core, &host, &now);
+    const uint8_t mouse = KVM_HID_ITF_MOUSE;
+    kvm_hid_intent_t wheel = fh_wheel(2, -3);
+    kvm_hid_intent_t move = fh_move(12, -8);
+    CHECK_EQ(kvm_hid_core_local(&core, &wheel, now), KVM_HID_OK);
+    fh_pump(&core, &host, &now);
+
+    // Leave a wheel report waiting when the host switches to boot protocol.
+    host.refuse[mouse] = true;
+    CHECK_EQ(kvm_hid_core_local(&core, &wheel, now), KVM_HID_OK);
+    fh_pump(&core, &host, &now);
+    host.protocol[mouse] = KVM_HID_PROTOCOL_BOOT;
+    host.refuse[mouse] = false;
+    fh_pump(&core, &host, &now);
+    CHECK_EQ(host.n, 1);
+    CHECK_EQ(kvm_hid_core_counters(&core)->wheel_dropped_boot, 1);
+
+    // A motion queued in either mode must survive the switch exactly once.
+    for (int i = 0; i < 2; ++i) {
+        host.refuse[mouse] = true;
+        CHECK_EQ(kvm_hid_core_local(&core, &move, now), KVM_HID_OK);
+        fh_pump(&core, &host, &now);
+        host.protocol[mouse] = i == 0 ? KVM_HID_PROTOCOL_REPORT : KVM_HID_PROTOCOL_BOOT;
+        host.refuse[mouse] = false;
+        fh_pump(&core, &host, &now);
+        CHECK_EQ(host.n, i + 2);
+        CHECK_EQ(host.log[i + 1].len, i == 0 ? 5 : 3);
+    }
+    CHECK_EQ(host.sum_dx, 24);
+    CHECK_EQ(host.sum_dy, -16);
+    CHECK_EQ(host.sum_wheel, -3);
+    CHECK_EQ(host.sum_pan, 2);
+}
+
 static void check_chord_reports(uint16_t id, uint8_t mods, uint8_t key)
 {
     fh_setup(&core, &host, &now);
@@ -569,6 +605,7 @@ int main(void)
     RUN(coalesced_motion_preserves_sum);
     RUN(drag_keeps_button_mask);
     RUN(wheel_report_and_boot_fallback);
+    RUN(mouse_retry_uses_current_protocol);
     RUN(shortcut_chords);
     RUN(chord_delivered_only_after_host_read);
     RUN(chord_interrupted_by_suspend);

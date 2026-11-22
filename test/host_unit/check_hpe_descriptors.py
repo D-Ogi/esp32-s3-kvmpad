@@ -106,15 +106,16 @@ def verify(elf, count):
         assert len(endpoints) == 2
 
 
-def verify_media_ssh_image(elf, elf_path, image_path):
-    """Check the combined build before selecting its binary for an OTA trial."""
+def verify_firmware_image(elf, elf_path, image_path):
+    """Check the 7B firmware binary, its required services and its startup USB identity."""
     from esptool.bin_image import LoadFirmwareImage
 
     table = elf.get_section_by_name(".symtab")
     for name in ("ff_h264_decoder", "usb_hid_device_set_monitor_mode", "usb_hid_device_set_monitor_controls",
-                 "kvm_ssh_listener_open", "kvm_ssh_serve_session"):
+                 "kvm_ssh_listener_open", "kvm_ssh_serve_session", "gud_panel_get",
+                 "usb_hid_device_screenshot_begin"):
         if not any(item["st_size"] for item in table.get_symbol_by_name(name) or []):
-            raise ValueError(f"Combined firmware is missing {name}")
+            raise ValueError(f"7B firmware is missing {name}")
 
     # These four tables are the ones enumerated at startup in the hardware qualification run.
     tables = [symbol(elf, name) for name in ("s_device", "s_config_fs", "s_report_keyboard", "s_report_mouse")]
@@ -130,24 +131,24 @@ def verify_media_ssh_image(elf, elf_path, image_path):
     firmware = LoadFirmwareImage("esp32s3", image)
     if not firmware.append_digest or firmware.calc_digest != firmware.stored_digest:
         raise ValueError("Application payload digest mismatch")
-    print(f"Combined media and SSH image: {len(image)} bytes, SHA-256 {hashlib.sha256(image).hexdigest()}")
+    print(f"7B firmware image: {len(image)} bytes, SHA-256 {hashlib.sha256(image).hexdigest()}")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("elf", type=Path)
     parser.add_argument("--interfaces", type=int, choices=(2, 3, 4), required=True)
-    parser.add_argument("--media-ssh-image", type=Path, metavar="BIN",
-                        help="also check the qualified USB bytes, linked media and SSH, and the BIN's ELF hash")
+    parser.add_argument("--firmware-image", "--media-ssh-image", type=Path, metavar="BIN",
+                        help="also check startup USB descriptors, linked services and the BIN's ELF hash")
     args = parser.parse_args()
-    if args.media_ssh_image and args.interfaces != 2:
-        parser.error("the media and SSH profile requires --interfaces 2")
+    if args.firmware_image and args.interfaces != 2:
+        parser.error("the 7B firmware starts with two HID interfaces")
     with open(args.elf, "rb") as fp:
         elf = ELFFile(fp)
         verify(elf, args.interfaces)
-        if args.media_ssh_image:
+        if args.firmware_image:
             try:
-                verify_media_ssh_image(elf, args.elf, args.media_ssh_image)
+                verify_firmware_image(elf, args.elf, args.firmware_image)
             except ValueError as exc:
                 parser.exit(1, f"FAIL: {exc}\n")
     print(f"PASS {args.interfaces} interfaces, endpoint map, descriptor lengths and report layouts")

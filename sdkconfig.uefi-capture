@@ -1,7 +1,0 @@
-# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-# Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
-# Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
-
-# Apply after the USB monitor or boot HID defaults. Storage is exposed only
-# during a screenshot session started from the local Extensions screen.
-CONFIG_KVM_USB_SCREENSHOT=y

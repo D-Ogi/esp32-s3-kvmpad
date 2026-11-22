@@ -39,9 +39,9 @@ Use the matching native helper for a restricted trial. It checks the selected mo
 - **MSFS** uses an out-of-process x64 SimConnect helper. Pass `-SimConnectSdk <SimConnect SDK directory>` to `build-capture.ps1` with the vendor `include/SimConnect.h` and `lib/SimConnect.lib` installed. Place the matching vendor runtime DLL where Windows can load it. The CLIENT looks for `kvmpad-msfs.exe` beside the capture picker. To use another copy, set `KVMPAD_HOST_MSFS` to the executable's full path before starting the CLIENT. The helper requests six Float64 SimVars on the user aircraft, asks the SDK for unit conversions, and maps the two flap actions to `FLAPS_INCR` and `FLAPS_DECR`. An accepted event remains unverified until observed in the simulator. [SimConnect requests](https://docs.flightsimulator.com/html/Programming_Tools/SimConnect/API_Reference/Events_And_Data/SimConnect_RequestDataOnSimObject.htm)
 - **OBS Studio** uses authenticated obs-websocket v5 on `127.0.0.1:4455`. Enable the WebSocket server and authentication in OBS. In the **KVMpad HOST** window, enter the password in **Local OBS WebSocket password** and choose **Enable OBS**. For scene selection or input muting, set `KVMPAD_HOST_OBS_SCENE` or `KVMPAD_HOST_OBS_INPUT` to the corresponding OBS name before starting the CLIENT. Physical buttons in **HOST** request recording status, start/stop, scene selection and input mute/unmute. Each command needs foreground approval. The HOST reads application state after a successful request. Disconnects and uncertain outcomes never trigger an automatic retry. [obs-websocket protocol](https://github.com/obsproject/obs-websocket/blob/master/docs/generated/protocol.md)
 
-## Studio over USB
+## Studio HID test harness
 
-The candidate four-interface USB personality has a Studio HID collection. Use this entry point for local USB OBS control, including when Wi-Fi is unavailable. It runs in the current Windows user session.
+The four-interface test fixture includes a Studio HID collection for exercising the USB OBS agent in the current Windows user session. The standard 7B exposes a boot keyboard and mouse. To control OBS from that firmware, use the paired HOST connection and approve OBS access in the HOST window.
 
 ```powershell
 & "$bin/kvmpad-studio-io.exe" --list

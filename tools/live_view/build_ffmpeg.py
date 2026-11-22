@@ -39,6 +39,18 @@ def stage_reconstruction(archive, src):
     subprocess.run(["git", "apply", "--whitespace=nowarn", str(patch)], cwd=src, check=True)
 
 
+def xtensa_specs(override, output):
+    if override is not None:
+        return override.resolve(strict=True)
+    # ESP-IDF 6.1 uses the toolchain specs with --gc-sections removed.
+    # Derive the same file before the firmware's first configure.
+    path = subprocess.check_output(["xtensa-esp32s3-elf-gcc", "--print-file-name=picolibc.specs"],
+                                   text=True).strip()
+    original = Path(path).resolve(strict=True)
+    output.write_text(original.read_text(encoding="ascii").replace("--gc-sections", ""), encoding="ascii")
+    return output
+
+
 def build(args):
     with args.archive.open("rb") as stream:
         if hashlib.file_digest(stream, "sha256").hexdigest() != ARCHIVE_SHA:
@@ -61,12 +73,11 @@ def build(args):
               "--enable-parser=h264", "--enable-demuxer=mov,h264", "--disable-asm", "--disable-network",
               "--disable-autodetect", "--disable-pthreads", "--disable-debug", "--enable-small"]
     if args.target == "xtensa":
-        if not args.specs or not args.specs.is_file():
-            raise ValueError("pass --specs pointing to the IDF build's specs/picolibc.specs")
+        specs = xtensa_specs(args.specs, dest / "picolibc.specs")
         opts = ["--enable-cross-compile", "--cross-prefix=xtensa-esp32s3-elf-", "--target-os=none",
                 "--arch=xtensa", "--malloc-prefix=kvm_av_",
                 "--extra-cflags=-mlongcalls -mdisable-hardware-atomics -ffunction-sections -fdata-sections "
-                + "-specs=" + args.specs.resolve().as_posix(),
+                + "-specs=" + specs.as_posix(),
                 "--extra-ldflags=-nostartfiles -Wl,-e,main -specs=nosys.specs"]
     elif sys.platform == "win32":
         opts = ["--enable-cross-compile", "--arch=x86_64", "--target-os=mingw32", "--cc=clang",
@@ -85,7 +96,7 @@ if __name__ == "__main__":
     parser.add_argument("archive", type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--target", required=True, choices=["xtensa", "host"])
-    parser.add_argument("--specs", type=Path)
+    parser.add_argument("--specs", type=Path, help="use existing ESP-IDF picolibc.specs for Xtensa")
     parser.add_argument("--shell", default="sh")
     parser.add_argument("--make", default="make")
     parser.add_argument("--jobs", default=8, type=int)

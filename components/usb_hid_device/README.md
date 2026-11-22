@@ -31,12 +31,12 @@ On a Linux USB host, run `python3 test/hil/usb_enum_linux.py --serial <board-ser
 
 ## Product behavior
 
-- The three-interface HID profile adds Consumer Control. The mouse supports `AC Pan` in report protocol and preserves the three-byte boot format (TECH-072/073).
-- **ESP32-S3 endpoint budget: 4 usable IN** (5 with EP0, TinyUSB `dwc2_esp32.h`). 3 × HID = 3 IN. USB CDC on the OTG port does not fit — debug through the USB-UART port.
+- The 7B exposes a boot keyboard and mouse. The mouse carries vertical wheel movement and horizontal `AC Pan` in report protocol and uses the three-byte format in boot protocol.
+- The ESP32-S3 has four usable non-control IN endpoints. Use the USB-UART port for debugging.
 
-## Four-interface candidate
+## Four-interface descriptor tests
 
-Use a fresh ESP-IDF build directory and a fresh SDKCONFIG. Apply `sdkconfig.defaults;sdkconfig.hpe` in that order through SDKCONFIG_DEFAULTS. To select the three-interface reference explicitly, set `SDKCONFIG_DEFAULTS=sdkconfig.defaults`. The default project configuration adds `sdkconfig.boot-hid`. A saved three-interface sdkconfig takes precedence over defaults. The profiles share the prototype VID/PID and per-device serial. Their descriptor revisions are 0x0100 (reference) and 0x0101 (candidate). The 500 mA power declaration still requires measurement on the 7B.
+The following table describes the four-interface test fixture. The standard 7B exposes only the boot keyboard and boot mouse at startup. The host harness exercises Precision Touchpad, Radial, Consumer, Studio and Joystick reports separately.
 
 | Interface | Interrupt endpoints | Reports |
 | --- | --- | --- |
@@ -55,7 +55,7 @@ Studio Basic tiles use Consumer shortcuts or balanced keyboard steps. Selecting 
 
 AccessPad provides direct taps, dwell, one-use modifiers and scanning. Scan selection locks on the press edge. A two-second hold stops scanning. Access timing exposes scan interval (600–4000 ms), dwell (600–1800 ms), debounce (20–200 ms) and cooldown (100–1000 ms). Apply sends the four values to the existing configuration writer. The NVS key `kvmpad_cfg/access_v1` holds the timing word so a three-interface build can continue using its schema-4 settings.
 
-Granting a Flight Yoke package access to the joystick also requires a qualified four-interface build. Enable `CONFIG_KVM_HPE_JOYSTICK_QUALIFIED` after FLIGHT-01..04/08 and Dial regression on the target. Developers can exercise the descriptor and serializer independently. The headless test builds the qualification branch against a typed recorder.
+The headless Flight Yoke test exercises joystick capability checks, descriptors and report serialization against a typed recorder.
 
 `test/host_unit/check_hpe_descriptors.py ELF --interfaces 4` reads the actual configuration and report tables from the unstripped ELF or the compiled USB object. Change the interface count to 3 for the reference. The parser uses pyelftools supplied with the pinned ESP-IDF environment.
 
@@ -65,7 +65,7 @@ Run `python test/usb_device/check_session.py --cc clang --out BUILD_DIR` with th
 
 ## USB monitor evaluation on the 7B
 
-The default 7B build starts with a boot keyboard and mouse. For other profiles, see the [USB build instructions](../../docs/HANDBOOK.md#usb-startup-and-display-profiles). On the board, open
+The 7B starts with a boot keyboard and mouse. See [USB startup and display modes](../../docs/HANDBOOK.md#usb-startup-and-display-modes). On the board, open
 **Extensions → USB monitor** and select a display mode. For the display-only profile, the native port disconnects and re-enumerates as `303A:2987`.
 **Home** restores HID with the same board serial. Both switches take place in
 RAM and preserve the saved CLIENT pairing.

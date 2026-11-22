@@ -2,7 +2,7 @@
 
 ### BIOS Setup screenshots
 
-The `sdkconfig.uefi-capture` overlay adds **Extensions → USB monitor → BIOS screenshots / USB drive**.
+On the 7B, open **Extensions → USB monitor → BIOS screenshots / USB drive** to start a local capture session.
 On first use the board creates a 32 MiB FAT16 image at `/KVM-CAP/CAPTURE.IMG` on microSD.
 The PC sees the private `KVMPADSHOT` volume, a boot keyboard, and a boot mouse.
 In Gigabyte Intel 700 BIOS Setup, use **F12 / Capture**, choose that volume if
@@ -43,7 +43,7 @@ When the 640×480 desktop stays completely black for one second, the footer sugg
 onto the monitor. Repeated black pictures keep the hint visible below the 640×480 desktop.
 A presentation with any nonzero RGB565 pixel clears the hint. USB suspend temporarily hides it.
 
-The `sdkconfig.usb-monitor-eval` profile adds **Extensions → USB monitor**. Open it locally to switch the device USB port to the display-only personality. In the Windows trial, xfz1986 sent the extended desktop to the 640×480 monitor. **Home** closes the monitor and restores the normal HID device. At 640×480, Home remains outside the picture. At 1024×600, the picture fills the LCD. Tap anywhere on the picture to reveal Home for three seconds, then tap Home to leave. [Espressif example](https://github.com/espressif/esp-iot-solution/tree/master/examples/usb/device/usb_extend_screen) · [Windows driver documentation](https://github.com/espressif/esp-iot-solution/tree/master/examples/usb/device/usb_extend_screen/windows_driver)
+Open **Extensions → USB monitor** on the 7B and select the Windows display mode to switch the native USB port to a wired display session. In the Windows trial, xfz1986 sent the extended desktop to the 640×480 monitor. **Home** closes the monitor and restores the normal HID device. At 640×480, Home remains outside the picture. At 1024×600, the picture fills the LCD. Tap anywhere on the picture to reveal Home for three seconds, then tap Home to leave. [Espressif example](https://github.com/espressif/esp-iot-solution/tree/master/examples/usb/device/usb_extend_screen) · [Windows driver documentation](https://github.com/espressif/esp-iot-solution/tree/master/examples/usb/device/usb_extend_screen/windows_driver)
 
 The vendor interface advertises `R640x480_Ejpg4_Fps10_Bl96` or `R1024x600_Ejpg4_Fps10_Bl96` for the selected session. The firmware receives complete JPEG images through bulk OUT. The 16-byte little-endian header carries the format, rectangle, a 10-bit wrapping frame ID and a 22-bit payload length. Format 3 covers the full rectangle at (0,0). The receiver consumes unsupported records, including the optional zero-length END record. It accepts headers split across transfers and multiple records in one transfer. [Espressif receiver](https://github.com/espressif/esp-iot-solution/blob/master/examples/usb/device/usb_extend_screen/main/app_vendor.c) · [Driver capability string](https://github.com/chuanjinpang/win10_idd_xfz1986_usb_graphic_driver_display)
 

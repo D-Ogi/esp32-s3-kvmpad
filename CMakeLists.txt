@@ -5,26 +5,20 @@
 # KVMpad firmware — ESP-IDF v6.1 project (TASK-000, spec 02 §2/§11).
 cmake_minimum_required(VERSION 3.22)
 
-option(KVM_MEDIA_SSH_PROFILE "Build the 7B media player, USB monitor and paired SSH with boot HID" OFF)
-if(KVM_MEDIA_SSH_PROFILE)
-    if(NOT KVM_MEDIA_FFMPEG)
-        message(FATAL_ERROR "Set KVM_MEDIA_FFMPEG to the Xtensa decoder build for the media and SSH profile")
-    endif()
-    if(NOT SDKCONFIG)
-        set(SDKCONFIG "${CMAKE_BINARY_DIR}/sdkconfig")
-    endif()
-    if(CMAKE_HOST_WIN32 AND NOT DEFINED CMAKE_NINJA_FORCE_RESPONSE_FILE)
-        set(CMAKE_NINJA_FORCE_RESPONSE_FILE ON CACHE BOOL "Use response files for Ninja commands")
-    endif()
+# All hosts use the same firmware. This path selects the decoder dependency.
+set(decoder_default "$ENV{KVM_MEDIA_FFMPEG}")
+if(NOT decoder_default)
+    set(decoder_default "${CMAKE_CURRENT_SOURCE_DIR}/../ffmpeg-build/xtensa")
 endif()
-
-# Use the startup interfaces and local monitor entry on a fresh
-# build. Explicit IDF profiles (including the three-interface base) take precedence.
-if(NOT DEFINED SDKCONFIG_DEFAULTS AND "$ENV{SDKCONFIG_DEFAULTS}" STREQUAL "")
-    set(SDKCONFIG_DEFAULTS "sdkconfig.defaults;sdkconfig.boot-hid")
-    if(KVM_MEDIA_SSH_PROFILE)
-        list(APPEND SDKCONFIG_DEFAULTS sdkconfig.media sdkconfig.ssh-board)
-    endif()
+set(KVM_MEDIA_FFMPEG "${decoder_default}" CACHE PATH "Prepared Xtensa FFmpeg decoder")
+if(NOT EXISTS "${KVM_MEDIA_FFMPEG}/libavcodec/libavcodec.a")
+    message(FATAL_ERROR "Prepare the Xtensa decoder as described in docs/HANDBOOK.md. Set KVM_MEDIA_FFMPEG to its build directory.")
+endif()
+if(NOT SDKCONFIG)
+    set(SDKCONFIG "${CMAKE_BINARY_DIR}/sdkconfig")
+endif()
+if(CMAKE_HOST_WIN32 AND NOT DEFINED CMAKE_NINJA_FORCE_RESPONSE_FILE)
+    set(CMAKE_NINJA_FORCE_RESPONSE_FILE ON CACHE BOOL "Use response files for Ninja commands")
 endif()
 
 # Components that are still DESIGNED-only (README without sources) are excluded so the build
@@ -35,33 +29,27 @@ set(EXCLUDE_COMPONENTS
 include("${CMAKE_CURRENT_LIST_DIR}/tools/cmake/kvmpad_fatfs.cmake")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-if(KVM_MEDIA_SSH_PROFILE)
-    # The first component-manager pass runs before Kconfig enables SSH. Its
-    # provisional solution can omit optional packages that the final pass needs.
-    set(media_lock "${CMAKE_CURRENT_LIST_DIR}/dependencies.media-ssh.lock")
-    set(resolved_lock "${CMAKE_BINARY_DIR}/dependencies.media-ssh.lock")
-    configure_file("${media_lock}" "${resolved_lock}" COPYONLY)
-    idf_build_set_property(DEPENDENCIES_LOCK "${resolved_lock}")
-    idf_build_get_property(idf_python PYTHON)
-    set(constraints_file "${CMAKE_BINARY_DIR}/media-ssh-constraints.txt")
-    execute_process(COMMAND "${idf_python}" "${CMAKE_CURRENT_LIST_DIR}/tools/cmake/media_ssh_constraints.py"
-                    "${media_lock}" "${constraints_file}" COMMAND_ERROR_IS_FATAL ANY)
-    set(ENV{IDF_COMPONENT_CONSTRAINT_FILES} "$ENV{IDF_COMPONENT_CONSTRAINT_FILES};${constraints_file}")
-endif()
+set(firmware_lock "${CMAKE_CURRENT_SOURCE_DIR}/dependencies.lock")
+set(resolved_lock "${CMAKE_BINARY_DIR}/dependencies.lock")
+configure_file("${firmware_lock}" "${resolved_lock}" COPYONLY)
+idf_build_set_property(DEPENDENCIES_LOCK "${resolved_lock}")
+idf_build_get_property(idf_python PYTHON)
+set(constraints_file "${CMAKE_BINARY_DIR}/component-constraints.txt")
+execute_process(COMMAND "${idf_python}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake/locked_constraints.py"
+                "${firmware_lock}" "${constraints_file}" COMMAND_ERROR_IS_FATAL ANY)
+set(ENV{IDF_COMPONENT_CONSTRAINT_FILES} "$ENV{IDF_COMPONENT_CONSTRAINT_FILES};${constraints_file}")
 project(kvmpad)
 
-if(KVM_MEDIA_SSH_PROFILE)
-    execute_process(COMMAND "${CMAKE_COMMAND}" -E compare_files --ignore-eol "${media_lock}" "${resolved_lock}"
-                    RESULT_VARIABLE lock_changed)
-    if(NOT lock_changed EQUAL 0)
-        message(FATAL_ERROR "Resolved managed components differ from dependencies.media-ssh.lock")
-    endif()
+execute_process(COMMAND "${CMAKE_COMMAND}" -E compare_files --ignore-eol "${firmware_lock}" "${resolved_lock}"
+                RESULT_VARIABLE lock_changed)
+if(lock_changed)
+    message(FATAL_ERROR "Resolved dependencies differ from dependencies.lock. Review the resolved lock in the build directory.")
 endif()
 
-if(KVM_MEDIA_SSH_PROFILE AND (NOT IDF_TARGET STREQUAL "esp32s3" OR
-   NOT CONFIG_TINYUSB_HID_COUNT EQUAL 2 OR NOT CONFIG_KVM_USB_MONITOR_EVAL OR
-   NOT CONFIG_KVM_SSH_BOARD OR NOT CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES))
-    message(FATAL_ERROR "The selected SDKCONFIG does not provide the signed 7B media and SSH profile. Use a fresh build directory and the profile defaults.")
+if(NOT IDF_TARGET STREQUAL "esp32s3" OR NOT CONFIG_TINYUSB_HID_COUNT EQUAL 2 OR
+   NOT CONFIG_KVM_SSH_BOARD OR NOT CONFIG_KVM_USB_MONITOR_EVAL OR NOT CONFIG_KVM_USB_GUD OR
+   NOT CONFIG_KVM_USB_SCREENSHOT OR NOT CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES)
+    message(FATAL_ERROR "The saved configuration differs from the 7B firmware defaults. Start with a fresh build directory.")
 endif()
 
 if(CONFIG_KVM_UI_ADAPTER_TEAR_DOUBLE_PARTIAL)

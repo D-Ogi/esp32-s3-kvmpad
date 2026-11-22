@@ -1,4 +1,18 @@
 dependencies:
+  david-cermak/libssh:
+    component_hash: ae8918caecfceb8c9ffb49ceb888bbfb0502a14748450e6e77f797970720d7ce
+    dependencies:
+    - name: espressif/sock_utils
+      registry_url: https://components.espressif.com
+      require: private
+      version: '*'
+    - name: idf
+      require: private
+      version: '>=5.2'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.12.2
   espressif/button:
     component_hash: 26345e8700d3c6435925f9a8f246d224f9c1b99f937c243fe400844eec514b4a
     dependencies:
@@ -48,7 +62,7 @@ dependencies:
       type: service
     version: 1.2.1
   espressif/esp_lv_decoder:
-    component_hash: 6e844411eb1089a6d971d25d08af0c00def2535a6a6c844acc42c85a7d80dd36
+    component_hash: e516e65106a78e973d031c8125441b8a9bf2deaefd7dfb06db47eb3de20827ec
     dependencies:
     - name: espressif/esp_new_jpeg
       registry_url: https://components.espressif.com
@@ -84,7 +98,7 @@ dependencies:
     - esp32c6
     - esp32c61
     - esp32h4
-    version: 0.5.0
+    version: 0.5.1
   espressif/esp_lv_fs:
     component_hash: 66896007884b817df34c964f9a114fff538ee2674e99fee7159162498b93f94b
     dependencies:
@@ -209,7 +223,7 @@ dependencies:
     - esp32s31
     version: 3.0.0
   espressif/freetype:
-    component_hash: aa9f7657a69b2b1c1f49044017fc424081d4e0fe6e97834cb43883548d44e3ca
+    component_hash: f31808b6826df6aa58713e7fc7bcdafaa9c28fab47d2b9e9684dac6d89e3aea3
     dependencies:
     - name: idf
       require: private
@@ -217,7 +231,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 2.14.3~1
+    version: 2.15.0
   espressif/knob:
     component_hash: b56694054cd34a683ac2a6f3661963ba00b1dab741a4f3bb59ed6666cbc9f3fb
     dependencies:
@@ -233,7 +247,7 @@ dependencies:
       type: service
     version: 1.1.0
   espressif/libpng:
-    component_hash: 9a576d8fbd0ddb29330e1f4c4fe82470b3e0e7eca71ea3bc4dce168d0b1088e3
+    component_hash: 7c9bc5c7b53e3a415855192732a75661b2a8f99ffc37b2dc354484b904d0c53a
     dependencies:
     - name: idf
       require: private
@@ -245,7 +259,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 1.6.59
+    version: 1.6.59~1
   espressif/mdns:
     component_hash: ef0766474b37459f6ad22461e453a8713e780e831a7c993b16919d817988dff6
     dependencies:
@@ -266,8 +280,18 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 0.20260529.0
+  espressif/sock_utils:
+    component_hash: d29adceff108c04e6ad32df4ed923780009f167e869980a3400349ba2586dbfa
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 0.3.0
   espressif/zlib:
-    component_hash: 61b7c41a6c7091085555a3cef58722af4bd9078e8708ee00a0e78efb997daf7c
+    component_hash: 93685dbbacd6fd620b2b7bcbfac628c4f1289e64f7a68fc7604e43dec517595e
     dependencies:
     - name: idf
       require: private
@@ -275,7 +299,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com
       type: service
-    version: 1.3.2~2
+    version: 1.4.0
   idf:
     source:
       type: idf
@@ -312,6 +336,7 @@ dependencies:
       type: service
     version: 9.6.0~1
 direct_dependencies:
+- david-cermak/libssh
 - espressif/esp_lcd_touch_gt911
 - espressif/esp_lvgl_adapter
 - espressif/esp_lvgl_port
@@ -319,6 +344,6 @@ direct_dependencies:
 - espressif/mdns
 - idf
 - lvgl/lvgl
-manifest_hash: 2262957085c946e01fa705600b11bdeb1fd6fc839b98a0a37536261c8c9af262
+manifest_hash: 7f9a7af887f424f092cf2bb9003b06af4f51006bd0cfb435882d3b46d6b2bc37
 target: esp32s3
 version: 3.0.0

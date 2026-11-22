@@ -4,5 +4,3 @@
 dependencies:
   david-cermak/libssh:
     version: "==0.12.2"
-    matches:
-      - if: "$CONFIG{KVM_SSH_BOARD} == True"

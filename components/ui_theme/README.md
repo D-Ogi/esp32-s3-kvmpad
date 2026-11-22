@@ -100,7 +100,7 @@ on `UI_COLOR_BG` rather than taken from the reference. The two tokens can be cha
   `tools/fonts/gen_hangul_font.py` rasterizes compatibility jamo and the 2350 KS X 1001 syllables of Noto Sans KR
   (OFL-1.1, `fonts/OFL-NotoSansKR.txt`, listed in `THIRD_PARTY_NOTICES.md`) at 24 px 4 bpp, uncompressed, with
   Montserrat 24 as the fallback for Latin. About 0.6 MB of flash. A syllable outside KS X 1001 still composes and is
-  sent; only its preview glyph is missing. Media firmware can read this same subset from a compressed
+  sent; only its preview glyph is missing. The 7B firmware can read this same subset from a compressed
   `font_hangul_24.bin` in `ime_data`.
 - `UI_FONT_HANZI` is not in the app image: the 3.3 MB hanzi font (16 580 glyphs of Noto Sans SC, 24 px
   4 bpp, LVGL-compressed, KVMFONT1 version 2) lives in the `ime_data` partition as a KVMFONT1 blob

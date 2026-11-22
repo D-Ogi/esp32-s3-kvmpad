@@ -69,12 +69,24 @@ CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID=y
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=6144
 
 # ---- Console: UART0 through the CH343 bridge only. The OTG port belongs to the HID device; the
-# ESP32-S3 has 4 usable IN endpoints and 3 are HID (ADR-018) — no CDC, no USB-Serial-JTAG console. ---
+# separate bridge keeps the console available in every native USB mode.
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 
 # ---- USB HID (TASK-050 USB part, ADR-018) -----------------------------------------------------------
-CONFIG_TINYUSB_HID_COUNT=3
+CONFIG_TINYUSB_HID_COUNT=2
+CONFIG_KVM_USB_MONITOR_EVAL=y
+CONFIG_KVM_USB_GUD=y
+CONFIG_KVM_USB_SCREENSHOT=y
+CONFIG_TINYUSB_VENDOR_COUNT=1
+CONFIG_TINYUSB_VENDOR_RX_BUFSIZE=0
+CONFIG_TINYUSB_VENDOR_TX_BUFSIZE=0
+CONFIG_TINYUSB_VENDOR_EPSIZE=64
+CONFIG_KVM_SSH_BOARD=y
+
+# Fit local video playback and the on-demand language modules in the 4 MiB OTA slot.
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+CONFIG_KVM_IME_KOREAN=n
 
 # ---- GT911 (TECH-014) -------------------------------------------------------------------------------
 CONFIG_ESP_LCD_TOUCH_MAX_POINTS=5
@@ -115,10 +127,9 @@ CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_LV_FONT_MONTSERRAT_24=y
 # TASK-072: the hanzi font in ime_data is a compressed KVMFONT1 blob (version 2), decoded by LVGL per glyph.
 CONFIG_LV_USE_FONT_COMPRESSED=y
-# TASK-060A benchmark only (turned off once ADR-013 is decided): LVGL's own benchmark demo and the
-# performance monitor in log mode (numbers for the summary, no label drawn over the scene).
-CONFIG_LV_BUILD_DEMOS=y
-CONFIG_LV_USE_DEMO_BENCHMARK=y
+# Keep the runtime performance counters without embedding the LVGL showcase.
+CONFIG_LV_BUILD_DEMOS=n
+CONFIG_LV_USE_DEMO_BENCHMARK=n
 CONFIG_LV_USE_SYSMON=y
 CONFIG_LV_USE_PERF_MONITOR=y
 CONFIG_LV_USE_PERF_MONITOR_LOG_MODE=y

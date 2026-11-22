@@ -48,13 +48,13 @@ TECH-078) have their own row in the vendored table above.
 | Espressif managed components pinned by `dependencies.lock` (2026-11-02): `esp_tinyusb`, `esp_lcd_touch`, `esp_lcd_touch_gt911`, `esp_lvgl_adapter`, `esp_lvgl_port` (until ADR-027 item 1), and the adapter's transitive `button`, `knob`, `cmake_utilities`, `esp_lv_decoder`, `esp_lv_fs`, `esp_mmap_assets` | Apache-2.0 (as declared in each component's manifest) |
 | `espressif/esp_new_jpeg` 1.0.2, Copyright (c) 2024 Espressif Systems (Shanghai) Co., Ltd. | ESPRESSIF MIT License for use on Espressif Systems products. The copyright and permission notice are in the component's [LICENSE](https://github.com/espressif/esp-adf-libs/blob/daee964980d14d7fcf9da10821827399ef600577/esp_new_jpeg/LICENSE). |
 | `espressif/freetype` (transitive, adapter) | FreeType License (FTL) / GPL-2.0 dual |
-| `david-cermak/libssh` 0.12.2 (optional device SSH endpoint) | GNU LGPL 2.1. The component includes upstream libssh and its license in `libssh-mirror/COPYING`. [Component sources](https://github.com/david-cermak/libssh) |
+| `david-cermak/libssh` 0.12.2 (device SSH endpoint) | GNU LGPL 2.1. The component includes upstream libssh and its license in `libssh-mirror/COPYING`. [Component sources](https://github.com/david-cermak/libssh) |
 | `espressif/sock_utils` (device SSH dependency) | Apache License 2.0. The component includes its license in `LICENSE`. |
 | `espressif/libpng`, `espressif/zlib`, `espressif/qoi` (transitive, adapter) | libpng-2.0 / Zlib / MIT |
 
 Exact versions are pinned in `dependencies.lock` from TASK-000 on; this table names licenses, not versions.
 
-ESP32-S3 media builds adapt zlib's `inffast.c` to fill long single-byte repeats and copy disjoint output matches in bulk. The generated source retains Mark Adler's copyright and zlib license notice. [Build adaptation](tools/cmake/kvmpad_zlib.cmake)
+The ESP32-S3 firmware adapts zlib's `inffast.c` to fill long single-byte repeats and copy disjoint output matches in bulk. The generated source retains Mark Adler's copyright and zlib license notice. [Build adaptation](tools/cmake/kvmpad_zlib.cmake)
 
 ## Built from the pinned ESP-IDF tree into other KVMpad binaries (not copied)
 
@@ -64,11 +64,11 @@ ESP32-S3 media builds adapt zlib's `inffast.c` to fill long single-byte repeats 
 | lodepng (inside LVGL, `LV_USE_LODEPNG`) | desktop simulator only (`simulator/lvgl_sdl`), never the firmware | Zlib |
 | TJpgDec, Copyright ChaN, 2012 | The live JPEG path calls the ESP32-S3 ROM decoder through the pinned ESP-IDF header. | TJpgDec notice in the SDK's `esp_rom/esp32s3/include/esp32s3/rom/tjpgd.h` |
 
-## Optional H.264 decoder
+## H.264 decoder
 
-H.264 builds link FFmpeg 6.1.1 `libavformat`, `libavcodec` and `libavutil` under LGPL-2.1-or-later. The configuration enables the H.264 decoder and parser and the MOV and raw H.264 demuxers. The source archive includes the upstream license, the matching upstream source, and the reconstruction overlays. Their upstream notices and licenses apply independently of the KVMpad license.
+The 7B firmware links FFmpeg 6.1.1 `libavformat`, `libavcodec` and `libavutil` under LGPL-2.1-or-later. The configuration enables the H.264 decoder and parser and the MOV and raw H.264 demuxers. The source archive includes the upstream license, the matching upstream source, and the reconstruction overlays. Their upstream notices and licenses apply independently of the KVMpad license.
 
-The build script verifies the source archive digest, stages the overlays and records the complete configure arguments. Rebuild those three archives and configure the firmware with `-DKVM_MEDIA_FFMPEG=<build-directory>` to relink. Distribution of a statically linked build requires providing the matching library source, changes and materials needed for relinking. [Build script](tools/live_view/build_ffmpeg.py)
+The build script verifies the source archive digest, stages the overlays and records the complete configure arguments. Rebuild those three archives, set `KVM_MEDIA_FFMPEG` to their build directory and run `idf.py build` to relink. Distribution of a statically linked build requires providing the matching library source, changes and materials needed for relinking. [Build script](tools/live_view/build_ffmpeg.py)
 
 The Windows CLIENT's managed projects take no NuGet package at run time; the test project's packages (xunit, the VSTest SDK) are
 pinned in `clients/windows/Directory.Packages.props` and are not shipped.

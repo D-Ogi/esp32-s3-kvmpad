@@ -11,9 +11,9 @@ The pairing protocol itself is `docs/ADR/ADR-029-pairing-wire-format-and-pake.md
 
 ## Direct SSH input
 
-Connect to the paired KVMpad in **Devices**, then open **Host input → SSH command…**. The action is available when the device advertises SSH over the authenticated connection. Choose your OpenSSH public key (`.pub`). CLIENT binds its public fingerprint, checks the board's SSH host key against the fingerprint supplied over paired TLS, and shows a PowerShell command.
+The standard 7B firmware supports SSH input. Enable remote access on the board and pair the Windows CLIENT. In **Devices**, connect to the board and open **Host input → SSH command…**. Select your OpenSSH public key (`.pub`). CLIENT binds that key to the current connection, verifies the board's SSH host key against the fingerprint received over paired TLS and shows a PowerShell command.
 
-Keep CLIENT connected, copy the command into PowerShell and approve the SSH control request on KVMpad. Windows OpenSSH uses the private file next to the selected public key or a matching key loaded in your SSH agent. The command connects to the same device on TCP port 22 as user `kvmpad`, using the `kvmpad` subsystem. Each command is one line. Disconnecting CLIENT ends the binding.
+Keep CLIENT connected. Run the generated command in PowerShell, then tap **Allow** on the board when it requests SSH control. Windows OpenSSH uses the private file next to the selected public key or a matching key loaded in your SSH agent. The command connects to the same device on TCP port 22 as user `kvmpad`, using the `kvmpad` subsystem. Each command is one line. Disconnecting CLIENT ends the binding.
 
 Windows OpenSSH Client supplies `ssh.exe` and `ssh-keyscan.exe`. The verified public host key is kept in its own file under `~/.ssh/kvmpad/`. The command uses that file for strict host verification.
 
@@ -166,7 +166,7 @@ The packaged client includes the editor, schema files, simulator and four exampl
 Open a source folder or an unsigned `.kvmpack` from **File**, or start from a template. Choose a widget
 type below the canvas, choose its **Parent** and select **Add widget**. A Column, Row or Grid can hold
 children. Drag a widget on the layout canvas or enter its coordinates relative to its parent in **Widget**.
-The Flight Yoke and Cursor Magnifier templates include the capability declarations for their respective controls.
+The Cursor Magnifier template declares its display controls. Flight Yoke demonstrates joystick bindings for the host-side test harness.
 Use **Apply widget changes** to update a label,
 move an action to an event, or bind a telemetry source or state variable to a property. The Manifest, UI and
 Bindings tabs edit the complete JSON documents. **Validate** checks the same rules as the pack CLI.

@@ -149,7 +149,17 @@ static void try_send(kvm_hid_core_t *core, uint8_t itf)
     if (s == NULL || !s->pending || core->in_flight[itf] || core->usb != KVM_HOST_USB_MOUNTED) {
         return;
     }
-    if (core->port.send != NULL && core->port.send(core->port.ctx, itf, s->buf, s->len)) {
+    // A host can change protocol while a busy endpoint is waiting for a retry.
+    uint8_t len = s->len;
+    if (itf == KVM_HID_ITF_MOUSE && protocol_of(core, itf) == KVM_HID_PROTOCOL_BOOT) {
+        if (s->buf[3] || s->buf[4]) { // Wheel intents are staged separately from motion and buttons.
+            s->pending = false;
+            core->c.wheel_dropped_boot++;
+            return;
+        }
+        len = KVM_HID_MOUSE_BOOT_LEN;
+    }
+    if (core->port.send != NULL && core->port.send(core->port.ctx, itf, s->buf, len)) {
 #if KVM_HID_HAS_HPE
         if (itf == KVM_HID_ITF_PTP) hpe_track_delivery(core, s->buf);
 #endif
@@ -179,7 +189,7 @@ void kvm_hid_core_repeat_keyboard(kvm_hid_core_t *core)
 static void stage_mouse(kvm_hid_core_t *core, int8_t dx, int8_t dy, int8_t wheel, int8_t pan)
 {
     staged_t *s = staged(core, KVM_HID_ITF_MOUSE);
-    s->len = (uint8_t)kvm_hid_build_mouse(s->buf, protocol_of(core, KVM_HID_ITF_MOUSE), core->buttons, dx, dy, wheel,
+    s->len = (uint8_t)kvm_hid_build_mouse(s->buf, KVM_HID_PROTOCOL_REPORT, core->buttons, dx, dy, wheel,
                                           pan);
     s->pending = true;
     try_send(core, KVM_HID_ITF_MOUSE);
@@ -210,7 +220,7 @@ static void stage_neutral(kvm_hid_core_t *core, uint8_t itf)
 #if KVM_HID_HAS_HPE
     s->len = hpe_neutral(core, itf, s->buf);
 #else
-    s->len = (uint8_t)kvm_hid_build_neutral(itf, protocol_of(core, itf), s->buf);
+    s->len = (uint8_t)kvm_hid_build_neutral(itf, KVM_HID_PROTOCOL_REPORT, s->buf);
 #endif
     s->pending = true;
     try_send(core, itf);
