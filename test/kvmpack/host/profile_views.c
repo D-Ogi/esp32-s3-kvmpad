@@ -52,7 +52,7 @@ void app_config_apply_mouse(kvm_gesture_cfg_t *gesture)
     gesture->speed=pointer_speed;
     gesture->longpress_right_click=hold_right;
 }
-static bool led_known;
+static bool led_known, usb_suspended;
 static uint8_t host_leds;
 static unsigned mount_epoch, failed_allocations, failed_profiles;
 static uint16_t monitor_pixels[1024*600];
@@ -89,6 +89,11 @@ esp_err_t usb_hid_device_set_monitor_controls(bool enable,bool native)
     usb_changes++;usb_controls=enable;return ESP_OK;
 }
 bool usb_hid_device_monitor_mounted(void) { return usb_mounted; }
+kvm_usb_state_t usb_hid_device_monitor_state(void)
+{
+    if (usb_suspended) return KVM_USB_SUSPENDED;
+    return usb_mounted ? KVM_USB_MOUNTED : KVM_USB_DETACHED;
+}
 void usb_hid_device_get_status(usb_hid_status_t *out)
 {
     *out=(usb_hid_status_t){.usb_epoch=mount_epoch,.led_known=led_known,.led_state=host_leds};
@@ -1519,6 +1524,17 @@ static void console_view(const char *output)
     lv_indev_reset(pointer,NULL);
     assert(snap.release_generation>generation);
     sim_release();
+    // Suspend keeps the known HOST LED in the same configuration while local input stops.
+    usb_mounted=false;usb_suspended=true;pack_view_tick();
+    assert(!pack_desktop_ready() && has_cap(key_surface,"Caps\nOn"));
+    n=reports;screen_tap(true,36,712);
+    assert(reports==n);
+    usb_suspended=false;usb_mounted=true;pack_view_tick();
+    assert(pack_desktop_ready() && has_cap(key_surface,"Caps\nOn"));
+    host_leds=5;pack_view_tick(); // Num and Scroll alone never light Caps.
+    assert(has_cap(key_surface,"Caps\nOff"));
+    host_leds=7;pack_view_tick();
+    assert(has_cap(key_surface,"Caps\nOn"));
     n=reports;
     screen_press(true,36,712);
     assert(reports==n+1 && recorded[n].type==KVM_HID_KEY_DOWN);
@@ -1527,11 +1543,17 @@ static void console_view(const char *output)
     assert(usb_mounted && !pack_desktop_ready()); // The previous USB mount is still reported.
     pack_view_tick();
     assert(has_cap(key_surface,"Caps\nUnknown"));
+    usb_mounted=false;usb_suspended=true;pack_view_tick();
+    assert(has_cap(key_surface,"Caps\nUnknown")); // previous configuration, even when suspended
+    usb_suspended=false;usb_mounted=true;
     n=reports;
     sim_release();screen_tap(true,36,712);
     assert(reports==n && !pack_desktop_change_mode(true));
-    // No poll saw the intermediate detach. The new mount still unblocks local input.
-    led_known=false;host_leds=0;mount_epoch++;pack_view_tick();sim_settle();
+    // The new host may report its LEDs and suspend before the UI sees the mount.
+    usb_mounted=false;usb_suspended=true;host_leds=0;mount_epoch++;pack_view_tick();
+    assert(!pack_desktop_ready() && has_cap(key_surface,"Caps\nOff"));
+    // A further configuration without an LED report stays Unknown.
+    usb_suspended=false;usb_mounted=true;led_known=false;mount_epoch++;pack_view_tick();sim_settle();
     assert(pack_desktop_ready() && visible_caption(screen,"Stop") && usb_changes==changes+1);
     check_waiting_pixels(viewport,true);
     assert(has_cap(key_surface,"Caps\nUnknown"));

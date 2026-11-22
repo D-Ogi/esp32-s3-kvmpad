@@ -91,6 +91,9 @@ static void gud_session(void)
     check_monitor_state(KVM_USB_MOUNTED);
     assert(usb_hid_device_interface_count() == 2 && usb().state == KVM_USB_MOUNTED);
     drain();
+    check_first_led(1, true);
+    check_lock_leds(1);
+    uint32_t led_reports = usb().led_reports;
     gud_stall(0xc0, 1, 0, 30); // Wrong recipient.
     gud_stall(0xc1, 1, 1, 30); // The keyboard interface cannot receive a GUD request.
     gud_get(1, 30, desc, 30);
@@ -142,6 +145,7 @@ static void gud_session(void)
     dcd_event_bus_signal(0, DCD_EVENT_SUSPEND, false);
     service();
     assert(gud.used == 64 && !gud_frames && snapshot().ledger_empty);
+    check_led(true, 2, led_reports);
     queue_bulk(row+64, 16);
     service();
     assert(gud.used == 64 && !gud_frames);
@@ -151,6 +155,7 @@ static void gud_session(void)
     queue_bulk(row+64, 16);
     service();
     assert(gud_frames == 1 && gud_received == 80 && received == windows_bytes);
+    check_led(true, 2, led_reports);
 
     gud_set(0x60, rect, sizeof(rect));
     queue_bulk(row, 64);
@@ -158,6 +163,7 @@ static void gud_session(void)
     unsigned before_reset = gud_resets;
     reset_bus();
     assert(gud_resets > before_reset && !gud.expected && !gud.committed);
+    check_led(false, 0, led_reports);
     configure(1);
     queue_bulk(row+64, 16);
     service();
@@ -165,6 +171,8 @@ static void gud_session(void)
     configure(0);
     gud_stall(0xc1, 1, 0, 30);
     configure(1); drain();
+    check_first_led(1, true);
+    led_reports = usb().led_reports;
     assert(hid_dispatch_local(&key) == ESP_OK);
     service();
     assert(snapshot().keys_down == 1);
@@ -179,6 +187,7 @@ static void gud_session(void)
     assert(descriptor(TUSB_DESC_DEVICE, 0, desc) == 18 && !memcmp(normal, desc, 18));
     configure(1); drain();
     assert(usb_hid_device_interface_count() == KVM_HID_ITF_COUNT && snapshot().ledger_empty);
+    check_led(false, 0, led_reports);
     check_input_report(0, 8, (const uint8_t[8]){0}, 8);
     gud_stall(0xc1, 1, 0, 30);
     puts("PASS GUD + boot keyboard/mouse: dispatched HID during fragmented video, neutral on suspend, resumed frame, reset and HID return");

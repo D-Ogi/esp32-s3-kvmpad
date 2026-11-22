@@ -282,6 +282,21 @@ static void check_first_led(uint8_t keyboard, bool on)
     status_stage(0x80);
     check_led(true, led, reports+1);
 }
+static void check_lock_leds(uint8_t keyboard)
+{
+    // All combinations of Num, Caps and Scroll, finishing with Caps on.
+    const uint8_t masks[] = {0, 1, 3, 7, 5, 4, 6, 2};
+    uint32_t reports = usb().led_reports;
+    for (unsigned i = 0; i < sizeof(masks); i++) {
+        set_report(keyboard, 0x0200, &masks[i], 1);
+        check_led(true, masks[i], ++reports);
+        setup(0xa1, HID_REQ_CONTROL_GET_REPORT, 0x0200, keyboard, 1);
+        assert(endpoint[0x80].pending && endpoint[0x80].len == 1 && endpoint[0x80].data[0] == masks[i]);
+        complete(0x80);
+        status_stage(0);
+    }
+    printf("PASS keyboard MI_%02u: all eight Num/Caps/Scroll masks match host SET_REPORT and GET_REPORT(Output).\n", keyboard);
+}
 #if CONFIG_KVM_USB_MONITOR_EVAL
 #include "monitor_wire.h"
 #include "usb_monitor_chart.h"
@@ -508,6 +523,7 @@ static void composite_session(const uint8_t *hid_device, const uint8_t *serial, 
         assert(stalls == before_stall+2);
         const uint8_t led = 2;
         check_first_led(1, true);
+        check_lock_leds(1);
         check_keyboard_idle(1, 0x82);
         uint32_t led_reports = usb().led_reports;
         setup(0x21,HID_REQ_CONTROL_SET_PROTOCOL,HID_PROTOCOL_BOOT,2,0);
@@ -926,6 +942,7 @@ int main(int argc, char **argv)
 #endif
     const uint8_t led = 2;
     check_first_led(0, true);
+    check_lock_leds(0);
     uint32_t led_reports = usb().led_reports;
     setup(0x21, HID_REQ_CONTROL_SET_PROTOCOL, HID_PROTOCOL_BOOT, 1, 0);
     status_stage(0x80);

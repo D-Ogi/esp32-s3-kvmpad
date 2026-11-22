@@ -116,6 +116,8 @@ static void screenshot_session(const char *path)
     drain();
     assert(usb_hid_device_interface_count() == 2 && usb().state == KVM_USB_MOUNTED);
     check_first_led(1, true);
+    check_lock_leds(1);
+    uint32_t led_reports = usb().led_reports;
     assert(usb_hid_device_screenshot_present(card_inserted));
     setup(0x21, HID_REQ_CONTROL_SET_PROTOCOL, HID_PROTOCOL_BOOT, 2, 0);
     status_stage(0x80);
@@ -153,6 +155,7 @@ static void screenshot_session(const char *path)
     assert(endpoint[0x82].len == 8 && endpoint[0x82].data[2] == 4 && snapshot().keys_down == 1);
     refuse_alarm = true;
     assert(usb_hid_device_screenshot_end() == ESP_OK && drained == 1 && !manager);
+    check_led(false, 0, led_reports);
     assert(snapshot().ledger_empty);
     assert(!fseek(image, 63001 * 512, SEEK_SET) && fread(buffer, 1, 512, image) == 512 && !memcmp(sector, buffer, 512));
     assert(!fclose(image));
@@ -162,6 +165,7 @@ static void screenshot_session(const char *path)
     refuse_alarm = false;
     assert(descriptor(TUSB_DESC_DEVICE, 0, desc) == 18 && !memcmp(initial, desc, 18));
     configure(1); drain();
+    check_led(false, 0, led_reports);
     image = fopen(path, "rb+");
     assert(image && usb_hid_device_screenshot_begin(image) == ESP_OK);
     assert(!usb_hid_device_screenshot_present(card_removed));

@@ -341,8 +341,11 @@ void pack_desktop_tick(lv_obj_t *keyboard)
     bool ready=pack_desktop_ready();
     if (keyboard) {
         usb_hid_status_t usb={0};
-        if (ready) usb_hid_device_get_status(&usb);
-        pack_keyboard_surface_set_caps(keyboard,usb.led_known,(usb.led_state & KVM_HID_LED_CAPS_LOCK)!=0);
+        // A suspended console keeps its HOST LED report while input is disabled.
+        if (ready || (running && usb_hid_device_monitor_state()==KVM_USB_SUSPENDED))
+            usb_hid_device_get_status(&usb);
+        bool current=!awaiting_mount || usb.usb_epoch!=previous_usb_epoch;
+        pack_keyboard_surface_set_caps(keyboard,current && usb.led_known,(usb.led_state & KVM_HID_LED_CAPS_LOCK)!=0);
     }
     if (ready==mounted) return;
     if (!ready) { release_inputs(); reset_view(); }
