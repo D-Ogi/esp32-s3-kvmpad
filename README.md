@@ -43,7 +43,7 @@ The **SSH server** runs on KVMpad. It translates commands such as `mouse move 20
 
 If CLIENT runs on the operator PC, the image comes from the operator PC. To magnify the target computer's desktop, run CLIENT and HOST on that Windows computer. [Cursor Magnifier setup](hosts/windows/README.md)
 
-**An extra USB display (experimental).** The target computer can send a desktop to KVMpad through its USB display driver. The portrait USB Monitor Console combines that desktop with a keyboard and touchpad. Linux requires the GUD driver and manual device setup. The external Windows driver fails signature verification. This feature requires a running operating system. [USB compatibility](docs/COMPATIBILITY.md)
+**An extra USB display (experimental).** The target computer can send a desktop to KVMpad through its USB display driver. The portrait USB Monitor Console combines that desktop with a keyboard and touchpad. Linux requires the GUD driver and manual device setup. We do not recommend the Windows driver. We cannot match the binary to public source code. The driver uses an untrusted test certificate. This feature requires a running operating system. [USB compatibility](docs/COMPATIBILITY.md)
 
 **A video from microSD.** Play H.264 clips under **Extensions → Video files**. Playback runs on the board. The Windows CLIENT can prepare clips that exceed the decoder’s available memory. [Prepare a video](clients/windows/README.md#prepare-an-h264-video-for-offline-playback)
 

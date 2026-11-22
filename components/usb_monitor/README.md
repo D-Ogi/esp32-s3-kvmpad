@@ -14,7 +14,7 @@ still until the next capture. The firmware screenshot command is available
 inside Setup. Early POST and ordinary Windows desktop output use different
 paths. [Gigabyte Intel 700 BIOS guide](https://download.gigabyte.com/FileList/Manual/mb_manual_intel700series-bios_e.pdf)
 
-The Windows extended-desktop trial used xfz1986 1.2.25.2. The catalog timestamp failed verification and the graphics DLL chained to an untrusted WDK test certificate. KVMpad does not recommend installing this package. The ordinary USB keyboard and mouse use the built-in Windows HID drivers. [USB and firmware compatibility](../../docs/COMPATIBILITY.md)
+We do not recommend the xfz1986 Windows display driver (1.2.25.2). We cannot match the binary to public source code. The driver uses an untrusted test certificate. The ordinary USB keyboard and mouse use the built-in Windows HID drivers. [USB and firmware compatibility](../../docs/COMPATIBILITY.md)
 
 While the receiver is open, `ui usb-monitor-status latency` reports microseconds spent receiving
 the JPEG payload, waiting for decoding, decoding, waiting for LVGL selection, and finishing the
