@@ -39,6 +39,7 @@ execute_process(COMMAND "${idf_python}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake
                 "${firmware_lock}" "${constraints_file}" COMMAND_ERROR_IS_FATAL ANY)
 set(ENV{IDF_COMPONENT_CONSTRAINT_FILES} "$ENV{IDF_COMPONENT_CONSTRAINT_FILES};${constraints_file}")
 project(kvmpad)
+include("${CMAKE_CURRENT_LIST_DIR}/tools/cmake/kvmpad_ssh_buffers.cmake")
 
 execute_process(COMMAND "${CMAKE_COMMAND}" -E compare_files --ignore-eol "${firmware_lock}" "${resolved_lock}"
                 RESULT_VARIABLE lock_changed)

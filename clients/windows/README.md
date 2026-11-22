@@ -15,7 +15,7 @@ The standard 7B firmware supports SSH input. Enable remote access on the board a
 
 Keep CLIENT connected. Run the generated command in PowerShell, then tap **Allow** on the board when it requests SSH control. Windows OpenSSH uses the private file next to the selected public key or a matching key loaded in your SSH agent. The command connects to the same device on TCP port 22 as user `kvmpad`, using the `kvmpad` subsystem. Each command is one line. Disconnecting CLIENT ends the binding.
 
-Windows OpenSSH Client supplies `ssh.exe` and `ssh-keyscan.exe`. The verified public host key is kept in its own file under `~/.ssh/kvmpad/`. The command uses that file for strict host verification.
+Windows OpenSSH Client supplies `ssh.exe` and `ssh-keyscan.exe`. On first use, CLIENT checks the SSH host key against the fingerprint from the paired connection and saves it under `~/.ssh/kvmpad/`. On later connections, CLIENT verifies the saved key against the current fingerprint. The generated command uses that file for strict host verification even if the board's IP address changes.
 
 ## Layout
 

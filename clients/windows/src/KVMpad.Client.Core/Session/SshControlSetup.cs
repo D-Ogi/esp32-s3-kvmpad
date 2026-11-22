@@ -24,10 +24,11 @@ public sealed class SshControlSetup(SessionLogic session, string host)
         string openssh = Path.Combine(Environment.SystemDirectory, "OpenSSH");
         string ssh = Path.Combine(openssh, "ssh.exe");
         string scanner = Path.Combine(openssh, "ssh-keyscan.exe");
-        if (!File.Exists(ssh) || !File.Exists(scanner))
+        if (!File.Exists(ssh))
             throw new InvalidOperationException("The Windows OpenSSH Client is required for this command.");
         return PrepareAsync(publicKeyFile, Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ssh,
-            (address, cancel) => ScanAsync(scanner, address, 22, cancel), token);
+            (address, cancel) => File.Exists(scanner) ? ScanAsync(scanner, address, 22, cancel) :
+                throw new InvalidOperationException("Windows ssh-keyscan is required to read the SSH host key."), token);
     }
 
     internal async Task<string> PrepareAsync(string publicKeyFile, string home, string ssh,
@@ -57,34 +58,35 @@ public sealed class SshControlSetup(SessionLogic session, string host)
             !TryPublicBlob(fields[0], fields[1], out byte[] operatorBlob)) throw InvalidPublicKey();
 
         // Binding opens the board's SSH listener. A key scan only performs key exchange.
+        CheckSession();
         await session.BindSshKeyAsync(SHA256.HashData(operatorBlob), token).ConfigureAwait(false);
         CheckSession();
-        string scanned = await scan(host, token).ConfigureAwait(false);
-        string? boardKey = null;
-        foreach (string line in scanned.Split('\n'))
-        {
-            var parts = line.Trim().Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 3 && parts[1] == "ssh-ed25519" &&
-                TryPublicBlob(parts[1], parts[2], out var blob) &&
-                Convert.ToHexString(SHA256.HashData(blob)).Equals(pin, StringComparison.OrdinalIgnoreCase))
-            {
-                boardKey = Convert.ToBase64String(blob);
-                break;
-            }
-        }
-        if (boardKey == null)
-            throw new InvalidDataException("The SSH host key did not match the fingerprint from the paired connection.");
-        CheckSession();
-
         string alias = "kvmpad-" + pin.ToLowerInvariant();
         string relative = ".ssh/kvmpad/" + alias + ".hosts";
         string path = Path.Combine(home, relative);
+        string? boardKey = await ReadCachedKeyAsync(path, alias, pin, token).ConfigureAwait(false);
+        CheckSession();
+        if (boardKey == null)
+        {
+            string scanned;
+            try { scanned = await scan(host, token).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is IOException or TimeoutException)
+            {
+                CheckSession();
+                scanned = await scan(host, token).ConfigureAwait(false);
+            }
+            CheckSession();
+            boardKey = FindPinnedKey(scanned, pin, alias: null)
+                ?? throw new InvalidDataException("The SSH host key did not match the fingerprint from the paired connection.");
+        }
+
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         string temporary = path + "." + Guid.NewGuid().ToString("N");
         try
         {
             await File.WriteAllTextAsync(temporary, $"{alias} ssh-ed25519 {boardKey}\n", Encoding.ASCII, token)
                 .ConfigureAwait(false);
+            CheckSession();
             File.Move(temporary, path, overwrite: true);
         }
         finally { File.Delete(temporary); }
@@ -108,6 +110,34 @@ public sealed class SshControlSetup(SessionLogic session, string host)
 
     private static InvalidDataException InvalidPublicKey()
         => new("Choose a single OpenSSH Ed25519, ECDSA or RSA public key in .pub format.");
+
+    private static async Task<string?> ReadCachedKeyAsync(string path, string alias, string pin, CancellationToken token)
+    {
+        try
+        {
+            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+            long length = file.Length;
+            if (length is < 1 or > 16384) return null;
+            byte[] bytes = new byte[(int)length];
+            await file.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
+            return FindPinnedKey(Encoding.ASCII.GetString(bytes), pin, alias);
+        }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
+    }
+
+    private static string? FindPinnedKey(string records, string pin, string? alias)
+    {
+        foreach (string line in records.Split('\n'))
+        {
+            var parts = line.TrimEnd('\r').Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 3 && parts[0][0] is not ('#' or '@') && (alias == null || parts[0] == alias) &&
+                parts[1] == "ssh-ed25519" && TryPublicBlob(parts[1], parts[2], out var blob) &&
+                Convert.ToHexString(SHA256.HashData(blob)).Equals(pin, StringComparison.OrdinalIgnoreCase))
+                return Convert.ToBase64String(blob);
+        }
+        return null;
+    }
 
     private static bool TryPublicBlob(string type, string encoded, out byte[] blob)
     {
@@ -154,7 +184,7 @@ public sealed class SshControlSetup(SessionLogic session, string host)
             RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (string arg in new[] { "-T", "5", "-t", "ed25519", "-p", port.ToString(), address })
             start.ArgumentList.Add(arg);
-        using var process = Process.Start(start) ?? throw new IOException("Windows SSH key scan could not start.");
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("Windows SSH key scan could not start.");
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
         timeout.CancelAfter(TimeSpan.FromSeconds(8));
         try
@@ -162,8 +192,10 @@ public sealed class SshControlSetup(SessionLogic session, string host)
             Task<string> output = process.StandardOutput.ReadToEndAsync(timeout.Token);
             Task<string> errors = process.StandardError.ReadToEndAsync(timeout.Token);
             await Task.WhenAll(output, errors, process.WaitForExitAsync(timeout.Token)).ConfigureAwait(false);
-            if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(output.Result))
+            if (string.IsNullOrWhiteSpace(output.Result))
                 throw new IOException("Could not read the KVMpad SSH host key on TCP port 22. Keep the paired connection open and try again.");
+            if (process.ExitCode != 0)
+                throw new InvalidDataException("Windows SSH key scan returned incomplete host key data.");
             return output.Result;
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
