@@ -17,10 +17,20 @@ To prepare video files for microSD, install FFmpeg and ffprobe on the operator P
 
 1. Check the model label on the board. This image fits the **Waveshare ESP32-S3-Touch-LCD-7B** with 16 MiB of flash.
 2. Disconnect the native USB cable. Connect the **USB-UART** port to the operator PC with a data cable.
-3. Open **Tools → Board firmware** in CLIENT. Select the COM port for the CH343 bridge.
-4. Select **Install or recover from this PC**. Select **Choose backup and install**.
-5. Choose a new file for the 16 MiB backup. Check the board and port in the dialog. Select **OK**. Keep the cable connected until verification finishes.
-6. Check that the KVMpad touchscreen starts. Connect the native USB port to the computer you want to control.
+3. In CLIENT, select **Tools**. Select **Board firmware**.
+
+   ![Tools tab in KVMpad Client with the Board firmware button](images/client-tools.png)
+
+4. Select the USB-UART port for the CH343 bridge. The example shows COM3. Your port number can differ.
+5. Select **Install or recover from this PC**. Select **Choose backup and install**.
+
+   ![Board firmware with the CH343 port selected and Choose backup and install enabled](images/firmware-install.png)
+
+6. Choose a new file for the 16 MiB backup. Check the board and port in the dialog. Select **OK**. Keep the cable connected until verification finishes.
+7. Check that the KVMpad touchscreen starts. Connect the native USB port to the computer you want to control.
+8. Open **Mouse** on KVMpad. Slide one finger on the touchpad. Check that the pointer moves on the target computer.
+
+   ![Mouse screen on the KVMpad touchscreen in the Day theme, with the touchpad ready for input](images/day-mouse.png)
 
 CLIENT links the firmware locally. Allow about 425 MiB for the first download, including the two firmware packages and the Espressif tools. CLIENT checks the package hashes and the image signature before writing. You can also select **Save firmware** to create a reusable OTA `.bin` without a board.
 
@@ -33,8 +43,12 @@ Use the signed update to keep settings and the previous bootable slot.
 1. Put the signed `.bin` on an HTTPS server reachable from the board. Serve the file directly with a `Content-Length` header. The board requires an HTTP 200 response.
 2. Connect KVMpad to Wi-Fi. Connect its USB-UART port to the operator PC.
 3. Open **Tools → Board firmware**. Select the port. Select **Update a running KVMpad from an HTTPS server**.
-4. Enter the direct image URL. Select **Start signed update**. Select **OK**.
-5. Wait for CLIENT to report successful startup. Read the firmware version and slot.
+4. Enter the direct image URL from your HTTPS server. The screenshot shows an example address.
+
+   ![Board firmware in update mode with an example HTTPS image URL and the Start signed update button](images/firmware-update.png)
+
+5. Select **Start signed update**. Select **OK**.
+6. Wait for CLIENT to report successful startup. Read the firmware version and slot.
 
 The board checks the signing key against the running firmware. It restarts into the other slot and checks USB, input and the touchscreen. If the check fails, the bootloader can return to the previous slot. The PC does not need a Wi-Fi pairing to use the physical USB-UART port. [Firmware update procedure](OTA.md)
 
