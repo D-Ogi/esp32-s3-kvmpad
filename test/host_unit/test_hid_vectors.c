@@ -346,12 +346,11 @@ static void remote_while_suspended_or_offline(void)
 }
 
 #if KVM_HID_ITFS == 2
-static void boot_mount(bool reject_mouse, bool display)
+static void boot_mount(bool reject_mouse)
 {
     fh_init(&host);
     kvm_hid_port_t port=fh_port(&host);
     kvm_hid_core_init(&core,&port,NULL);
-    core.display_controls=display;
     host.refuse[KVM_HID_ITF_MOUSE]=reject_mouse;
     now=1000000;
     kvm_hid_core_set_usb(&core,KVM_HOST_USB_MOUNTED,1,now);
@@ -363,7 +362,7 @@ static void boot_mount(bool reject_mouse, bool display)
 static void local_keyboard_with_unopened_mouse(void)
 {
     for (unsigned refused=0;refused<2;refused++) {
-        boot_mount(refused,false);
+        boot_mount(refused);
         kvm_hid_intent_t move=fh_move(20,0);
         CHECK_EQ(kvm_hid_core_local(&core,&move,now),KVM_HID_ERR_BUSY);
         CHECK_EQ(kvm_hid_core_ui_key_down(&core,KVM_KEY_A,now),KVM_HID_OK);
@@ -395,8 +394,11 @@ static void boot_release_barriers(void)
 {
     kvm_hid_intent_t down=fh_key(KVM_HID_KEY_DOWN,KVM_KEY_A);
     for (int scenario=0;scenario<2;scenario++) {
-        boot_mount(false,scenario==0); // display + HID requires both IN completions
-        if (scenario==1) {
+        boot_mount(false);
+        if (scenario==0) {
+            // A new epoch reported without a detach keeps the full neutral barrier.
+            kvm_hid_core_set_usb(&core,KVM_HOST_USB_MOUNTED,2,++now);
+        } else {
             kvm_hid_core_set_usb(&core,KVM_HOST_USB_SUSPENDED,1,++now);
             CHECK_EQ(kvm_hid_core_ui_key_down(&core,KVM_KEY_A,now),KVM_HID_ERR_USB_SUSPENDED);
             kvm_hid_core_set_usb(&core,KVM_HOST_USB_MOUNTED,1,++now);
@@ -412,7 +414,7 @@ static void boot_release_barriers(void)
         CHECK_EQ(host.key_presses[KVM_KEY_A],1);
     }
 
-    boot_mount(false,false);
+    boot_mount(false);
     CHECK_EQ(kvm_hid_core_local(&core,&down,now),KVM_HID_OK);
     kvm_hid_core_poll(&core,now); // A is in flight
     kvm_hid_core_release_all(&core,KVM_RA_VIEW_CHANGE);
@@ -429,7 +431,7 @@ static void boot_release_barriers(void)
     kvm_hid_core_poll(&core,++now);
     CHECK_EQ(host.sum_dx,7);
 
-    boot_mount(false,false);
+    boot_mount(false);
     kvm_hid_core_on_report_failed(&core,KVM_HID_ITF_MOUSE); // retry only its first neutral
     CHECK_EQ(core.c.release_all,0);
     CHECK_EQ(kvm_hid_core_local(&core,&down,now),KVM_HID_OK);

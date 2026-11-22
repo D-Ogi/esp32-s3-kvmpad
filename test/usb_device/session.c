@@ -105,6 +105,14 @@ static void complete(uint8_t ep)
     dcd_event_xfer_complete(0, ep, endpoint[ep].len, XFER_RESULT_SUCCESS, false);
     service();
 }
+#if CONFIG_TINYUSB_HID_COUNT == 2 || CONFIG_KVM_USB_MONITOR_EVAL
+// Read one interrupt IN without completing transfers on any other endpoint.
+static void read_in(uint8_t ep,const uint8_t *bytes,size_t len)
+{
+    assert(endpoint[ep].pending && endpoint[ep].len==len && !memcmp(endpoint[ep].data,bytes,len));
+    complete(ep);
+}
+#endif
 static void drain(void)
 {
     for (unsigned pass = 0; pass < 50; ++pass) {
@@ -460,6 +468,99 @@ static void check_monitor_suspend(void)
            "%zu-byte chart records matched, including queued OUT before suspend and between resume/suspend. "
            "OUT while suspended was ignored.\n", chart_size);
 }
+// MI_00 belongs to the composite service. The two boot HID collections are
+// MI_01/EP82 and MI_02/EP83; a Linux host can open either without opening its peer.
+static void composite_first_reads(const char *personality)
+{
+    if (!KVM_HID_HAS_NEUTRAL_BARRIER) { // the legacy three-HID scheduler has separate pacing
+        drain();
+        return;
+    }
+    const uint8_t ep[] = {0x82, 0x83}, len[] = {8, 5}, zero[8] = {0};
+    const uint8_t pressed[2][8] = {{0,0,KVM_KEY_A}, {1}};
+    const kvm_hid_intent_t down[] = {
+        {.type=KVM_HID_KEY_DOWN, .data.key.usage_id=KVM_KEY_A},
+        {.type=KVM_HID_MOUSE_BTN_DOWN, .data.mouse_button.button_id=KVM_MOUSE_BTN_LEFT},
+    };
+    const kvm_hid_intent_t up[] = {
+        {.type=KVM_HID_KEY_UP, .data.key.usage_id=KVM_KEY_A},
+        {.type=KVM_HID_MOUSE_BTN_UP, .data.mouse_button.button_id=KVM_MOUSE_BTN_LEFT},
+    };
+    for (unsigned first=0; first<2; first++) {
+        unsigned peer=1-first;
+        if (first) { reset_bus(); configure(1); }
+        assert(snapshot().neutralizing && snapshot().ledger_empty && usb_hid_device_interface_count()==2);
+#if CONFIG_TINYUSB_HID_COUNT == 2
+        assert(snapshot().boot_unread==3);
+        for (unsigned i=0; i<2; i++) {
+            assert(hid_dispatch_local(&down[i])==ESP_ERR_INVALID_STATE);
+            assert(hid_dispatch_local(&up[i])==ESP_ERR_INVALID_STATE);
+        }
+        const kvm_hid_intent_t move={.type=KVM_HID_MOUSE_MOVE, .data.mouse_move={.dx=17,.dy=-9}};
+        assert(hid_dispatch_local(&move)==ESP_ERR_INVALID_STATE);
+        assert(hid_dispatch_ui_modifier_tap(KVM_KEY_LEFT_SHIFT)==ESP_ERR_INVALID_STATE);
+        // EP0 serves snapshots without consuming either interrupt IN.
+        check_input_report(1,8,zero,8); check_input_report(2,5,zero,5);
+        assert(snapshot().boot_unread==3);
+#else
+        assert(!snapshot().boot_unread);
+#endif
+        read_in(ep[first],zero,len[first]);
+        assert(!endpoint[ep[first]].pending);
+#if CONFIG_TINYUSB_HID_COUNT == 2
+        assert(snapshot().boot_unread==(1u<<peer));
+        now+=300000; usb_hid_device_request_pump(); service();
+        assert(hid_dispatch_local(&down[peer])==ESP_ERR_INVALID_STATE);
+#endif
+        assert(hid_dispatch_local(&down[first])==ESP_OK); service();
+#if CONFIG_TINYUSB_HID_COUNT != 2
+        // The extended build retains its full barrier even on a two-collection configuration.
+        assert(snapshot().neutralizing && !endpoint[ep[first]].pending);
+        read_in(ep[peer],zero,len[peer]);
+#endif
+        read_in(ep[first],pressed[first],len[first]);
+        assert(hid_dispatch_local(&up[first])==ESP_OK); service();
+        read_in(ep[first],zero,len[first]);
+#if CONFIG_TINYUSB_HID_COUNT == 2
+        read_in(ep[peer],zero,len[peer]);
+#endif
+        assert(!snapshot().neutralizing && snapshot().ledger_empty);
+        assert(!endpoint[ep[first]].pending && !endpoint[ep[peer]].pending);
+        // Only a new action may send input on the collection opened later.
+        assert(hid_dispatch_local(&down[peer])==ESP_OK); service();
+        read_in(ep[peer],pressed[peer],len[peer]);
+        assert(hid_dispatch_local(&up[peer])==ESP_OK); service();
+        read_in(ep[peer],zero,len[peer]);
+    }
+#if CONFIG_TINYUSB_HID_COUNT == 2
+    // Suspend a keyboard-only host with a real key held and its original mouse neutral unread.
+    reset_bus(); configure(1);
+    read_in(ep[0],zero,len[0]);
+    assert(hid_dispatch_local(&down[0])==ESP_OK); service();
+    read_in(ep[0],pressed[0],len[0]);
+    assert(snapshot().keys_down==1 && snapshot().boot_unread==2);
+#endif
+    dcd_event_bus_signal(0,DCD_EVENT_SUSPEND,false); service();
+    assert(snapshot().ledger_empty);
+    dcd_event_bus_signal(0,DCD_EVENT_RESUME,false); service();
+    assert(snapshot().neutralizing);
+    read_in(ep[0],zero,len[0]);
+    assert(hid_dispatch_local(&down[0])==ESP_OK); service();
+    assert(!endpoint[ep[0]].pending && snapshot().neutralizing);
+#if CONFIG_TINYUSB_HID_COUNT == 2
+    // Finishing the old transfer alone cannot satisfy the new resume barrier.
+    read_in(ep[1],zero,len[1]);
+    assert(!endpoint[ep[0]].pending && snapshot().neutralizing);
+#endif
+    read_in(ep[1],zero,len[1]);
+    read_in(ep[0],pressed[0],len[0]);
+    assert(hid_dispatch_local(&up[0])==ESP_OK); service();
+    read_in(ep[0],zero,len[0]);
+    assert(snapshot().ledger_empty && !snapshot().neutralizing);
+    printf("PASS %s: MI_01/MI_02 first reads %s; resume waited for both neutrals.\n", personality,
+           CONFIG_TINYUSB_HID_COUNT==2 ? "independent, no replay" : "waited for both neutrals");
+}
+
 static void composite_session(const uint8_t *hid_device, const uint8_t *serial, unsigned serial_len)
 {
     uint8_t bytes[255];
@@ -503,8 +604,7 @@ static void composite_session(const uint8_t *hid_device, const uint8_t *serial, 
         configure(1);
         check_monitor_state(KVM_USB_MOUNTED);
         assert(usb_hid_device_interface_count() == 2 && usb().state == KVM_USB_MOUNTED);
-        assert(snapshot().neutralizing && !snapshot().boot_unread);
-        drain();
+        composite_first_reads(sizes[mode]);
         assert(!snapshot().neutralizing && snapshot().ledger_empty);
         for (unsigned hid = 0; hid < 2; ++hid) {
             setup(0x81,TUSB_REQ_GET_DESCRIPTOR,HID_DESC_TYPE_REPORT << 8,hid+1,(uint16_t)lengths[hid]);
@@ -822,13 +922,6 @@ static void check_service_window(void)
 #include "remote_release_session.inc"
 
 #if CONFIG_TINYUSB_HID_COUNT == 2
-// Read completed packets at the interrupt IN endpoint, independently of the EP0 LED/control path.
-static void read_in(uint8_t ep,const uint8_t *bytes,size_t len)
-{
-    assert(endpoint[ep].pending && endpoint[ep].len==len && !memcmp(endpoint[ep].data,bytes,len));
-    complete(ep);
-}
-
 static void boot_host_reads_one_interface(void)
 {
     const uint8_t zero[8]={0}, key[8]={0,0,KVM_KEY_A}, moved[3]={0,3,0};

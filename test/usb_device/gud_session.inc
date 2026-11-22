@@ -90,7 +90,7 @@ static void gud_session(void)
     configure(1);
     check_monitor_state(KVM_USB_MOUNTED);
     assert(usb_hid_device_interface_count() == 2 && usb().state == KVM_USB_MOUNTED);
-    drain();
+    composite_first_reads("GUD");
     check_first_led(1, true);
     check_lock_leds(1);
     uint32_t led_reports = usb().led_reports;

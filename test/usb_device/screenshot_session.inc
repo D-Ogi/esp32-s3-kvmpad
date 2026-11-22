@@ -113,8 +113,8 @@ static void screenshot_session(const char *path)
     assert(desc[20] == 1 && desc[27] == 0x81 && desc[37] == TUSB_CLASS_HID && desc[39] == 1 &&
            desc[62] == TUSB_CLASS_HID && desc[64] == 2);
     configure(1);
-    drain();
     assert(usb_hid_device_interface_count() == 2 && usb().state == KVM_USB_MOUNTED);
+    composite_first_reads("Screenshot");
     check_first_led(1, true);
     check_lock_leds(1);
     uint32_t led_reports = usb().led_reports;

@@ -1086,7 +1086,9 @@ void kvm_hid_core_set_usb(kvm_hid_core_t *core, kvm_host_usb_t state, uint32_t u
     if (state == KVM_HOST_USB_MOUNTED) {
         core->usb = state;
         if (usb_epoch != core->usb_epoch || prev != KVM_HOST_USB_MOUNTED) {
-            core->independent_boot = KVM_HID_ITFS == 2 && core->interface_count == 2 && !core->display_controls &&
+            // A fresh pair of boot HID endpoints starts empty even when the configuration also
+            // carries display or storage data. The host may open either HID endpoint on its own.
+            core->independent_boot = KVM_HID_ITFS == 2 && core->interface_count == 2 &&
                                      usb_epoch != core->usb_epoch && prev != KVM_HOST_USB_SUSPENDED &&
                                      prev != KVM_HOST_USB_MOUNTED;
             if (usb_epoch != core->usb_epoch) {

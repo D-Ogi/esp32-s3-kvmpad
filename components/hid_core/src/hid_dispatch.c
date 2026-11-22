@@ -393,9 +393,6 @@ static void on_state(void *ctx, kvm_usb_state_t state, uint32_t usb_epoch)
 #endif
     if (state == KVM_USB_MOUNTED) {
         s_core.interface_count = usb_hid_device_interface_count();
-#if CONFIG_KVM_USB_MONITOR_EVAL && KVM_HID_ITFS == 2
-        s_core.display_controls = usb_hid_device_monitor_mounted();
-#endif
     }
     kvm_hid_core_set_usb(&s_core, map_usb(state), usb_epoch, now);
     kvm_hid_core_poll(&s_core, now); // a mount sends the neutral start reports right away (TECH-035)
