@@ -14,7 +14,7 @@ For the intervals observed on a physical board, see the [USB and firmware compat
 
 **Role:** USB layer: boot keyboard + boot mouse descriptors, TinyUSB callbacks, LED output, USB states (enum/suspend/ready).
 
-On a Linux USB host, run `python3 test/hil/usb_enum_linux.py --serial <board-serial>` with the normal profile active. The observer reads sysfs, checks the two boot interfaces and their input capabilities, and prints the kernel version and report descriptor hashes. The same command works inside a guest with direct USB passthrough for the whole board.
+On a Linux USB host, run `python3 test/hil/usb_enum_linux.py --serial <board-serial>` while the board is in its startup USB keyboard and mouse mode. The observer reads sysfs, checks the two boot interfaces and their input capabilities, and prints the kernel version and report descriptor hashes. The same command works inside a guest with direct USB passthrough for the whole board.
 
 **Tests.** Host report tests in `test/host_unit/test_usb_hid_reports.c`, Windows enumeration and LED feedback via `test/hil/usb_enum_windows.ps1 -CapsLed` (AT-HID-01), Linux and OVMF hardware passthrough results linked above.
 

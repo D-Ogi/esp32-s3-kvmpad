@@ -29,7 +29,7 @@ Connect the board's native USB port to the **target computer**. On the **operato
 
 ## What works today
 
-On the 7B, open **Extensions → USB monitor → Monochrome / Linux GUD** to use the experimental Linux monitor. **Home** returns the USB port to its keyboard and mouse profile. The board displayed an independent 640×480 monochrome X11 desktop, and Linux switched to 800×600 and back while connected. Separate tests verified pre-login console output with keyboard and mouse on the same cable, and a moving VGA pattern at 2 Hz. The Linux guest used its distribution's GUD driver with a manually registered test device ID. Automatic monitor discovery on stock Linux remains open. [Linux monitor qualification](components/usb_monitor/README.md)
+On the 7B, open **Extensions → USB monitor → Monochrome / Linux GUD** to use the experimental Linux monitor. Tap **Home** to leave the monitor and use the USB keyboard and mouse again. The board displayed an independent 640×480 monochrome X11 desktop, and Linux switched to 800×600 and back while connected. Separate tests verified pre-login console output with keyboard and mouse on the same cable, and a moving VGA pattern at 2 Hz. The Linux guest used its distribution's GUD driver with a manually registered test device ID. Automatic monitor discovery on stock Linux remains open. [Linux monitor qualification](components/usb_monitor/README.md)
 
 | Use case | How it works |
 | --- | --- |
@@ -44,7 +44,7 @@ On the Mouse screen, hold the ridged wheel above or below center to scroll. For 
 
 ## Hardware and development status
 
-The 7B runs the same firmware whichever computer you connect to its native USB port.
+The 7B runs one firmware image on every target computer. It starts as a USB keyboard and mouse. Select a monitor mode on the LCD when you want to use the board as a display. You can move the cable between computers without reflashing the board.
 
 The development board has a **1024 × 600 RGB565 panel**, a five-point GT911 touch controller, 16 MiB of flash and 8 MiB of PSRAM. Use the **native USB** connector for keyboard, mouse and display traffic. The separate **USB-UART** connector provides the development console. The original 800 × 480 specification predates the change to the 7B. [Measured board record](hardware/boards.md)
 
