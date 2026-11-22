@@ -2,7 +2,19 @@
 
 KVMpad lets you control a computer from a **Waveshare ESP32-S3-Touch-LCD-7B** or from another PC on the network. The board plugs into the target computer as a USB keyboard and mouse. You can type and scroll on its touchscreen or send input from the paired Windows CLIENT. Its 7-inch LCD can also show a magnified area of a Windows monitor from the paired HOST. Extended desktop over USB remains experimental.
 
+## Screen gallery
+
+These Day-theme screenshots come from the physical 7B framebuffer. The autopilot shows Pilot Panel's Demo mode. Open any image to see the captured detail.
+
 ![Mouse screen with a touchpad, scroll wheel and mouse buttons on the physical 7B in Day mode](docs/images/day-mouse.png)
+
+| Touchpad above the keyboard | Full keyboard |
+| --- | --- |
+| [![Hybrid keyboard with a touchpad and side controls](docs/images/day-hybrid.png)](docs/images/day-hybrid.png) | [![Full touchscreen keyboard](docs/images/day-keyboard.png)](docs/images/day-keyboard.png) |
+| **System shortcuts** | **Extensions menu** |
+| [![Shortcut categories and key combinations](docs/images/day-shortcuts.png)](docs/images/day-shortcuts.png) | [![Extensions menu on the board](docs/images/day-extensions.png)](docs/images/day-extensions.png) |
+| **Checklist extension** | **Pilot Panel autopilot** |
+| [![Before takeoff checklist with touch controls](docs/images/day-checklist.png)](docs/images/day-checklist.png) | [<img src="docs/images/pilot-autopilot-lcd.png" width="200" alt="Heading, altitude and vertical speed on the portrait autopilot screen">](docs/images/pilot-autopilot-lcd.png) |
 
 ## Control a computer remotely
 
@@ -29,18 +41,6 @@ On the 7B, open **Extensions → USB monitor → Monochrome / Linux GUD** to use
 | Extensions | Install a package from a FAT32 or exFAT microSD card and review its permissions on the LCD. Swipe up from the bottom of a multi-screen extension to switch screens or return Home. Pilot Panel includes an offline kneeboard with charts and checklists, plus radio, transponder and autopilot demos. [Pilot Panel](extensions/pilot-panel/) · [Extension examples](tools/kvmpack/examples/) |
 
 On the Mouse screen, hold the ridged wheel above or below center to scroll. For continuous pointer movement in Mouse, a hybrid keyboard or USB Console, slide a finger from the touchpad past its edge and hold. Move back onto the pad for ordinary pointer control.
-
-## Screen gallery
-
-These Day-theme screenshots come from the physical 7B framebuffer. The autopilot shows Pilot Panel's Demo mode. Open any image to see the captured detail.
-
-| Touchpad above the keyboard | Full keyboard |
-| --- | --- |
-| [![Hybrid keyboard with a touchpad and side controls](docs/images/day-hybrid.png)](docs/images/day-hybrid.png) | [![Full touchscreen keyboard](docs/images/day-keyboard.png)](docs/images/day-keyboard.png) |
-| **System shortcuts** | **Extensions menu** |
-| [![Shortcut categories and key combinations](docs/images/day-shortcuts.png)](docs/images/day-shortcuts.png) | [![Extensions menu on the board](docs/images/day-extensions.png)](docs/images/day-extensions.png) |
-| **Checklist extension** | **Pilot Panel autopilot** |
-| [![Before takeoff checklist with touch controls](docs/images/day-checklist.png)](docs/images/day-checklist.png) | [<img src="docs/images/pilot-autopilot-lcd.png" width="200" alt="Heading, altitude and vertical speed on the portrait autopilot screen">](docs/images/pilot-autopilot-lcd.png) |
 
 ## Hardware and development status
 
