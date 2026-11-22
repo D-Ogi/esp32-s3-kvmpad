@@ -42,9 +42,7 @@ typedef enum {
     MSG_REMOTE_REQUEST,
     MSG_REMOTE_GRANT,
     MSG_REMOTE_HEARTBEAT,
-    MSG_REMOTE_RELEASE,
-    MSG_REMOTE_DISCONNECT,
-    MSG_REMOTE_DISCONNECT_SYNC,
+    MSG_REMOTE_EPOCH_SYNC,
     MSG_BURST_START,  // steps in s_burst_slot (one slot: one burst request at a time)
     MSG_BURST_CANCEL, // value = kvm_release_reason_t
 } msg_kind_t;
@@ -52,9 +50,14 @@ typedef enum {
 typedef struct {
     msg_kind_t kind;
     uint32_t input_generation;
-    uint8_t usage;
-    bool flag;
-    uint32_t value;   // keep-alive interval, lease epoch (MSG_REMOTE) or sync call number
+    union {
+        struct {
+            uint8_t usage;
+            bool flag;
+            uint32_t value; // keep-alive interval, burst cancel reason or sync call number
+        };
+        uint64_t remote_sequence;
+    };
     uint64_t session; // MSG_REMOTE_*
     kvm_hid_intent_t intent;
 } msg_t;
@@ -68,6 +71,25 @@ static esp_timer_handle_t s_tick;
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t s_input_generation; // invalidates producer events across release and USB epochs
 static uint32_t s_release_bits; // pending RELEASE_ALL reasons (bit = kvm_release_reason_t)
+// A full input queue cannot block a release. Only the current lease can fill this slot.
+// Producers select it from the grant/revoke events; the USB owner rechecks it before acting.
+typedef enum { REMOTE_NO_STOP, REMOTE_CLEAR, REMOTE_OVERFLOW, REMOTE_REVOKE } remote_stop_kind_t;
+typedef struct {
+    remote_stop_kind_t kind;
+    uint64_t session, through;
+    uint32_t epoch, grant_call;
+    kvm_release_reason_t reason;
+} remote_stop_t;
+static remote_stop_t s_remote_stop;
+static uint64_t s_remote_sequence; // assigned before publishing a remote input to the queue
+static uint64_t s_remote_cutoff;   // USB owner only, reset at grant
+static uint32_t s_epoch_waiter;
+// A timed-out grant can still be queued when its connection closes.
+static uint64_t s_grant_session;
+static uint32_t s_grant_call;
+static uint32_t s_applying_grant; // USB owner only
+static bool s_grant_cancelled;
+static kvm_release_reason_t s_grant_cancel_reason;
 static kvm_hid_snapshot_t s_snap;
 static kvm_hid_counters_t s_counters;
 #if KVM_HID_HAS_HPE
@@ -140,6 +162,19 @@ static void port_event(void *ctx, const kvm_hid_event_t *ev)
         break;
     case KVM_HID_EV_REMOTE_GRANTED:
     case KVM_HID_EV_REMOTE_REVOKED:
+        portENTER_CRITICAL(&s_mux);
+        s_remote_stop = (remote_stop_t){0};
+        if (ev->kind == KVM_HID_EV_REMOTE_GRANTED) {
+            s_remote_stop.session = ev->session_id;
+            s_remote_stop.epoch = ev->epoch;
+            s_remote_stop.grant_call = s_applying_grant;
+            s_remote_cutoff = 0;
+            if (s_applying_grant != s_grant_call || s_grant_cancelled) {
+                s_remote_stop.kind = REMOTE_REVOKE;
+                s_remote_stop.reason = s_applying_grant == s_grant_call ? s_grant_cancel_reason : KVM_RA_REMOTE_DISCONNECT;
+            }
+        }
+        portEXIT_CRITICAL(&s_mux);
         ESP_LOGI(TAG, "remote %s, epoch %lu", ev->kind == KVM_HID_EV_REMOTE_GRANTED ? "granted" : "revoked",
                  (unsigned long)ev->epoch);
         break;
@@ -176,10 +211,53 @@ static void publish(void)
     portEXIT_CRITICAL(&s_mux);
 }
 
+static void answer_sync(uint32_t call, kvm_hid_err_t err, uint32_t epoch)
+{
+    portENTER_CRITICAL(&s_mux);
+    bool current = call == s_sync_call;
+    if (current) {
+        s_sync_err = err;
+        s_sync_epoch = epoch;
+        s_sync_answered = call;
+    }
+    portEXIT_CRITICAL(&s_mux);
+    if (current) xSemaphoreGive(s_sync_done);
+}
+
+static void service_remote_stop(uint64_t now)
+{
+    portENTER_CRITICAL(&s_mux);
+    if (s_remote_stop.kind == REMOTE_NO_STOP && !s_epoch_waiter) {
+        portEXIT_CRITICAL(&s_mux);
+        return;
+    }
+    remote_stop_t stop = s_remote_stop;
+    s_remote_stop.kind = REMOTE_NO_STOP;
+    uint32_t waiter = s_epoch_waiter;
+    s_epoch_waiter = 0;
+    portEXIT_CRITICAL(&s_mux);
+    const kvm_control_owner_t *owner = kvm_hid_core_owner(&s_core);
+    if (stop.kind != REMOTE_NO_STOP && owner->kind == OWNER_REMOTE &&
+        owner->session_id == stop.session && owner->epoch == stop.epoch) {
+        if (stop.kind == REMOTE_REVOKE) {
+            kvm_hid_core_remote_revoke(&s_core, stop.session, stop.reason);
+        } else if (stop.kind == REMOTE_OVERFLOW) {
+            kvm_hid_core_release_all(&s_core, KVM_RA_QUEUE_OVERFLOW);
+            s_remote_cutoff = stop.through;
+        } else {
+            const kvm_hid_intent_t release = {.type = KVM_HID_RELEASE_ALL, .origin = KVM_ORIGIN_REMOTE};
+            if (kvm_hid_core_remote(&s_core, stop.session, stop.epoch, &release, now) == KVM_HID_OK)
+                s_remote_cutoff = stop.through;
+        }
+    }
+    if (waiter) answer_sync(waiter, KVM_HID_OK, owner->epoch);
+}
+
 static void apply(const msg_t *m, uint64_t now)
 {
     portENTER_CRITICAL(&s_mux);
     bool stale = m->input_generation != s_input_generation;
+    if (m->kind == MSG_REMOTE_GRANT && (m->value != s_grant_call || s_grant_cancelled)) stale = true;
     portEXIT_CRITICAL(&s_mux);
     if (stale && (m->kind == MSG_LOCAL || m->kind == MSG_REMOTE || m->kind == MSG_UI_TAP ||
                   m->kind == MSG_UI_DOWN || m->kind == MSG_UI_UP)) return;
@@ -203,42 +281,36 @@ static void apply(const msg_t *m, uint64_t now)
         kvm_hid_core_set_keepalive(&s_core, m->flag, m->value);
         break;
     case MSG_REMOTE:
-        (void)kvm_hid_core_remote(&s_core, m->session, m->value, &m->intent, now); // owner + epoch checked here
+        service_remote_stop(now);
+        if (m->remote_sequence <= s_remote_cutoff) break;
+        (void)kvm_hid_core_remote(&s_core, m->session, m->intent.epoch, &m->intent, now);
         break;
     case MSG_REMOTE_REQUEST:
-    case MSG_REMOTE_GRANT:
-    case MSG_REMOTE_DISCONNECT_SYNC: {
+    case MSG_REMOTE_GRANT: {
         uint32_t epoch = 0;
         kvm_hid_err_t e = KVM_HID_OK;
-        if (stale && m->kind != MSG_REMOTE_DISCONNECT_SYNC) {
+        if (stale) {
             // Answer approvals queued before a USB/ownership transition without granting a new lease.
             e = KVM_HID_ERR_CONTROL_DENIED;
         } else if (m->kind == MSG_REMOTE_REQUEST) {
             e = kvm_hid_core_remote_request(&s_core, m->session, now);
-        } else if (m->kind == MSG_REMOTE_GRANT) {
-            e = kvm_hid_core_remote_grant(&s_core, m->session, now, &epoch);
         } else {
-            kvm_hid_core_remote_disconnect(&s_core, m->session);
-            kvm_hid_snapshot_t snap;
-            kvm_hid_core_snapshot(&s_core, &snap);
-            epoch = snap.owner_epoch; // the epoch in force after the revoke (03 §4.2 INV-002)
+            s_applying_grant = m->value;
+            e = kvm_hid_core_remote_grant(&s_core, m->session, now, &epoch);
+            s_applying_grant = 0;
+            service_remote_stop(now);
+            if (e == KVM_HID_OK && kvm_hid_core_owner(&s_core)->epoch != epoch) {
+                e = KVM_HID_ERR_CONTROL_DENIED;
+                epoch = 0;
+            }
         }
-        portENTER_CRITICAL(&s_mux);
-        s_sync_err = e;
-        s_sync_epoch = epoch;
-        s_sync_answered = m->value;
-        portEXIT_CRITICAL(&s_mux);
-        xSemaphoreGive(s_sync_done);
+        answer_sync(m->value, e, epoch);
         break;
     }
     case MSG_REMOTE_HEARTBEAT:
         kvm_hid_core_remote_heartbeat(&s_core, m->session, now);
         break;
-    case MSG_REMOTE_RELEASE:
-        kvm_hid_core_remote_release(&s_core, m->session);
-        break;
-    case MSG_REMOTE_DISCONNECT:
-        kvm_hid_core_remote_disconnect(&s_core, m->session);
+    case MSG_REMOTE_EPOCH_SYNC: // answered outside the input queue by service_remote_stop
         break;
     case MSG_BURST_START: {
         portENTER_CRITICAL(&s_mux);
@@ -281,10 +353,12 @@ static void pump(void *ctx)
             kvm_hid_core_release_all(&s_core, (kvm_release_reason_t)r);
         }
     }
+    service_remote_stop(now);
     msg_t m;
     for (int i = 0; i < PUMP_BATCH && xQueueReceive(s_q, &m, 0) == pdTRUE; i++) {
         apply(&m, now);
     }
+    service_remote_stop(now); // a close or release may have arrived during this batch
     kvm_hid_core_poll(&s_core, now);
     publish();
     const uint32_t dt = (uint32_t)(esp_timer_get_time() - t0);
@@ -343,7 +417,9 @@ static void on_complete(void *ctx, uint8_t itf)
 {
     (void)ctx;
     kvm_hid_core_on_report_complete(&s_core, itf);
-    kvm_hid_core_poll(&s_core, (uint64_t)esp_timer_get_time()); // next phase / next report without waiting for a tick
+    uint64_t now = (uint64_t)esp_timer_get_time();
+    service_remote_stop(now);
+    kvm_hid_core_poll(&s_core, now); // next phase / next report without waiting for a tick
     publish();
 }
 
@@ -420,6 +496,26 @@ static void tick_cb(void *arg)
 }
 
 // ---- producer API (any task) -------------------------------------------------------------------
+static void request_remote_stop(uint64_t session, uint32_t epoch, remote_stop_kind_t kind,
+                                kvm_release_reason_t reason)
+{
+    portENTER_CRITICAL(&s_mux);
+    if (kind == REMOTE_REVOKE && session && session == s_grant_session && !s_grant_cancelled) {
+        s_grant_cancelled = true;
+        s_grant_cancel_reason = reason;
+    }
+    if (session && session == s_remote_stop.session && (kind == REMOTE_REVOKE || epoch == s_remote_stop.epoch)) {
+        if (kind > s_remote_stop.kind) {
+            s_remote_stop.kind = kind;
+            s_remote_stop.reason = reason;
+        }
+        s_remote_stop.through = s_remote_sequence;
+        s_stats.release_requests++;
+    }
+    portEXIT_CRITICAL(&s_mux);
+    usb_hid_device_request_pump();
+}
+
 static esp_err_t post(const msg_t *m)
 {
     if (s_q == NULL) {
@@ -428,15 +524,22 @@ static esp_err_t post(const msg_t *m)
     msg_t entry = *m;
     portENTER_CRITICAL(&s_mux);
     entry.input_generation = s_input_generation;
+    if (m->kind == MSG_REMOTE) entry.remote_sequence = ++s_remote_sequence;
     portEXIT_CRITICAL(&s_mux);
     if (xQueueSend(s_q, &entry, 0) != pdTRUE) {
         // TECH-005: never let a lost UP leave a key pressed; release everything instead.
         portENTER_CRITICAL(&s_mux);
         s_stats.producer_queue_full++;
-        s_input_generation++;
-        s_release_bits |= 1u << KVM_RA_QUEUE_OVERFLOW;
+        bool remote = m->kind == MSG_REMOTE || m->kind == MSG_REMOTE_HEARTBEAT ||
+                      m->kind == MSG_REMOTE_REQUEST || m->kind == MSG_REMOTE_GRANT;
+        if (!remote) {
+            s_input_generation++;
+            s_release_bits |= 1u << KVM_RA_QUEUE_OVERFLOW;
+        }
         portEXIT_CRITICAL(&s_mux);
-        usb_hid_device_request_pump();
+        if (m->kind == MSG_REMOTE)
+            request_remote_stop(m->session, m->intent.epoch, REMOTE_OVERFLOW, KVM_RA_QUEUE_OVERFLOW);
+        else usb_hid_device_request_pump();
         return ESP_ERR_TIMEOUT;
     }
     portENTER_CRITICAL(&s_mux);
@@ -568,11 +671,12 @@ esp_err_t hid_dispatch_remote(uint64_t session_id, uint32_t lease_epoch, const k
     ESP_RETURN_ON_FALSE(intent != NULL, ESP_ERR_INVALID_ARG, TAG, "intent");
     if (!supports_intent(intent)) return ESP_ERR_NOT_SUPPORTED;
     if (intent->type == KVM_HID_RELEASE_ALL) {
-        hid_dispatch_release_all(KVM_RA_REQUEST);
+        request_remote_stop(session_id, lease_epoch, REMOTE_CLEAR, KVM_RA_REQUEST);
         return ESP_OK;
     }
-    msg_t m = {.kind = MSG_REMOTE, .session = session_id, .value = lease_epoch, .intent = *intent};
+    msg_t m = {.kind = MSG_REMOTE, .session = session_id, .intent = *intent};
     m.intent.origin = KVM_ORIGIN_REMOTE;
+    m.intent.epoch = lease_epoch;
     return post(&m);
 }
 
@@ -583,10 +687,21 @@ static kvm_hid_err_t remote_sync(msg_kind_t kind, uint64_t session_id, uint32_t 
         return KVM_HID_ERR_CONTROL_DENIED;
     }
     (void)xSemaphoreTake(s_sync_done, 0); // drop the late answer of an earlier, timed-out call
-    const uint32_t call = ++s_sync_call;
+    portENTER_CRITICAL(&s_mux);
+    if (++s_sync_call == 0) ++s_sync_call;
+    const uint32_t call = s_sync_call;
+    if (kind == MSG_REMOTE_GRANT) {
+        s_grant_session = session_id;
+        s_grant_call = call;
+        s_grant_cancelled = false;
+    }
+    if (kind == MSG_REMOTE_EPOCH_SYNC) s_epoch_waiter = call;
+    portEXIT_CRITICAL(&s_mux);
     msg_t m = {.kind = kind, .session = session_id, .value = call};
     kvm_hid_err_t e = KVM_HID_ERR_CONTROL_DENIED;
-    if (post(&m) == ESP_OK) {
+    bool answered = false;
+    if (kind == MSG_REMOTE_EPOCH_SYNC) usb_hid_device_request_pump();
+    if (kind == MSG_REMOTE_EPOCH_SYNC || post(&m) == ESP_OK) {
         const TickType_t t0 = xTaskGetTickCount();
         while (xSemaphoreTake(s_sync_done, pdMS_TO_TICKS(REMOTE_SYNC_MS)) == pdTRUE) {
             portENTER_CRITICAL(&s_mux);
@@ -595,6 +710,7 @@ static kvm_hid_err_t remote_sync(msg_kind_t kind, uint64_t session_id, uint32_t 
             const uint32_t epoch = s_sync_epoch;
             portEXIT_CRITICAL(&s_mux);
             if (mine) {
+                answered = true;
                 e = err;
                 if (lease_epoch != NULL) {
                     *lease_epoch = epoch;
@@ -606,8 +722,22 @@ static kvm_hid_err_t remote_sync(msg_kind_t kind, uint64_t session_id, uint32_t 
             }
         }
     }
-    // A grant answered only after this timeout leaves REMOTE as owner with no CLIENT that knows it; no heartbeat
-    // follows, so the core's lease timer revokes it and releases everything (TECH-044).
+    if (kind == MSG_REMOTE_GRANT && !answered) {
+        // Timeout can precede grant application, or follow it before the caller receives the
+        // acknowledgement. Only revoke a lease actually installed by this exact call.
+        portENTER_CRITICAL(&s_mux);
+        if (!s_grant_cancelled) {
+            s_grant_cancelled = true;
+            s_grant_cancel_reason = KVM_RA_REMOTE_DISCONNECT;
+        }
+        if (s_remote_stop.grant_call == call && s_remote_stop.session == session_id &&
+            s_remote_stop.kind != REMOTE_REVOKE) {
+            s_remote_stop.kind = REMOTE_REVOKE;
+            s_remote_stop.reason = s_grant_cancel_reason;
+        }
+        portEXIT_CRITICAL(&s_mux);
+        usb_hid_device_request_pump();
+    }
     xSemaphoreGive(s_sync_lock);
     return e;
 }
@@ -630,17 +760,14 @@ void hid_dispatch_remote_heartbeat(uint64_t session_id)
 
 void hid_dispatch_remote_release(uint64_t session_id)
 {
-    msg_t m = {.kind = MSG_REMOTE_RELEASE, .session = session_id};
-    (void)post(&m); // on a full queue post() has already raised the fail-safe RELEASE_ALL
+    hid_dispatch_remote_disconnect(session_id, KVM_RA_REMOTE_RELEASE);
 }
 
 uint32_t hid_dispatch_remote_disconnect_sync(uint64_t session_id, kvm_release_reason_t reason)
 {
-    hid_dispatch_release_all(reason); // first and never dropped (TECH-005)
+    hid_dispatch_remote_disconnect(session_id, reason);
     uint32_t epoch = 0;
-    if (remote_sync(MSG_REMOTE_DISCONNECT_SYNC, session_id, &epoch) != KVM_HID_OK) {
-        msg_t m = {.kind = MSG_REMOTE_DISCONNECT, .session = session_id};
-        (void)post(&m); // timed out: the revoke still happens, the caller just learns the epoch later
+    if (remote_sync(MSG_REMOTE_EPOCH_SYNC, session_id, &epoch) != KVM_HID_OK) {
         kvm_hid_snapshot_t snap;
         hid_dispatch_get_snapshot(&snap, NULL);
         epoch = snap.owner_epoch;
@@ -650,9 +777,8 @@ uint32_t hid_dispatch_remote_disconnect_sync(uint64_t session_id, kvm_release_re
 
 void hid_dispatch_remote_disconnect(uint64_t session_id, kvm_release_reason_t reason)
 {
-    hid_dispatch_release_all(reason); // never dropped, even when the queue is full (TECH-005)
-    msg_t m = {.kind = MSG_REMOTE_DISCONNECT, .session = session_id};
-    (void)post(&m);
+    if ((unsigned)reason >= KVM_RA_COUNT) reason = KVM_RA_REMOTE_DISCONNECT;
+    request_remote_stop(session_id, 0, REMOTE_REVOKE, reason);
 }
 
 void hid_dispatch_get_snapshot(kvm_hid_snapshot_t *out, uint32_t *seq)

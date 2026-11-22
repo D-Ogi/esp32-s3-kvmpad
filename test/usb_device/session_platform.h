@@ -37,9 +37,17 @@ esp_err_t esp_timer_start_once(esp_timer_handle_t timer, uint64_t us);
 esp_err_t esp_timer_delete(esp_timer_handle_t timer);
 #endif
 
+enum { DISPATCH_NORMALLY, TIMEOUT_BEFORE_PUMP, TIMEOUT_AFTER_PUMP };
+extern unsigned dispatch_wait_mode;
 static inline bool wait_for_dispatch(SemaphoreHandle_t s, unsigned wait)
 {
-    if (!*s && wait) tud_task_ext(0, false);
+    if (!*s && wait) {
+        unsigned mode = dispatch_wait_mode;
+        dispatch_wait_mode = DISPATCH_NORMALLY;
+        if (mode == TIMEOUT_BEFORE_PUMP) return false;
+        tud_task_ext(0, false);
+        if (mode == TIMEOUT_AFTER_PUMP) return false;
+    }
     return xSemaphoreTake(s, wait);
 }
 #define xSemaphoreTake wait_for_dispatch

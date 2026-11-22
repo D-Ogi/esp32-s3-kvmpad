@@ -66,9 +66,12 @@ static void remote_range_and_consumer_rules(void)
     kvm_hid_intent_t w = fh_wheel(0, -4097);
     CHECK_EQ(kvm_hid_core_remote(&core, SESSION, le, &w, now), KVM_HID_ERR_RANGE);
     kvm_hid_intent_t c = fh_consumer(KVM_HID_CONSUMER_DOWN, KVM_CONSUMER_VOLUME_UP);
-    CHECK_EQ(kvm_hid_core_remote(&core, SESSION, le, &c, now), KVM_HID_ERR_USAGE);
+    const bool consumer_available = KVM_HID_ITF_CONSUMER < KVM_HID_ITFS;
+    CHECK_EQ(kvm_hid_core_remote(&core, SESSION, le, &c, now),
+             consumer_available ? KVM_HID_ERR_USAGE : KVM_HID_ERR_CONTROL_DENIED);
     kvm_hid_intent_t ch = fh_chord(KVM_CHORD_MEDIA_VOLUME_UP);
-    CHECK_EQ(kvm_hid_core_remote(&core, SESSION, le, &ch, now), KVM_HID_OK);
+    CHECK_EQ(kvm_hid_core_remote(&core, SESSION, le, &ch, now),
+             consumer_available ? KVM_HID_OK : KVM_HID_ERR_CONTROL_DENIED);
     kvm_hid_intent_t ka;
     memset(&ka, 0, sizeof(ka));
     ka.type = KVM_HID_KEEPALIVE;
@@ -76,7 +79,7 @@ static void remote_range_and_consumer_rules(void)
     fh_pump(&core, &host, &now);
     CHECK_EQ(host.sum_dx, -4096);
     CHECK_EQ(host.sum_dy, 4096);
-    CHECK_EQ(host.consumer_presses, 1);
+    CHECK_EQ(host.consumer_presses, consumer_available ? 1 : 0);
 }
 
 static void vec005_disconnect_during_ctrl_down(void)
@@ -229,7 +232,7 @@ static void vec008_unplug_and_reconnect(void)
     fh_init(&host);
     kvm_hid_core_set_usb(&core, KVM_HOST_USB_MOUNTED, 2, now);
     fh_pump(&core, &host, &now);
-    CHECK_EQ(host.n, 3); // neutral report only
+    CHECK_EQ(host.n, KVM_HID_ITFS); // one neutral report per interface
     CHECK_EQ(host.key_presses[KVM_KEY_LEFT_CTRL], 0); // no replayed Ctrl DOWN
     CHECK(fh_host_neutral(&host));
 }

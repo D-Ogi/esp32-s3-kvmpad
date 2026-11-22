@@ -19,6 +19,7 @@ static unsigned keyboard_presses, keyboard_neutrals;
 static bool expect_stall;
 static bool sof_enabled;
 static unsigned stalls;
+unsigned dispatch_wait_mode;
 static uint64_t now = 1000000;
 static esp_timer_handle_t hid_tick;
 #if CONFIG_KVM_USB_SCREENSHOT
@@ -801,6 +802,8 @@ static void check_service_window(void)
     puts("PASS: idle TinyUSB service window, first request to callback, ready endpoints, pending tail and expiry.");
 }
 #endif
+#include "remote_release_session.inc"
+
 int main(int argc, char **argv)
 {
     assert(hid_dispatch_start() == ESP_OK && usb_hid_device_start() == ESP_OK);
@@ -1004,5 +1007,6 @@ int main(int argc, char **argv)
     assert(argc == 2);
     screenshot_session(argv[1]);
 #endif
+    remote_release_session();
     return 0;
 }

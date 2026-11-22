@@ -354,6 +354,7 @@ void kvm_hid_core_remote_heartbeat(kvm_hid_core_t *core, uint64_t session_id, ui
 kvm_hid_err_t kvm_hid_core_remote(kvm_hid_core_t *core, uint64_t session_id, uint32_t lease_epoch,
                                   const kvm_hid_intent_t *intent, uint64_t now_us);
 void kvm_hid_core_remote_release(kvm_hid_core_t *core, uint64_t session_id);
+void kvm_hid_core_remote_revoke(kvm_hid_core_t *core, uint64_t session_id, kvm_release_reason_t reason);
 void kvm_hid_core_remote_disconnect(kvm_hid_core_t *core, uint64_t session_id);
 
 // ---- Maintenance (OTA, factory reset) and keep-alive -----------------------------------------

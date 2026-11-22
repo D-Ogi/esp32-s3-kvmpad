@@ -1427,15 +1427,18 @@ kvm_hid_err_t kvm_hid_core_remote(kvm_hid_core_t *core, uint64_t session_id, uin
 
 void kvm_hid_core_remote_release(kvm_hid_core_t *core, uint64_t session_id)
 {
-    if (core->owner.kind == OWNER_REMOTE && core->owner.session_id == session_id) {
-        revoke_remote(core, KVM_RA_REMOTE_RELEASE);
-    }
+    kvm_hid_core_remote_revoke(core, session_id, KVM_RA_REMOTE_RELEASE);
 }
 
 void kvm_hid_core_remote_disconnect(kvm_hid_core_t *core, uint64_t session_id)
 {
+    kvm_hid_core_remote_revoke(core, session_id, KVM_RA_REMOTE_DISCONNECT);
+}
+
+void kvm_hid_core_remote_revoke(kvm_hid_core_t *core, uint64_t session_id, kvm_release_reason_t reason)
+{
     if (core->owner.kind == OWNER_REMOTE && core->owner.session_id == session_id) {
-        revoke_remote(core, KVM_RA_REMOTE_DISCONNECT);
+        revoke_remote(core, reason);
     }
 }
 
