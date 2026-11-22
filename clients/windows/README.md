@@ -1,6 +1,6 @@
 # KVMpad Windows CLIENT
 
-Run KVMpad CLIENT on the operator PC to send input over Wi-Fi. The KVMpad board forwards the keystrokes and mouse movements to the **target computer** over USB. The target uses its built-in keyboard and mouse drivers.
+Run KVMpad CLIENT on the operator PC to send input over Wi-Fi. The KVMpad board forwards the keystrokes and mouse movements to the **target computer** over USB. The target uses its built-in keyboard and mouse drivers. [Pairing screenshots](../../README.md#pair-a-windows-client) · [Remote input example](../../README.md#send-keyboard-and-mouse-input)
 
 The protocol specification calls the USB target the **HOST** and the board the **DEVICE**. The Windows application named **KVMpad HOST** is a companion that CLIENT starts on its own PC. Screen sharing captures a monitor on that PC. [Windows HOST guide](../../hosts/windows/README.md)
 

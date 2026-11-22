@@ -4,7 +4,7 @@ KVMpad turns the **Waveshare ESP32-S3-Touch-LCD-7B** into a touchscreen keyboard
 
 ## Screen gallery
 
-Captured on the board in the Day theme. The portrait autopilot is running in Demo mode.
+These touchscreen views come from the board in the Day theme. The portrait autopilot shows Demo mode. For the Windows CLIENT, see [pairing](#pair-a-windows-client) and [remote keyboard and mouse control](#send-keyboard-and-mouse-input).
 
 ![Mouse screen with a touchpad, scroll wheel and mouse buttons on the physical 7B in Day mode](docs/images/day-mouse.png)
 
@@ -26,10 +26,31 @@ With the board connected, open **Mouse** to move the pointer, click or scroll. T
 
 The **operator PC** is the computer you sit at. The **target** is the computer plugged into KVMpad. Its built-in USB keyboard and mouse drivers handle remote input, so there is nothing to install on the target.
 
-1. Enable remote access on KVMpad. Tap **Pair a client**.
-2. Open **KVMpad CLIENT** on the operator PC. Select **Discover → Pair**. Enter the six-digit PIN in CLIENT.
-3. Confirm the pairing on the KVMpad touchscreen.
-4. Select **Connect → Host input** in CLIENT to send keystrokes, mouse movements or shortcuts. [Windows CLIENT guide](clients/windows/README.md)
+### Pair a Windows CLIENT
+
+Enable remote access on KVMpad. Tap **Pair a client**. On the operator PC, open **KVMpad CLIENT** and select **Discover**.
+
+In this example, CLIENT finds three boards. **A104** has pairing open, **B208** is already paired, and **D416** has pairing closed. The fourth row, **C312**, is a saved device that did not appear in discovery.
+
+| Operator PC · Select KVMpad-A104 | KVMpad · Read its six-digit PIN |
+| --- | --- |
+| [![Windows CLIENT lists four devices with different pairing states](docs/images/client-devices.png)](docs/images/client-devices.png) | [![The Pair a client dialog shows a sample PIN and its expiry time](docs/images/pair-pin.png)](docs/images/pair-pin.png) |
+| **Operator PC · Select Pair and enter the PIN** | **KVMpad · Check the computer name and tap Accept** |
+| [![The Windows pairing dialog contains the PIN for KVMpad-A104 and names the operator PC](docs/images/client-pair-pin.png)](docs/images/client-pair-pin.png) | [![KVMpad asks whether to pair with OPS-DESK](docs/images/pair-accept.png)](docs/images/pair-accept.png) |
+
+The examples use sample device names and a sample PIN. The touchscreen dialogs use the firmware's LVGL renderer.
+
+### Send keyboard and mouse input
+
+Select the paired board in CLIENT. Select **Connect**. On the **Host input** tab, select **Request control**. When KVMpad asks, check the computer name and tap **Allow**.
+
+| Operator PC · Request control | KVMpad · Allow this session |
+| --- | --- |
+| [![Host input shows a connected USB target and a radio check ready to send](docs/images/client-request.png)](docs/images/client-request.png) | [![KVMpad asks whether OPS-DESK can move the pointer and type on the target](docs/images/control-approval.png)](docs/images/control-approval.png) |
+| **Operator PC · Send the radio check with Type text** | **Linux target · Read the text in the open editor** |
+| [![CLIENT shows Controlling, the Alt+Tab shortcut and three lines of radio settings](docs/images/client-host-input.png)](docs/images/client-host-input.png) | [![The Linux text editor shows the three lines in the flight log](docs/images/target-radio-log.png)](docs/images/target-radio-log.png) |
+
+For a single shortcut, choose **Alt+Tab** and select **Send shortcut**. For direct keyboard and mouse control, select **Start capture**. The default key to stop capture is **Scroll Lock**. Select **Release control** when you finish. The Linux example shows a guest that received the CLIENT keystrokes through a virtual USB keyboard. [Windows CLIENT guide](clients/windows/README.md)
 
 The **SSH server** runs on KVMpad. It translates commands such as `mouse move 20 0` into USB input for the target. [Command syntax](components/ssh_control/include/ssh_control.h)
 
