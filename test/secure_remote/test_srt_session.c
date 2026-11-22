@@ -1219,6 +1219,13 @@ static void t_ssh_key_follows_paired_tls_connection(void)
     kvm_srt_shutdown(&h.srt, sh_now_us());
 }
 
+static bool ssh_mouse_open;
+
+static bool ssh_input_ready(kvm_hid_action_type_t type)
+{
+    return type != KVM_HID_MOUSE_MOVE || ssh_mouse_open;
+}
+
 static void t_ssh_lease_uses_control_arbiter(void)
 {
     uint8_t key[32];
@@ -1228,6 +1235,10 @@ static void t_ssh_lease_uses_control_arbiter(void)
     kvm_srt_shutdown(&h.srt, sh_now_us());
     h.cfg.ssh_host_key_sha256[0] = 0xf2;
     h.cfg.control_approval = KVM_CONTROL_APPROVAL_AUTO;
+    kvm_rp_config_t protocol = KVM_RP_CONFIG_DEFAULT;
+    protocol.input_ready = ssh_input_ready;
+    ssh_mouse_open = false;
+    h.cfg.rp = &protocol;
     CHECK_EQ(kvm_srt_init(&h.srt, &h.cfg, &hooks), KVM_PAIR_OK);
     sh_online(&h);
     sh_cli_t c;
@@ -1295,6 +1306,22 @@ static void t_ssh_lease_uses_control_arbiter(void)
     kvm_srt_notify_revoked(&h.srt, 64, KVM_RP_REVOKE_LOCAL_OVERRIDE, ++h.epoch, sh_now_us());
     CHECK(!kvm_srt_ssh_input(&h.srt, 64, &press, sh_now_us()));
     CHECK_EQ(h.nreleases, 3);
+
+    // A refused SSH command closes its grant even when the shared protocol would normally coalesce it.
+    CHECK(kvm_srt_ssh_begin(&h.srt, 65, c.id, key, sh_now_us()));
+    kvm_srt_approval_result(&h.srt, 65, true, sh_now_us());
+    h.srt.rp.cfg.input_rate_limit = 1;
+    CHECK(kvm_srt_ssh_input(&h.srt, 65, &press, sh_now_us()));
+    int before = h.nintents;
+    kvm_hid_intent_t move = {.type = KVM_HID_MOUSE_MOVE, .data.mouse_move = {.dx = 7}};
+    CHECK(!kvm_srt_ssh_input(&h.srt, 65, &move, sh_now_us()));
+    CHECK_EQ(h.nreleases, 4);
+    CHECK_EQ(h.owner_session, 0);
+    CHECK_EQ(kvm_srt_ssh_state(&h.srt, 65, sh_now_us()), KVM_SSH_DENIED);
+    CHECK_EQ(h.srt.rp.c.input_coalesced, 0);
+    ssh_mouse_open = true;
+    kvm_srt_tick(&h.srt, sh_now_us());
+    CHECK_EQ(h.nintents, before);
     kvm_srt_shutdown(&h.srt, sh_now_us());
 }
 

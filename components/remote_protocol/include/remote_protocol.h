@@ -80,6 +80,7 @@ typedef enum {
     KVM_RP_ERR_HID_QUEUE_OVERFLOW, // "ERR_HID_QUEUE_OVERFLOW" the arbiter queue is saturated
     KVM_RP_ERR_AUTH,            // "ERR_AUTH"          session not authenticated (ADR-030)
     KVM_RP_ERR_RATE_LIMIT,      // "ERR_RATE_LIMIT"    non-idempotent excess over the limit (ADR-030)
+    KVM_RP_ERR_HID_NOT_READY,   // "ERR_HID_NOT_READY" host has not opened this HID endpoint
     KVM_RP_ERR_COUNT,
 } kvm_rp_err_t;
 
@@ -219,6 +220,8 @@ typedef struct {
     uint32_t bad_frame_limit;     // 03 §6.5: "count + close on abuse"
     bool send_input_ack;          // 03 §6.3: `input.ack` is optional; off by default
     bool send_reply_to_seq;       // 03 §6.4: add `reply_to_seq` to replies
+    /** Optional, nonblocking admission check against the current USB endpoint state. */
+    bool (*input_ready)(kvm_hid_action_type_t type);
 } kvm_rp_config_t;
 
 #define KVM_RP_CONFIG_DEFAULT                                                                      \

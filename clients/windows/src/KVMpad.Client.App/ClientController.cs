@@ -488,7 +488,10 @@ internal sealed class ClientController : IDisposable
 
     private void OnSessionError(string code, bool retryable)
     {
-        Notice?.Invoke(Core.Protocol.ErrorCodes.IsKnown(code) ? "The device reported " + code + "." : "The device reported an unrecognized protocol error.");
+        // A target can read the keyboard and leave the mouse unopened throughout startup.
+        // Show this in the status line so pointer movement does not open repeated dialogs.
+        if (code != Core.Protocol.ErrorCodes.HidNotReady)
+            Notice?.Invoke(Core.Protocol.ErrorCodes.IsKnown(code) ? "The device reported " + code + "." : "The device reported an unrecognized protocol error.");
         SetStatus();
     }
 
@@ -548,7 +551,9 @@ internal sealed class ClientController : IDisposable
         if (IsCapturing)
             line += "  ·  CAPTURING (" + _settings.ToggleKeyName + " to stop)";
 
-        if (logic.LastErrorCode is { Length: > 0 } error)
+        if (logic.LastErrorCode == Core.Protocol.ErrorCodes.HidNotReady)
+            line += "  ·  Last input refused: target had not opened that USB input";
+        else if (logic.LastErrorCode is { Length: > 0 } error)
             line += "  ·  last error " + error;
 
         if (_host?.Status is { } hostStatus)

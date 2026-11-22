@@ -70,6 +70,7 @@ static esp_timer_handle_t s_tick;
 
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t s_input_generation; // invalidates producer events across release and USB epochs
+static bool s_local_activity; // rejected local input still takes ownership, even with a full queue
 static uint32_t s_release_bits; // pending RELEASE_ALL reasons (bit = kvm_release_reason_t)
 // A full input queue cannot block a release. Only the current lease can fill this slot.
 // Producers select it from the grant/revoke events; the USB owner rechecks it before acting.
@@ -195,11 +196,15 @@ static kvm_host_usb_t map_usb(kvm_usb_state_t s)
     }
 }
 
-static void publish(void)
+typedef enum { SNAP_UPDATE, INPUT_INVALIDATED, USB_TRANSITION } publish_reason_t;
+
+static void publish(publish_reason_t reason)
 {
     kvm_hid_snapshot_t snap;
     kvm_hid_core_snapshot(&s_core, &snap);
     portENTER_CRITICAL(&s_mux);
+    if (reason == USB_TRANSITION) s_local_activity = false;
+    if (reason != SNAP_UPDATE) s_input_generation++; // publish admission and its generation together
     if (memcmp(&snap, &s_snap, sizeof(snap)) != 0) {
         s_snap = snap;
         s_snap_seq++;
@@ -224,10 +229,12 @@ static void answer_sync(uint32_t call, kvm_hid_err_t err, uint32_t epoch)
     if (current) xSemaphoreGive(s_sync_done);
 }
 
-static void service_remote_stop(uint64_t now)
+static void service_priority_input(uint64_t now)
 {
     portENTER_CRITICAL(&s_mux);
-    if (s_remote_stop.kind == REMOTE_NO_STOP && !s_epoch_waiter) {
+    bool local_activity = s_local_activity;
+    s_local_activity = false;
+    if (!local_activity && s_remote_stop.kind == REMOTE_NO_STOP && !s_epoch_waiter) {
         portEXIT_CRITICAL(&s_mux);
         return;
     }
@@ -236,6 +243,7 @@ static void service_remote_stop(uint64_t now)
     uint32_t waiter = s_epoch_waiter;
     s_epoch_waiter = 0;
     portEXIT_CRITICAL(&s_mux);
+    if (local_activity) (void)kvm_hid_core_local_activity(&s_core, now);
     const kvm_control_owner_t *owner = kvm_hid_core_owner(&s_core);
     if (stop.kind != REMOTE_NO_STOP && owner->kind == OWNER_REMOTE &&
         owner->session_id == stop.session && owner->epoch == stop.epoch) {
@@ -281,7 +289,7 @@ static void apply(const msg_t *m, uint64_t now)
         kvm_hid_core_set_keepalive(&s_core, m->flag, m->value);
         break;
     case MSG_REMOTE:
-        service_remote_stop(now);
+        service_priority_input(now);
         if (m->remote_sequence <= s_remote_cutoff) break;
         (void)kvm_hid_core_remote(&s_core, m->session, m->intent.epoch, &m->intent, now);
         break;
@@ -298,7 +306,7 @@ static void apply(const msg_t *m, uint64_t now)
             s_applying_grant = m->value;
             e = kvm_hid_core_remote_grant(&s_core, m->session, now, &epoch);
             s_applying_grant = 0;
-            service_remote_stop(now);
+            service_priority_input(now);
             if (e == KVM_HID_OK && kvm_hid_core_owner(&s_core)->epoch != epoch) {
                 e = KVM_HID_ERR_CONTROL_DENIED;
                 epoch = 0;
@@ -310,7 +318,7 @@ static void apply(const msg_t *m, uint64_t now)
     case MSG_REMOTE_HEARTBEAT:
         kvm_hid_core_remote_heartbeat(&s_core, m->session, now);
         break;
-    case MSG_REMOTE_EPOCH_SYNC: // answered outside the input queue by service_remote_stop
+    case MSG_REMOTE_EPOCH_SYNC: // answered outside the input queue by service_priority_input
         break;
     case MSG_BURST_START: {
         portENTER_CRITICAL(&s_mux);
@@ -353,14 +361,14 @@ static void pump(void *ctx)
             kvm_hid_core_release_all(&s_core, (kvm_release_reason_t)r);
         }
     }
-    service_remote_stop(now);
+    service_priority_input(now);
     msg_t m;
     for (int i = 0; i < PUMP_BATCH && xQueueReceive(s_q, &m, 0) == pdTRUE; i++) {
         apply(&m, now);
     }
-    service_remote_stop(now); // a close or release may have arrived during this batch
+    service_priority_input(now); // a close or release may have arrived during this batch
     kvm_hid_core_poll(&s_core, now);
-    publish();
+    publish(SNAP_UPDATE);
     const uint32_t dt = (uint32_t)(esp_timer_get_time() - t0);
     s_stats.pumps++;
     if (dt > s_stats.max_pump_us) {
@@ -375,9 +383,6 @@ static void on_state(void *ctx, kvm_usb_state_t state, uint32_t usb_epoch)
 {
     (void)ctx;
     const uint64_t now = (uint64_t)esp_timer_get_time();
-    portENTER_CRITICAL(&s_mux);
-    s_input_generation++;
-    portEXIT_CRITICAL(&s_mux);
 #if KVM_HID_HAS_HPE
     uint32_t nonce = 0;
     if (state == KVM_USB_MOUNTED) {
@@ -388,10 +393,13 @@ static void on_state(void *ctx, kvm_usb_state_t state, uint32_t usb_epoch)
 #endif
     if (state == KVM_USB_MOUNTED) {
         s_core.interface_count = usb_hid_device_interface_count();
+#if CONFIG_KVM_USB_MONITOR_EVAL && KVM_HID_ITFS == 2
+        s_core.display_controls = usb_hid_device_monitor_mounted();
+#endif
     }
     kvm_hid_core_set_usb(&s_core, map_usb(state), usb_epoch, now);
     kvm_hid_core_poll(&s_core, now); // a mount sends the neutral start reports right away (TECH-035)
-    publish();
+    publish(USB_TRANSITION);
 }
 
 static size_t get_input_report(void *ctx, uint8_t itf, uint8_t protocol, uint8_t report[8])
@@ -418,9 +426,9 @@ static void on_complete(void *ctx, uint8_t itf)
     (void)ctx;
     kvm_hid_core_on_report_complete(&s_core, itf);
     uint64_t now = (uint64_t)esp_timer_get_time();
-    service_remote_stop(now);
+    service_priority_input(now);
     kvm_hid_core_poll(&s_core, now); // next phase / next report without waiting for a tick
-    publish();
+    publish(SNAP_UPDATE);
 }
 
 static void repeat_keyboard(void *ctx)
@@ -436,11 +444,9 @@ static void on_failed(void *ctx, uint8_t itf)
 #if KVM_HID_HAS_HPE
     s_core.now_us = (uint64_t)esp_timer_get_time();
 #endif
-    portENTER_CRITICAL(&s_mux);
-    s_input_generation++;
-    portEXIT_CRITICAL(&s_mux);
+    uint32_t releases = s_core.c.release_all;
     kvm_hid_core_on_report_failed(&s_core, itf);
-    publish();
+    publish(releases != s_core.c.release_all ? INPUT_INVALIDATED : SNAP_UPDATE);
 }
 
 #if KVM_HID_HAS_HPE
@@ -485,7 +491,7 @@ static void on_ptp_route(void *ctx, bool native, bool surface_enabled, uint32_t 
     s_input_generation++;
     portEXIT_CRITICAL(&s_mux);
     kvm_hid_core_ptp_route(&s_core, native, surface_enabled, generation);
-    publish();
+    publish(SNAP_UPDATE);
 }
 #endif
 
@@ -523,6 +529,16 @@ static esp_err_t post(const msg_t *m)
     }
     msg_t entry = *m;
     portENTER_CRITICAL(&s_mux);
+    bool keyboard = m->kind == MSG_UI_TAP || m->kind == MSG_UI_DOWN || m->kind == MSG_UI_UP || m->kind == MSG_BURST_START;
+    bool input = m->kind == MSG_LOCAL || m->kind == MSG_REMOTE;
+    if ((keyboard && (s_snap.boot_unread & (1u << KVM_HID_ITF_KEYBOARD))) ||
+        (input && kvm_hid_boot_input_unready(s_snap.boot_unread, m->intent.type))) {
+        bool local = m->kind != MSG_REMOTE;
+        if (local) s_local_activity = true;
+        portEXIT_CRITICAL(&s_mux);
+        if (local) usb_hid_device_request_pump();
+        return ESP_ERR_INVALID_STATE;
+    }
     entry.input_generation = s_input_generation;
     if (m->kind == MSG_REMOTE) entry.remote_sequence = ++s_remote_sequence;
     portEXIT_CRITICAL(&s_mux);
@@ -535,6 +551,7 @@ static esp_err_t post(const msg_t *m)
         if (!remote) {
             s_input_generation++;
             s_release_bits |= 1u << KVM_RA_QUEUE_OVERFLOW;
+            if (keyboard || m->kind == MSG_LOCAL) s_local_activity = true;
         }
         portEXIT_CRITICAL(&s_mux);
         if (m->kind == MSG_REMOTE)

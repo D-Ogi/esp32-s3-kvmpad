@@ -480,6 +480,64 @@ static void test_rate_limit(void)
     CHECK_EQ(g_h.intent[120].data.mouse_move.dy, 0);
 }
 
+static bool mouse_open;
+
+static bool input_ready(kvm_hid_action_type_t type)
+{
+    return mouse_open || type == KVM_HID_KEY_DOWN || type == KVM_HID_KEY_UP;
+}
+
+static void test_unopened_mouse_before_coalescing(void)
+{
+    kvm_rp_config_t config = KVM_RP_CONFIG_DEFAULT;
+    config.input_rate_limit = 5;
+    config.input_ready = input_ready;
+    config.send_input_ack = true;
+    mouse_open = false;
+    rph_reset(&config);
+    rph_cli_open(&c, SID, true);
+    uint32_t ep = rph_cli_grant(&c);
+    CHECK_EQ(rph_input_ep(&c, ep, "'kind':'mouse.button','button':'left','down':true"), KVM_RP_ERR_HID_NOT_READY);
+    CHECK(rph_last_has("ERR_HID_NOT_READY") && rph_last_has("\"retryable\":true"));
+    CHECK_EQ(rph_input_ep(&c, ep, "'kind':'mouse.button','button':'left','down':false"), KVM_RP_ERR_HID_NOT_READY);
+    CHECK_EQ(rph_input_ep(&c, ep, "'kind':'mouse.move','dx':4097,'dy':0"), KVM_RP_ERR_RANGE);
+    CHECK_EQ(rph_input_ep(&c, ep, "'kind':'keyboard.key','usage_id':4,'down':true"), KVM_RP_OK);
+    CHECK_EQ(rph_input_ep(&c, ep, "'kind':'keyboard.key','usage_id':4,'down':false"), KVM_RP_OK);
+    CHECK(rph_last_has("input.ack"));
+    CHECK_EQ(rph_input_ep(&c, ep, "'kind':'mouse.move','dx':17,'dy':-3"), KVM_RP_ERR_HID_NOT_READY);
+    CHECK(rph_last_has("ERR_HID_NOT_READY") && rph_last_has("\"retryable\":true"));
+    CHECK_EQ(g_h.rp.c.input_coalesced, 0);
+    CHECK_EQ(g_h.rp.c.input_accepted, 2);
+    CHECK_EQ(g_h.n_close, 0);
+    CHECK_EQ(g_h.rp.owner_epoch, ep);
+
+    mouse_open = true;
+    kvm_rp_poll(&g_h.rp, ++g_h.now); // late first mouse read cannot replay the rejected move
+    CHECK_EQ(g_h.n_intent, 2);
+    CHECK_EQ(rph_input_ep(&c, ep, "'kind':'mouse.move','dx':2,'dy':5"), KVM_RP_OK);
+    CHECK_EQ(g_h.rp.c.input_coalesced, 1);
+    kvm_rp_poll(&g_h.rp, ++g_h.now);
+    CHECK_EQ(g_h.n_intent, 3);
+    CHECK_EQ(g_h.intent[2].data.mouse_move.dx, 2);
+    CHECK_EQ(g_h.intent[2].data.mouse_move.dy, 5);
+    CHECK_EQ(kvm_rp_err_from_hid(KVM_HID_ERR_BUSY), KVM_RP_ERR_HID_NOT_READY);
+
+    // USB can reconfigure after receipt. A refusal of the first int16 chunk discards the remainder.
+    for (int i = 0; i < 9; i++)
+        CHECK_EQ(rph_input_ep(&c, ep, "'kind':'mouse.move','dx':4096,'dy':0"), KVM_RP_OK);
+    g_h.sink_result = KVM_RP_ERR_HID_NOT_READY;
+    kvm_rp_poll(&g_h.rp, ++g_h.now);
+    g_h.sink_result = KVM_RP_OK;
+    kvm_rp_poll(&g_h.rp, ++g_h.now);
+    CHECK_EQ(g_h.n_intent, 3);
+
+    // A replacement lease for the same connection cannot inherit pending motion.
+    CHECK_EQ(rph_input_ep(&c, ep, "'kind':'mouse.move','dx':3,'dy':0"), KVM_RP_OK);
+    kvm_rp_set_owner(&g_h.rp, OWNER_REMOTE, SID, ep + 1u, ++g_h.now);
+    kvm_rp_poll(&g_h.rp, ++g_h.now);
+    CHECK_EQ(g_h.n_intent, 3);
+}
+
 static void test_rate_limit_never_drops_an_up(void)
 {
     // Priority 2 of AGENTS §7: an UP may never be thrown away, or a key stays pressed.
@@ -658,6 +716,7 @@ int main(void)
     RUN(test_heartbeat_stale);
     RUN(test_stale_detected_on_input);
     RUN(test_rate_limit);
+    RUN(test_unopened_mouse_before_coalescing);
     RUN(test_rate_limit_never_drops_an_up);
     RUN(test_rate_flood_revokes);
     RUN(test_key_idempotence);

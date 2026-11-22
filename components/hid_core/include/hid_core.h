@@ -63,7 +63,7 @@ typedef enum {
     KVM_HID_ERR_HID_QUEUE_OVERFLOW,
     KVM_HID_ERR_OTA_IN_PROGRESS,
     KVM_HID_ERR_BAD_INTENT,
-    KVM_HID_ERR_BUSY, // ADR-024 FR-748: a text burst is in flight; keyboard input waits for it or cancels it
+    KVM_HID_ERR_BUSY, // a text burst owns the keyboard or a boot endpoint awaits its first host read
 } kvm_hid_err_t;
 
 typedef enum {
@@ -132,8 +132,7 @@ typedef struct {
 #else
 #define KVM_HID_ITFS (3 + KVM_HID_HAS_HPE)
 #endif
-// With selectable USB personalities, wait for every active HID to finish its
-// neutral report before allowing new input onto the bus.
+// Require all relevant neutral reports to complete before accepting new traffic.
 #define KVM_HID_HAS_NEUTRAL_BARRIER (KVM_HID_HAS_HPE || KVM_HID_ITFS == 2)
 
 typedef struct {
@@ -179,6 +178,7 @@ typedef struct {
     bool maintenance;
     uint32_t release_generation;  // any neutralization invalidates preceding touch capture
     bool neutralizing;
+    uint8_t boot_unread; // ordinary boot HID endpoints still awaiting their first neutral IN
 #if KVM_HID_HAS_HPE
     uint32_t pad_generation;
     bool pad_native_requested, pad_surface_enabled;
@@ -255,6 +255,9 @@ typedef struct {
     uint8_t buttons;
     uint16_t consumer;
     bool neutral_barrier;
+    bool display_controls; // set by the USB owner at mount
+    bool independent_boot;
+    uint8_t boot_unread, boot_timeout_counted;
 #if KVM_HID_HAS_HPE
     bool radial_pressed, joystick_active, ptp_native, ptp_surface;
     uint8_t ptp_inflight_tips;
@@ -296,6 +299,12 @@ typedef struct {
 } kvm_hid_core_t;
 
 void kvm_hid_core_init(kvm_hid_core_t *core, const kvm_hid_port_t *port, const kvm_hid_config_t *cfg);
+
+/** Can this input target an ordinary boot endpoint that the host has yet to read? */
+bool kvm_hid_boot_input_unready(uint8_t unread, kvm_hid_action_type_t type);
+
+/** Claim local ownership without sending input when the host has not opened its endpoint. */
+kvm_hid_err_t kvm_hid_core_local_activity(kvm_hid_core_t *core, uint64_t now_us);
 
 /** USB state from usb_hid_device. A new `usb_epoch` with MOUNTED means a fresh mount (TECH-035). */
 void kvm_hid_core_set_usb(kvm_hid_core_t *core, kvm_host_usb_t state, uint32_t usb_epoch, uint64_t now_us);

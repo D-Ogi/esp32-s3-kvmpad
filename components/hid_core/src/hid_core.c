@@ -133,6 +133,19 @@ static uint8_t chord_itf(kvm_hid_core_t *core)
     return (ch != NULL && ch->kind == KVM_CHORD_KIND_CONSUMER) ? KVM_HID_ITF_CONSUMER : KVM_HID_ITF_KEYBOARD;
 }
 
+bool kvm_hid_boot_input_unready(uint8_t unread, kvm_hid_action_type_t type)
+{
+    if (!unread) return false;
+    switch (type) {
+    case KVM_HID_KEY_DOWN: case KVM_HID_KEY_UP: case KVM_HID_CHORD:
+        return (unread & (1u << KVM_HID_ITF_KEYBOARD)) != 0;
+    case KVM_HID_MOUSE_MOVE: case KVM_HID_MOUSE_BTN_DOWN: case KVM_HID_MOUSE_BTN_UP: case KVM_HID_MOUSE_WHEEL:
+        return (unread & (1u << KVM_HID_ITF_MOUSE)) != 0;
+    default:
+        return false;
+    }
+}
+
 static bool itf_busy(kvm_hid_core_t *core, uint8_t itf)
 {
     staged_t *s = staged(core, itf);
@@ -183,6 +196,7 @@ static void stage_keyboard(kvm_hid_core_t *core)
 void kvm_hid_core_repeat_keyboard(kvm_hid_core_t *core)
 {
     if (core->usb == KVM_HOST_USB_MOUNTED && !core->neutral_barrier &&
+        !(core->boot_unread & (1u << KVM_HID_ITF_KEYBOARD)) &&
         !itf_busy(core, KVM_HID_ITF_KEYBOARD)) stage_keyboard(core);
 }
 
@@ -651,8 +665,9 @@ static kvm_hid_err_t host_gate(kvm_hid_core_t *core)
 }
 
 // 03 §4.3 on_local_input, ownership part: revoke + release + new epoch before the local action.
-static kvm_hid_err_t local_admit(kvm_hid_core_t *core, uint64_t now_us)
+kvm_hid_err_t kvm_hid_core_local_activity(kvm_hid_core_t *core, uint64_t now_us)
 {
+    core->now_us = now_us;
     kvm_hid_err_t err = host_gate(core);
     if (err != KVM_HID_OK) {
         return err;
@@ -669,6 +684,13 @@ static kvm_hid_err_t local_admit(kvm_hid_core_t *core, uint64_t now_us)
     core->last_local_input_us = now_us;
     core->last_real_input_us = now_us;
     return KVM_HID_OK;
+}
+
+static kvm_hid_err_t local_admit(kvm_hid_core_t *core, uint64_t now_us, kvm_hid_action_type_t type)
+{
+    kvm_hid_err_t err = kvm_hid_core_local_activity(core, now_us);
+    if (err == KVM_HID_OK && kvm_hid_boot_input_unready(core->boot_unread, type)) return KVM_HID_ERR_BUSY;
+    return err;
 }
 
 static kvm_hid_err_t validate(kvm_hid_core_t *core, const kvm_hid_intent_t *in, bool remote)
@@ -900,7 +922,7 @@ kvm_hid_err_t kvm_hid_core_burst_start(kvm_hid_core_t *core, const kvm_hid_burst
         core->chord_active || q_has_keyboard(core)) {
         return KVM_HID_ERR_BUSY; // never two sequences in flight, never mixed with held keys
     }
-    err = local_admit(core, now_us);
+    err = local_admit(core, now_us, KVM_HID_KEY_DOWN);
     if (err != KVM_HID_OK) {
         return err;
     }
@@ -1026,11 +1048,17 @@ void kvm_hid_core_release_all(kvm_hid_core_t *core, kvm_release_reason_t reason)
         }
     }
     ledger_clear(core);
+    // An unopened endpoint can only hold its initial zero. Across owners, keep that zero
+    // pending and wait for fresh neutral completions on every previously used endpoint.
+    if (reason == KVM_RA_USB_LOSS || reason == KVM_RA_USB_SUSPEND || reason == KVM_RA_MAINTENANCE ||
+        reason == KVM_RA_QUEUE_OVERFLOW || reason == KVM_RA_COMPLETION_TIMEOUT)
+        core->independent_boot = false;
     core->neutral_barrier = true;
     kvm_kbd_init(&core->kbd);
     core->q_head = 0;
     core->q_count = 0;
     for (uint8_t i = 0; i < KVM_HID_ITFS; i++) {
+        if (core->independent_boot && (core->boot_unread & (1u << i))) continue;
         staged_t *s = staged(core, i);
         if (s != NULL) {
             s->pending = false; // a staged non-neutral report is superseded by the neutral one
@@ -1044,7 +1072,7 @@ void kvm_hid_core_release_all(kvm_hid_core_t *core, kvm_release_reason_t reason)
     emit_event(core, KVM_HID_EV_RELEASE_ALL, (uint32_t)reason, core->owner.session_id);
     if (core->usb == KVM_HOST_USB_MOUNTED) {
         for (uint8_t i = 0; i < core->interface_count; i++) {
-            if (!core->in_flight[i]) {
+            if (!core->in_flight[i] && core->neutral_pending[i]) {
                 stage_neutral(core, i);
             }
         }
@@ -1058,11 +1086,14 @@ void kvm_hid_core_set_usb(kvm_hid_core_t *core, kvm_host_usb_t state, uint32_t u
     if (state == KVM_HOST_USB_MOUNTED) {
         core->usb = state;
         if (usb_epoch != core->usb_epoch || prev != KVM_HOST_USB_MOUNTED) {
+            core->independent_boot = KVM_HID_ITFS == 2 && core->interface_count == 2 && !core->display_controls &&
+                                     usb_epoch != core->usb_epoch && prev != KVM_HOST_USB_SUSPENDED &&
+                                     prev != KVM_HOST_USB_MOUNTED;
             if (usb_epoch != core->usb_epoch) {
-                // Fresh mount: nothing is in flight on the new configuration.
-                for (uint8_t i = 0; i < KVM_HID_ITFS; i++) {
-                    core->in_flight[i] = false;
-                }
+                // Fresh mount: transfers from the old configuration were canceled by TinyUSB.
+                memset(core->in_flight, 0, sizeof(core->in_flight));
+                core->boot_unread = core->independent_boot ? (1u << KVM_HID_ITF_KEYBOARD) | (1u << KVM_HID_ITF_MOUSE) : 0;
+                core->boot_timeout_counted = 0;
             }
             core->neutral_barrier = true;
 #if KVM_HID_HAS_HPE
@@ -1087,6 +1118,8 @@ void kvm_hid_core_set_usb(kvm_hid_core_t *core, kvm_host_usb_t state, uint32_t u
     }
     core->usb = state;
     if (state != KVM_HOST_USB_SUSPENDED) {
+        core->boot_unread = 0;
+        core->boot_timeout_counted = 0;
         // Configuration loss cancels endpoint transfers without completion callbacks.
         memset(core->in_flight, 0, sizeof(core->in_flight));
 #if KVM_HID_HAS_HPE
@@ -1107,6 +1140,7 @@ void kvm_hid_core_on_report_complete(kvm_hid_core_t *core, uint8_t itf)
 {
     if (itf < KVM_HID_ITFS && core->in_flight[itf]) {
         core->in_flight[itf] = false;
+        core->boot_unread &= (uint8_t)~(1u << itf);
 #if KVM_HID_HAS_HPE
         if (itf == KVM_HID_ITF_PTP) hpe_complete_ptp(core);
 #endif
@@ -1116,13 +1150,21 @@ void kvm_hid_core_on_report_complete(kvm_hid_core_t *core, uint8_t itf)
 void kvm_hid_core_on_report_failed(kvm_hid_core_t *core, uint8_t itf)
 {
     if (itf >= KVM_HID_ITFS) return;
+    if (core->in_flight[itf] && (core->boot_unread & (1u << itf))) {
+        // TinyUSB ended this first neutral transfer with an error. Retry it on its own endpoint.
+        core->in_flight[itf] = false;
+        core->boot_timeout_counted &= (uint8_t)~(1u << itf);
+        core->neutral_pending[itf] = true;
+        return;
+    }
     core->in_flight[itf] = false;
     kvm_hid_core_release_all(core, KVM_RA_COMPLETION_TIMEOUT);
 }
 
 static void keepalive_tick(kvm_hid_core_t *core)
 {
-    if (!core->keepalive_enabled || core->interface_count <= KVM_HID_ITF_MOUSE) {
+    if (!core->keepalive_enabled || core->interface_count <= KVM_HID_ITF_MOUSE ||
+        (core->boot_unread & (1u << KVM_HID_ITF_MOUSE))) {
         return;
     }
     if (core->owner.epoch != core->keepalive_epoch) {
@@ -1153,9 +1195,16 @@ void kvm_hid_core_poll(kvm_hid_core_t *core, uint64_t now_us)
     }
     for (uint8_t i = 0; i < KVM_HID_ITFS; i++) {
         if (core->in_flight[i] && now_us - core->in_flight_since[i] > core->cfg.completion_timeout_us) {
-            core->in_flight[i] = false;
+            bool first_neutral = (core->boot_unread & (1u << i)) != 0;
+            if (first_neutral && (core->boot_timeout_counted & (1u << i))) continue;
             core->c.completion_timeouts++;
             core->c.completion_timeouts_itf[i]++;
+            if (first_neutral) {
+                // An unopened boot endpoint can hold this zero indefinitely. It still owns the transfer.
+                core->boot_timeout_counted |= (uint8_t)(1u << i);
+                continue;
+            }
+            core->in_flight[i] = false;
             kvm_hid_core_release_all(core, KVM_RA_COMPLETION_TIMEOUT); // no chord repeat (02 §7.3)
         }
     }
@@ -1180,6 +1229,7 @@ void kvm_hid_core_poll(kvm_hid_core_t *core, uint64_t now_us)
     if (core->neutral_barrier) {
         core->neutral_barrier = false;
         for (unsigned i=0; i<core->interface_count; i++) {
+            if (core->independent_boot && (core->boot_unread & (1u << i))) continue;
             if (core->neutral_pending[i] || core->staged[i].pending || core->in_flight[i]) {
                 core->neutral_barrier = true;
                 break;
@@ -1229,7 +1279,7 @@ kvm_hid_err_t kvm_hid_core_local(kvm_hid_core_t *core, const kvm_hid_intent_t *i
         (intent->type == KVM_HID_KEY_DOWN || intent->type == KVM_HID_KEY_UP || intent->type == KVM_HID_CHORD)) {
         return KVM_HID_ERR_BUSY; // FR-748: the burst owns the keyboard until it ends or is cancelled
     }
-    err = local_admit(core, now_us);
+    err = local_admit(core, now_us, intent->type);
     if (err != KVM_HID_OK) {
         return err;
     }
@@ -1280,7 +1330,7 @@ kvm_hid_err_t kvm_hid_core_ui_modifier_tap(kvm_hid_core_t *core, uint8_t usage, 
         core->c.rejected_usage++;
         return KVM_HID_ERR_USAGE;
     }
-    kvm_hid_err_t err = local_admit(core, now_us);
+    kvm_hid_err_t err = local_admit(core, now_us, KVM_HID_KEY_DOWN);
     if (err != KVM_HID_OK) {
         return err;
     }
@@ -1299,7 +1349,7 @@ kvm_hid_err_t kvm_hid_core_ui_key_down(kvm_hid_core_t *core, uint8_t usage, uint
         core->c.rejected_usage++;
         return KVM_HID_ERR_USAGE;
     }
-    kvm_hid_err_t err = local_admit(core, now_us);
+    kvm_hid_err_t err = local_admit(core, now_us, KVM_HID_KEY_DOWN);
     if (err != KVM_HID_OK) {
         return err;
     }
@@ -1318,8 +1368,8 @@ kvm_hid_err_t kvm_hid_core_ui_key_up(kvm_hid_core_t *core, uint8_t usage, uint64
         core->c.rejected_usage++;
         return KVM_HID_ERR_USAGE;
     }
-    // A key UP is always admitted to the queue when mounted: it can only release state.
-    kvm_hid_err_t err = local_admit(core, now_us);
+    // A key UP on an initialized endpoint can only release state.
+    kvm_hid_err_t err = local_admit(core, now_us, KVM_HID_KEY_UP);
     if (err != KVM_HID_OK) {
         return err;
     }
@@ -1413,6 +1463,7 @@ kvm_hid_err_t kvm_hid_core_remote(kvm_hid_core_t *core, uint64_t session_id, uin
     if (err != KVM_HID_OK) {
         return err;
     }
+    if (kvm_hid_boot_input_unready(core->boot_unread, intent->type)) return KVM_HID_ERR_BUSY;
     core->last_real_input_us = now_us;
     if (intent->type == KVM_HID_RELEASE_ALL) {
         kvm_hid_core_release_all(core, KVM_RA_REQUEST);
@@ -1474,7 +1525,8 @@ void kvm_hid_core_snapshot(const kvm_hid_core_t *core, kvm_hid_snapshot_t *out)
     memset(out, 0, sizeof(*out));
     out->host_usb = core->usb;
     out->release_generation = core->c.release_all;
-    out->neutralizing = core->neutral_barrier;
+    out->neutralizing = core->neutral_barrier || core->boot_unread;
+    out->boot_unread = core->boot_unread;
 #if KVM_HID_HAS_HPE
     out->pad_generation = core->ptp_generation;
     out->pad_native_requested = core->ptp_native;

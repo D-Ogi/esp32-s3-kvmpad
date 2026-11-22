@@ -345,6 +345,109 @@ static void remote_while_suspended_or_offline(void)
     CHECK_EQ(host.n, 0);
 }
 
+#if KVM_HID_ITFS == 2
+static void boot_mount(bool reject_mouse, bool display)
+{
+    fh_init(&host);
+    kvm_hid_port_t port=fh_port(&host);
+    kvm_hid_core_init(&core,&port,NULL);
+    core.display_controls=display;
+    host.refuse[KVM_HID_ITF_MOUSE]=reject_mouse;
+    now=1000000;
+    kvm_hid_core_set_usb(&core,KVM_HOST_USB_MOUNTED,1,now);
+    kvm_hid_core_poll(&core,now);
+    kvm_hid_core_on_report_complete(&core,KVM_HID_ITF_KEYBOARD);
+    kvm_hid_core_poll(&core,++now);
+}
+
+static void local_keyboard_with_unopened_mouse(void)
+{
+    for (unsigned refused=0;refused<2;refused++) {
+        boot_mount(refused,false);
+        kvm_hid_intent_t move=fh_move(20,0);
+        CHECK_EQ(kvm_hid_core_local(&core,&move,now),KVM_HID_ERR_BUSY);
+        CHECK_EQ(kvm_hid_core_ui_key_down(&core,KVM_KEY_A,now),KVM_HID_OK);
+        kvm_hid_core_poll(&core,now);
+        CHECK_EQ(host.key_presses[KVM_KEY_A],1);
+        kvm_hid_core_on_report_complete(&core,KVM_HID_ITF_KEYBOARD);
+        for (int i=0;i<3;i++) kvm_hid_core_poll(&core,now+=core.cfg.completion_timeout_us+1);
+        CHECK_EQ(core.c.completion_timeouts_itf[KVM_HID_ITF_MOUSE],refused ? 0 : 1);
+        CHECK_EQ(core.c.release_by_reason[KVM_RA_COMPLETION_TIMEOUT],0);
+        CHECK(fh_key_in(host.keys,KVM_KEY_A));
+        // Changing a local view still sends a real key release while the host ignores the mouse.
+        kvm_hid_core_release_all(&core,KVM_RA_VIEW_CHANGE);
+        CHECK(fh_host_neutral(&host));
+        kvm_hid_core_on_report_complete(&core,KVM_HID_ITF_KEYBOARD);
+        kvm_hid_core_poll(&core,++now);
+        CHECK_EQ(kvm_hid_core_ui_key_down(&core,KVM_KEY_Z,now),KVM_HID_OK);
+        kvm_hid_core_poll(&core,now);
+        CHECK_EQ(host.key_presses[KVM_KEY_Z],1);
+        host.refuse[KVM_HID_ITF_MOUSE]=false;
+        fh_pump(&core,&host,&now);
+        CHECK_EQ(host.sum_dx,0);
+        CHECK_EQ(kvm_hid_core_local(&core,&move,now),KVM_HID_OK);
+        fh_pump(&core,&host,&now);
+        CHECK_EQ(host.sum_dx,20);
+    }
+}
+
+static void boot_release_barriers(void)
+{
+    kvm_hid_intent_t down=fh_key(KVM_HID_KEY_DOWN,KVM_KEY_A);
+    for (int scenario=0;scenario<2;scenario++) {
+        boot_mount(false,scenario==0); // display + HID requires both IN completions
+        if (scenario==1) {
+            kvm_hid_core_set_usb(&core,KVM_HOST_USB_SUSPENDED,1,++now);
+            CHECK_EQ(kvm_hid_core_ui_key_down(&core,KVM_KEY_A,now),KVM_HID_ERR_USB_SUSPENDED);
+            kvm_hid_core_set_usb(&core,KVM_HOST_USB_MOUNTED,1,++now);
+        }
+        CHECK_EQ(kvm_hid_core_local(&core,&down,now),KVM_HID_OK);
+        for (int i=0;i<4;i++) {
+            kvm_hid_core_on_report_complete(&core,KVM_HID_ITF_KEYBOARD);
+            kvm_hid_core_poll(&core,++now);
+        }
+        CHECK(core.neutral_barrier);
+        CHECK_EQ(host.key_presses[KVM_KEY_A],0);
+        fh_pump(&core,&host,&now);
+        CHECK_EQ(host.key_presses[KVM_KEY_A],1);
+    }
+
+    boot_mount(false,false);
+    CHECK_EQ(kvm_hid_core_local(&core,&down,now),KVM_HID_OK);
+    kvm_hid_core_poll(&core,now); // A is in flight
+    kvm_hid_core_release_all(&core,KVM_RA_VIEW_CHANGE);
+    kvm_hid_core_on_report_complete(&core,KVM_HID_ITF_MOUSE); // host opens its second endpoint
+    kvm_hid_intent_t move=fh_move(7,0);
+    CHECK_EQ(kvm_hid_core_local(&core,&move,now),KVM_HID_OK);
+    kvm_hid_core_poll(&core,++now);
+    CHECK_EQ(host.sum_dx,0);
+    kvm_hid_core_on_report_complete(&core,KVM_HID_ITF_KEYBOARD); // A completed; release still pending
+    kvm_hid_core_poll(&core,++now);
+    CHECK_EQ(host.sum_dx,0);
+    CHECK(!fh_key_in(host.keys,KVM_KEY_A));
+    kvm_hid_core_on_report_complete(&core,KVM_HID_ITF_KEYBOARD); // release completed
+    kvm_hid_core_poll(&core,++now);
+    CHECK_EQ(host.sum_dx,7);
+
+    boot_mount(false,false);
+    kvm_hid_core_on_report_failed(&core,KVM_HID_ITF_MOUSE); // retry only its first neutral
+    CHECK_EQ(core.c.release_all,0);
+    CHECK_EQ(kvm_hid_core_local(&core,&down,now),KVM_HID_OK);
+    kvm_hid_core_poll(&core,now);
+    CHECK_EQ(host.key_presses[KVM_KEY_A],1);
+    CHECK(core.in_flight[KVM_HID_ITF_MOUSE]);
+    // A missing acknowledgment for an actual key ALWAYS invalidates queued input and both ledgers.
+    host.refuse[KVM_HID_ITF_KEYBOARD]=true;
+    kvm_hid_core_poll(&core,now+=core.cfg.completion_timeout_us+1);
+    CHECK_EQ(core.c.release_by_reason[KVM_RA_COMPLETION_TIMEOUT],1);
+    CHECK_EQ(core.c.completion_timeouts_itf[KVM_HID_ITF_KEYBOARD],1);
+    CHECK(core.neutral_barrier && !core.independent_boot && core.q_count==0);
+    host.refuse[KVM_HID_ITF_KEYBOARD]=false;
+    fh_pump(&core,&host,&now);
+    CHECK(fh_host_neutral(&host));
+}
+#endif
+
 int main(void)
 {
     printf("test_hid_vectors\n");
@@ -361,5 +464,9 @@ int main(void)
     RUN(control_request_policy);
     RUN(remote_release_and_disconnect);
     RUN(remote_while_suspended_or_offline);
+#if KVM_HID_ITFS == 2
+    RUN(local_keyboard_with_unopened_mouse);
+    RUN(boot_release_barriers);
+#endif
     TEST_MAIN_END("test_hid_vectors");
 }

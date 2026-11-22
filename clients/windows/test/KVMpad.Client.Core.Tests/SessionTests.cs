@@ -556,6 +556,22 @@ public sealed class SessionTests
     }
 
     [Fact]
+    public void AnUnopenedMouseKeepsTheKeyboardLease()
+    {
+        (SessionLogic logic, _, _) = NewSession();
+        Handshake(logic);
+        var epoch = logic.LeaseEpoch;
+        logic.OnMessage(ProtocolCodec.Decode(
+            """{"v":1,"type":"error","seq":5,"session_id":"c-815a","payload":{"code":"ERR_HID_NOT_READY","retryable":true}}"""));
+
+        Assert.True(ErrorCodes.IsKnown(logic.LastErrorCode));
+        Assert.Equal(ErrorCodes.HidNotReady, logic.LastErrorCode);
+        Assert.True(logic.CanSendInput);
+        Assert.Equal(epoch, logic.LeaseEpoch);
+        Assert.True(logic.QueueInput(new KeyboardKeyPayload(HidUsage.A, true)));
+    }
+
+    [Fact]
     public void AFatalProtocolErrorEndsTheConnection()
     {
         (SessionLogic logic, _, _) = NewSession();

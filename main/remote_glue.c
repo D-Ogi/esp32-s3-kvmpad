@@ -184,6 +184,13 @@ static uint64_t plat_unix(void *ctx)
 }
 
 // ---- transport hooks (server task, transport lock held) ----------------------------------------
+static bool input_ready(kvm_hid_action_type_t type)
+{
+    kvm_hid_snapshot_t snap;
+    hid_dispatch_get_snapshot(&snap, NULL);
+    return !kvm_hid_boot_input_unready(snap.boot_unread, type);
+}
+
 static kvm_hid_err_t h_intent(void *ctx, uint64_t session_id, uint32_t lease_epoch, const kvm_hid_intent_t *intent)
 {
     (void)ctx;
@@ -191,6 +198,7 @@ static kvm_hid_err_t h_intent(void *ctx, uint64_t session_id, uint32_t lease_epo
     if (err == ESP_OK) {
         return KVM_HID_OK; // the arbiter re-checks owner and epoch in the TinyUSB task and counts a refusal
     }
+    if (err == ESP_ERR_INVALID_STATE) return KVM_HID_ERR_BUSY;
     return err == ESP_ERR_TIMEOUT ? KVM_HID_ERR_HID_QUEUE_OVERFLOW : KVM_HID_ERR_BAD_INTENT;
 }
 
@@ -513,6 +521,9 @@ esp_err_t remote_glue_start(void)
     kvm_srt_server_config_t cfg;
     memset(&cfg, 0, sizeof(cfg));
     cfg.identity = s_id;
+    static kvm_rp_config_t protocol = KVM_RP_CONFIG_DEFAULT;
+    protocol.input_ready = input_ready;
+    cfg.core.rp = &protocol;
     cfg.core.platform = (kvm_pair_platform_t){.random = plat_random, .now_ms = plat_now_ms, .unix_time = plat_unix};
     cfg.core.store = app_config_pair_store();
     app_config_remote_t pol;

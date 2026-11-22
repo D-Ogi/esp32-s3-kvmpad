@@ -21,6 +21,7 @@ public static class ErrorCodes
     public const string ControlDenied = "ERR_CONTROL_DENIED";
     public const string PairingExpired = "ERR_PAIRING_EXPIRED";
     public const string HidQueueOverflow = "ERR_HID_QUEUE_OVERFLOW";
+    public const string HidNotReady = "ERR_HID_NOT_READY";
     public const string OtaInProgress = "ERR_OTA_IN_PROGRESS";
     public const string Auth = "ERR_AUTH";
     public const string RateLimit = "ERR_RATE_LIMIT";
@@ -28,7 +29,7 @@ public static class ErrorCodes
     /// <summary>Only protocol constants can be included verbatim in an operator diagnostic.</summary>
     public static bool IsKnown(string? code) => code is Version or BadFrame or Range or Usage or Replay
         or StaleEpoch or Session or HostOffline or UsbSuspended or TouchIo or ClientStale or ControlDenied
-        or PairingExpired or HidQueueOverflow or OtaInProgress or Auth or RateLimit;
+        or PairingExpired or HidQueueOverflow or HidNotReady or OtaInProgress or Auth or RateLimit;
 
     /// <summary>
     /// True when the code means "this client no longer owns the lease, or never did". The session must

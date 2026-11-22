@@ -62,6 +62,8 @@ const char *kvm_rp_err_name(kvm_rp_err_t err)
         return "ERR_AUTH";
     case KVM_RP_ERR_RATE_LIMIT:
         return "ERR_RATE_LIMIT";
+    case KVM_RP_ERR_HID_NOT_READY:
+        return "ERR_HID_NOT_READY";
     default:
         return "ERR_BAD_FRAME";
     }
@@ -77,6 +79,7 @@ bool kvm_rp_err_retryable(kvm_rp_err_t err)
     case KVM_RP_ERR_OTA_IN_PROGRESS:
     case KVM_RP_ERR_HID_QUEUE_OVERFLOW:
     case KVM_RP_ERR_RATE_LIMIT:
+    case KVM_RP_ERR_HID_NOT_READY:
         return true;
     default:
         return false;
@@ -108,6 +111,8 @@ kvm_rp_err_t kvm_rp_err_from_hid(kvm_hid_err_t err)
         return KVM_RP_ERR_HID_QUEUE_OVERFLOW;
     case KVM_HID_ERR_OTA_IN_PROGRESS:
         return KVM_RP_ERR_OTA_IN_PROGRESS;
+    case KVM_HID_ERR_BUSY:
+        return KVM_RP_ERR_HID_NOT_READY;
     default:
         return KVM_RP_ERR_BAD_FRAME;
     }
@@ -205,13 +210,18 @@ static bool is_owner(const kvm_rp_t *rp, const kvm_rp_session_t *s)
     return rp->owner_kind == OWNER_REMOTE && rp->owner_session == s->id;
 }
 
+static void discard_move(kvm_rp_session_t *s)
+{
+    s->pend_dx = 0;
+    s->pend_dy = 0;
+    s->pend_move = false;
+}
+
 static void shadow_clear(kvm_rp_session_t *s)
 {
     memset(s->keys_down, 0, sizeof(s->keys_down));
     s->buttons_down = 0;
-    s->pend_dx = 0;
-    s->pend_dy = 0;
-    s->pend_move = false;
+    discard_move(s);
 }
 
 static bool key_shadow(const kvm_rp_session_t *s, uint8_t usage)
@@ -476,10 +486,11 @@ void kvm_rp_set_owner(kvm_rp_t *rp, kvm_owner_kind_t kind, uint64_t session_id, 
 {
     rp->now_us = now_us;
     uint64_t prev = (rp->owner_kind == OWNER_REMOTE) ? rp->owner_session : 0u;
+    bool new_epoch = rp->owner_epoch != epoch;
     rp->owner_kind = kind;
     rp->owner_session = (kind == OWNER_REMOTE) ? session_id : 0u;
     rp->owner_epoch = epoch;
-    if (prev != 0u && prev != rp->owner_session) {
+    if (prev != 0u && (prev != rp->owner_session || new_epoch)) {
         kvm_rp_session_t *s = find(rp, prev);
         if (s != NULL) {
             shadow_clear(s);
@@ -572,7 +583,9 @@ static kvm_rp_err_t flush_move(kvm_rp_t *rp, kvm_rp_session_t *s)
     if (rp->hooks.hid_sink == NULL) {
         return KVM_RP_ERR_CONTROL_DENIED;
     }
-    return rp->hooks.hid_sink(rp->hooks.ctx, s->id, rp->owner_epoch, &it);
+    kvm_rp_err_t err = rp->hooks.hid_sink(rp->hooks.ctx, s->id, rp->owner_epoch, &it);
+    if (err == KVM_RP_ERR_HID_NOT_READY) discard_move(s); // drop all remaining chunks from before USB reopened
+    return err;
 }
 
 void kvm_rp_poll(kvm_rp_t *rp, uint64_t now_us)
@@ -750,6 +763,7 @@ static kvm_rp_err_t handle_input(kvm_rp_t *rp, kvm_rp_session_t *s, int root, in
     it.timestamp_us = rp->now_us;
 
     bool release_kind = false; // an UP is never dropped by the throttle (AGENTS §7 priority 2)
+    bool unchanged_edge = false;
     uint8_t usage = 0;
     int32_t dx = 0;
     int32_t dy = 0;
@@ -793,17 +807,7 @@ static kvm_rp_err_t handle_input(kvm_rp_t *rp, kvm_rp_session_t *s, int root, in
             return reject(rp, s, KVM_RP_ERR_USAGE, seq);
         }
         uint8_t bit = (uint8_t)(1u << (btn - 1u));
-        if (down) {
-            if ((s->buttons_down & bit) != 0u) {
-                rp->c.idempotent_key_down++; // same rule as a repeated key DOWN (03 §6.5)
-                rp->c.frames_accepted++;
-                return KVM_RP_OK;
-            }
-        } else if ((s->buttons_down & bit) == 0u) {
-            rp->c.keyup_without_down++; // 03 §6.5: no-op + metric
-            rp->c.frames_accepted++;
-            return KVM_RP_OK;
-        }
+        unchanged_edge = down == ((s->buttons_down & bit) != 0u);
         it.type = down ? KVM_HID_MOUSE_BTN_DOWN : KVM_HID_MOUSE_BTN_UP;
         it.data.mouse_button.button_id = btn;
         usage = bit;
@@ -844,17 +848,7 @@ static kvm_rp_err_t handle_input(kvm_rp_t *rp, kvm_rp_session_t *s, int root, in
         if (!kvm_usage_is_valid_key(usage)) {
             return reject(rp, s, KVM_RP_ERR_USAGE, seq); // unknown key: no HID
         }
-        if (down) {
-            if (key_shadow(s, usage)) {
-                rp->c.idempotent_key_down++; // 03 §6.5: do not repeat to USB
-                rp->c.frames_accepted++;
-                return KVM_RP_OK;
-            }
-        } else if (!key_shadow(s, usage)) {
-            rp->c.keyup_without_down++; // 03 §6.5: no-op + metric
-            rp->c.frames_accepted++;
-            return KVM_RP_OK;
-        }
+        unchanged_edge = down == key_shadow(s, usage);
         it.type = down ? KVM_HID_KEY_DOWN : KVM_HID_KEY_UP;
         it.data.key.usage_id = usage;
         release_kind = !down;
@@ -881,6 +875,16 @@ static kvm_rp_err_t handle_input(kvm_rp_t *rp, kvm_rp_session_t *s, int root, in
         it.data.chord.chord_id = chord;
         break;
     }
+    }
+
+    // Check at receipt, before acknowledging an edge or retaining movement for a later USB read.
+    if (rp->cfg.input_ready && !rp->cfg.input_ready(it.type))
+        return reject(rp, s, KVM_RP_ERR_HID_NOT_READY, seq);
+    if (unchanged_edge) {
+        if (release_kind) rp->c.keyup_without_down++;
+        else rp->c.idempotent_key_down++;
+        rp->c.frames_accepted++;
+        return KVM_RP_OK;
     }
 
     // --- throttle policy (03 §6.5): coalesce movement, reject the non-idempotent excess, and

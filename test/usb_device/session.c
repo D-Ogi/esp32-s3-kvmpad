@@ -488,6 +488,7 @@ static void composite_session(const uint8_t *hid_device, const uint8_t *serial, 
         configure(1);
         check_monitor_state(KVM_USB_MOUNTED);
         assert(usb_hid_device_interface_count() == 2 && usb().state == KVM_USB_MOUNTED);
+        assert(snapshot().neutralizing && !snapshot().boot_unread);
         drain();
         assert(!snapshot().neutralizing && snapshot().ledger_empty);
         for (unsigned hid = 0; hid < 2; ++hid) {
@@ -804,6 +805,115 @@ static void check_service_window(void)
 #endif
 #include "remote_release_session.inc"
 
+#if CONFIG_TINYUSB_HID_COUNT == 2
+// Read completed packets at the interrupt IN endpoint, independently of the EP0 LED/control path.
+static void read_in(uint8_t ep,const uint8_t *bytes,size_t len)
+{
+    assert(endpoint[ep].pending && endpoint[ep].len==len && !memcmp(endpoint[ep].data,bytes,len));
+    complete(ep);
+}
+
+static void boot_host_reads_one_interface(void)
+{
+    const uint8_t zero[8]={0}, key[8]={0,0,KVM_KEY_A}, moved[3]={0,3,0};
+    kvm_hid_intent_t move={.type=KVM_HID_MOUSE_MOVE,.data.mouse_move={.dx=3}};
+    for (unsigned mouse_only=0;mouse_only<=1;mouse_only++) {
+        reset_bus();configure(1);
+        for (uint8_t itf=0;itf<2;itf++) {
+            setup(0x21,HID_REQ_CONTROL_SET_PROTOCOL,HID_PROTOCOL_BOOT,itf,0);status_stage(0x80);
+        }
+        // Both startup reports were staged in Report protocol before SET_PROTOCOL.
+        read_in(mouse_only ? 0x82 : 0x81,zero,mouse_only ? 5 : 8);
+        assert(hid_tick);
+        now+=300000;usb_hid_device_request_pump();service();
+        uint32_t releases=snapshot().release_generation;
+        if (mouse_only) {
+            assert(hid_dispatch_ui_modifier_tap(KVM_KEY_LEFT_SHIFT)==ESP_ERR_INVALID_STATE);
+            assert(hid_dispatch_ui_key_down(KVM_KEY_A)==ESP_ERR_INVALID_STATE);
+            assert(hid_dispatch_ui_key_up(KVM_KEY_A)==ESP_ERR_INVALID_STATE);
+            assert(hid_dispatch_local(&move)==ESP_OK);service();read_in(0x82,moved,3);
+            read_in(0x81,zero,8);
+        } else {
+            assert(hid_dispatch_local(&move)==ESP_ERR_INVALID_STATE);
+            assert(hid_dispatch_ui_key_down(KVM_KEY_A)==ESP_OK);service();read_in(0x81,key,8);
+            now+=300000;usb_hid_device_request_pump();service();
+            assert(snapshot().keys_down==1 && snapshot().release_generation==releases);
+            assert(hid_dispatch_ui_key_up(KVM_KEY_A)==ESP_OK);service();read_in(0x81,zero,8);
+            read_in(0x82,zero,5);
+        }
+        assert(snapshot().ledger_empty && !snapshot().mods_armed && !snapshot().neutralizing);
+        assert(!endpoint[0x81].pending && !endpoint[0x82].pending);
+    }
+    assert(hid_dispatch_ui_key_down(KVM_KEY_A)==ESP_OK);service();
+    assert(endpoint[0x81].pending && !memcmp(endpoint[0x81].data,key,8));
+    reset_bus();configure(1);read_in(0x81,zero,8);read_in(0x82,zero,5);
+    assert(snapshot().ledger_empty && !endpoint[0x81].pending && !endpoint[0x82].pending);
+    puts("PASS single-interface boot host: exact key down/up or mouse displacement, late peer neutral, reset without replay.");
+}
+
+static void remote_boot_keyboard(void)
+{
+    const uint64_t client = 42;
+    const uint8_t zero[8] = {0}, key[8] = {0, 0, KVM_KEY_A};
+    const kvm_hid_intent_t down = {.type = KVM_HID_KEY_DOWN, .data.key.usage_id = KVM_KEY_A};
+    const kvm_hid_intent_t up = {.type = KVM_HID_KEY_UP, .data.key.usage_id = KVM_KEY_A};
+    const kvm_hid_intent_t click = {.type = KVM_HID_MOUSE_BTN_DOWN, .data.mouse_button.button_id = KVM_MOUSE_BTN_LEFT};
+    uint32_t epoch;
+    reset_bus(); configure(1);
+    setup(0x21, HID_REQ_CONTROL_SET_PROTOCOL, HID_PROTOCOL_BOOT, 0, 0);
+    status_stage(0x80);
+    read_in(0x81, zero, 8);
+    now += 10000000;
+    assert(hid_dispatch_remote_grant(client, &epoch) == KVM_HID_OK);
+    read_in(0x81, zero, 8);
+    assert(hid_dispatch_remote(client, epoch, &click) == ESP_ERR_INVALID_STATE);
+    assert(hid_dispatch_remote(client, epoch, &down) == ESP_OK);
+    service(); read_in(0x81, key, 8);
+    assert(hid_dispatch_remote(client, epoch, &up) == ESP_OK);
+    service(); read_in(0x81, zero, 8);
+    assert(snapshot().owner_kind == OWNER_REMOTE && snapshot().ledger_empty);
+
+    // A full queue of granted keys cannot delay local takeover on the unopened mouse.
+    unsigned before_override = keyboard_presses;
+    for (unsigned i = 0; i < 64; i++) assert(hid_dispatch_remote(client, epoch, &down) == ESP_OK);
+    assert(hid_dispatch_local(&click) == ESP_ERR_INVALID_STATE);
+    service(); read_in(0x81, zero, 8);
+    assert(snapshot().owner_kind == OWNER_LOCAL && snapshot().owner_epoch != epoch);
+    read_in(0x82, zero, 5);
+    assert(keyboard_presses == before_override && !endpoint[0x82].pending);
+
+    for (unsigned revoke = 0; revoke < 2; revoke++) {
+        now += 10000000;
+        assert(hid_dispatch_remote_grant(client, &epoch) == KVM_HID_OK);
+        drain();
+        assert(hid_dispatch_remote(client, epoch, &click) == ESP_OK);
+        service();
+        // Leave a real button press in flight while the next owner requests a key.
+        assert(hid_dispatch_remote_grant(client, &epoch) == KVM_HID_OK);
+        assert(hid_dispatch_remote(client, epoch, &down) == ESP_OK);
+        service();
+        unsigned presses = keyboard_presses;
+        // Revoking the old lease and granting its replacement each request a release.
+        for (unsigned i = 0; i < 2 && endpoint[0x81].pending; i++) read_in(0x81, zero, 8);
+        assert(!endpoint[0x81].pending);
+        if (revoke) hid_dispatch_remote_disconnect_sync(client, KVM_RA_REMOTE_DISCONNECT);
+        read_in(0x82, (const uint8_t[5]){1}, 5);
+        assert(!endpoint[0x81].pending || !memcmp(endpoint[0x81].data, zero, 8));
+        read_in(0x82, zero, 5);
+        if (revoke) {
+            drain();
+            assert(snapshot().owner_kind == OWNER_NONE && snapshot().ledger_empty);
+            assert(keyboard_presses == presses);
+        } else {
+            read_in(0x81, key, 8);
+            assert(hid_dispatch_remote(client, epoch, &up) == ESP_OK);
+            service(); read_in(0x81, zero, 8);
+        }
+    }
+    puts("PASS remote boot keyboard: both key edges without a mouse read, local override, and release of a previously used mouse before a new owner's key.");
+}
+#endif
+
 int main(int argc, char **argv)
 {
     assert(hid_dispatch_start() == ESP_OK && usb_hid_device_start() == ESP_OK);
@@ -1008,5 +1118,9 @@ int main(int argc, char **argv)
     screenshot_session(argv[1]);
 #endif
     remote_release_session();
+#if CONFIG_TINYUSB_HID_COUNT == 2
+    boot_host_reads_one_interface();
+    remote_boot_keyboard();
+#endif
     return 0;
 }
