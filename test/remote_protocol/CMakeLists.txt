@@ -53,3 +53,9 @@ target_include_directories(fuzz_remote_frame PRIVATE
     ${REPO}/test/host_unit
     ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME fuzz_remote_frame COMMAND fuzz_remote_frame 20261102 200000)
+
+if(WIN32 AND MINGW AND KVM_SANITIZE)
+    get_filename_component(compiler_bin "${CMAKE_C_COMPILER}" DIRECTORY)
+    get_property(protocol_tests DIRECTORY PROPERTY TESTS)
+    set_tests_properties(${protocol_tests} PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${compiler_bin}")
+endif()
