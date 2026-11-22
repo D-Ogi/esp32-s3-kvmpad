@@ -1653,6 +1653,46 @@ static void radio_package_selection(const char *folder)
     home(); pack_view_close(); lv_obj_delete(screen);
 }
 
+static void autopilot_package_selection(const char *folder)
+{
+    load_at(folder);
+    assert(scene.states==1 && scene.state[0].value.integer==1);
+    lv_obj_t *screen=lv_obj_create(NULL), *frame=pack_view_frame(screen,true);
+    lv_obj_t *content=lv_obj_create(frame);
+    lv_obj_set_scrollable(screen,false); lv_obj_set_scrollable(content,false);
+    lv_obj_remove_style_all(content); lv_obj_set_pos(content,0,32); lv_obj_set_size(content,600,992);
+    assert(pack_view_open(content,&scene,scene.permissions));
+    lv_screen_load(screen); sim_settle(); pack_view_tick(); sim_settle();
+    assert(visible_caption(content,"HDG   275 deg") && !visible_caption(content,"Go offline"));
+    lv_area_t touch;
+    lv_obj_t *option=visible_caption(content,"Offline");
+    assert(option); lv_obj_get_coords(lv_obj_get_parent(option),&touch);
+    assert(lv_area_get_width(&touch)>=44 && lv_area_get_height(&touch)>=44);
+    picture("autopilot-package-demo");
+    // The authored selector remains reachable while an acknowledgment or editor is open.
+    screen_tap(true,250,320);
+    assert(visible_caption(content,"Set HDG"));
+    screen_tap(true,515,370);
+    assert(visible_caption(content,"285 deg"));
+    screen_tap(true,435,540);
+    assert(visible_caption(content,"Awaiting demo confirmation: HDG 285 deg"));
+    screen_tap(true,140,66);
+    assert(scene.state[0].value.integer==0 && visible_caption(content,"AP --"));
+    assert(!visible_caption(content,"Start demo"));
+    picture("autopilot-package-offline");
+    lv_test_wait(1000); pack_view_tick();
+    screen_tap(true,440,66);
+    assert(scene.state[0].value.integer==1 && visible_caption(content,"HDG   275 deg"));
+    assert(visible_caption(content,"Active") && visible_caption(content,"Armed"));
+    screen_tap(true,250,320);
+    screen_tap(true,495,265);
+    assert(visible_caption(content,"Enter HDG  /  deg"));
+    screen_tap(true,140,66);
+    assert(visible_caption(content,"AP --") && !visible_caption(content,"Return"));
+    home(); pack_view_close(); lv_obj_delete(screen);
+    puts("PASS package tab starts and stops demo, cancels pending change and numeric editor; fresh FMA.");
+}
+
 static void switch_to_autopilot(void)
 {
     memset(&scene,0,sizeof(scene));
@@ -1903,8 +1943,10 @@ int main(int argc, char **argv)
 {
     size_t baseline=sim_env_start();
     home_screen=lv_screen_active();
-    if (argc==3 && !strcmp(argv[1],"--radio-selector")) {
-        assert(ui_theme_init()); radio_package_selection(argv[2]);
+    if (argc==3 && (!strcmp(argv[1],"--radio-selector") || !strcmp(argv[1],"--autopilot-selector"))) {
+        assert(ui_theme_init());
+        if (!strcmp(argv[1],"--radio-selector")) radio_package_selection(argv[2]);
+        else autopilot_package_selection(argv[2]);
         ui_theme_deinit(); sim_env_stop(baseline); return 0;
     }
     if (argc==1 || (argc==2 && !strcmp(argv[1],"--rate-slider"))) {

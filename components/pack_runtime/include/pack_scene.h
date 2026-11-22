@@ -27,6 +27,7 @@ typedef struct {
     uint8_t tab_first, tab_count, chip_style;
     uint8_t dead_zone_percent;
     bool spring_center, invert_y, cubic;
+    bool package_selection; // The scene supplies the panel selector through a binding.
     uint8_t icon_member; // zero unless Button.props.icon resolved to an archive member
 } pack_widget_t;
 typedef struct pack_icon {
@@ -82,7 +83,7 @@ typedef struct {
     char id[101], title[97], version[32], entry[49];
     bool publisher_verified, composite;
     uint8_t tabs;
-    uint8_t portrait:1, screen_count:4, min_firmware_1_4:1;
+    uint8_t portrait:1, screen_count:4, min_api_minor:3;
     uint8_t publisher_key_sha256[32]; // SHA-256 of the verified raw Ed25519 public key
     unsigned widgets, states, bindings, actions, sources, events_per_second, permissions, required_permissions, max_memory_kib;
     pack_icon_t *icons;

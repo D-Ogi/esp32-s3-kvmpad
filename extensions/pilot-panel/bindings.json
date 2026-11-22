@@ -2,6 +2,7 @@
   "version": 1,
   "sources": [],
   "state": [
+    {"id": "demo_session", "type": "int", "initial": 0, "min": 0, "max": 1},
     {"id": "selected_radio", "type": "int", "initial": 0, "min": 0, "max": 1},
     {
       "id": "aircraft",
@@ -12,6 +13,8 @@
     }
   ],
   "connections": [
+    {"from": "demo_session", "to": "autopilot_session.selected", "transform": "identity"},
+    {"from": "demo_session", "to": "autopilot_panel.selected", "transform": "identity"},
     {"from": "selected_radio", "to": "radio_selector.selected", "transform": "identity"},
     {"from": "selected_radio", "to": "radio_panel.selected", "transform": "identity"},
     {
@@ -31,6 +34,8 @@
     }
   ],
   "actions": [
+    {"id": "select_session", "trigger": "autopilot_session.change", "type": "state.set", "capability": "ui.basic",
+     "args": {"name": "demo_session", "value": {"event": "value"}}},
     {"id": "select_radio", "trigger": "radio_selector.change", "type": "state.set", "capability": "ui.basic",
      "args": {"name": "selected_radio", "value": {"event": "value"}}},
     {

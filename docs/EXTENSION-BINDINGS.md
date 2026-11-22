@@ -81,7 +81,9 @@ A `ChartViewer` accepts two or three distinct entries in `props.charts`. Each en
 
 Drag the chart with one finger. Place two fingers on the map and spread or pinch to zoom between 100% and 600%. The chart follows the midpoint of the two contacts within its pan limits. Lift both fingers to start another drag. The **+**, **−** and **Fit** controls also work with one finger.
 
-An `AutopilotPanel` needs 540 × 680 pixels and accepts empty properties. It opens offline. **Start demo** enables a local aircraft simulation for the HDG, ALT and VS selectors and the AP, HDG, NAV, VS and ALT buttons. Values under **Actual** come from the demo aircraft. Submitted settings change after acknowledgment. The demo can reject a request and separately capture NAV or the selected altitude.
+An `AutopilotPanel` needs 540 × 680 pixels and accepts empty properties. By default it opens offline with a **Start demo** button. The demo runs a local aircraft simulation for the HDG, ALT and VS selectors and the AP, HDG, NAV, VS and ALT buttons. Values under **Actual** come from the demo aircraft. Submitted settings change after acknowledgment. The demo can reject a request and separately capture NAV or the selected altitude.
+
+To supply a session selector, set `min_firmware` to 1.5.0 or later. Bind a local integer to `AutopilotPanel.selected` using `identity`. Set the bounds to 0 (offline) and 1 (demo). Pilot Panel uses a tab strip for this choice. Selecting **Offline** discards the draft and cancels any pending demo request. Switching from **Offline** to **Demo** restores the initial aircraft settings. Selecting the current tab keeps the session.
 
 A `RadioPanel` uses the same minimum dimensions and empty properties. In **Start demo**, select COM 1 or COM 2, tap the standby frequency, enter six digits, and confirm with **OK**. **Swap** exchanges the active and standby channels for the selected radio. Tap the four-digit transponder code to enter an octal code, including leading zeroes. The STBY, ON and ALT controls request a mode change. The panel shows confirmed values after readback. The shipped package uses the local demo.
 

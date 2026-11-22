@@ -33,7 +33,7 @@ static struct {
     target_t editing;
     aircraft_t model;
     page_t page;
-    bool demo,reject_next,decline,report_armed,slow_reply;
+    bool package_selection,demo,reject_next,decline,report_armed,slow_reply;
     char number[8]; // optional sign, six digits, terminator
     command_t pending;
     int requested;
@@ -171,21 +171,29 @@ static void keypad_key(command_t key)
     keypad_refresh();
 }
 
+void pack_autopilot_view_set_demo(bool enabled)
+{
+    if (!panel.parent || panel.demo==enabled) return;
+    panel.demo=enabled;
+    panel.page=VIEW_MAIN;
+    panel.pending=NONE;
+    panel.reject_next=false;
+    panel.notice[0]=0;
+    if (enabled) {
+        panel.report_armed=true;panel.slow_reply=false;
+        panel.model=(aircraft_t){.ap=true,.alt_armed=true,.lateral=MODE_HDG,.vertical=MODE_VS,
+                                 .target={275,6000,800},.actual={268,5400,700}};
+    }
+    render();
+}
+
 static void clicked(lv_event_t *e)
 {
     command_t c=(command_t)(uintptr_t)lv_event_get_user_data(e);
     if (!panel.parent || !lv_obj_is_visible(lv_event_get_current_target_obj(e))) return;
-    if (c==DEMO && !panel.demo) {
-        panel.demo=true;panel.report_armed=true;panel.slow_reply=false;
-        panel.model=(aircraft_t){.ap=true,.alt_armed=true,.lateral=MODE_HDG,.vertical=MODE_VS,
-                                 .target={275,6000,800},.actual={268,5400,700}};
-        panel.notice[0]=0;
-    } else if (!panel.demo) return;
-    else if (c==OFFLINE) {
-        panel.demo=false; panel.pending=NONE; panel.reject_next=false;
-        panel.page=VIEW_MAIN;panel.notice[0]=0;
-    } else if (panel.pending) return;
-    else if (c==CANCEL) panel.page=VIEW_MAIN;
+    if (c==DEMO || c==OFFLINE) { pack_autopilot_view_set_demo(c==DEMO); return; }
+    if (!panel.demo || panel.pending) return;
+    if (c==CANCEL) panel.page=VIEW_MAIN;
     else if (c==OPTIONS) panel.page=VIEW_OPTIONS;
     else if (c==REPORT_ARMED && panel.page==VIEW_OPTIONS) panel.report_armed=!panel.report_armed;
     else if (c==LATENCY && panel.page==VIEW_OPTIONS) panel.slow_reply=!panel.slow_reply;
@@ -368,8 +376,9 @@ static bool main_page(void)
     int w=panel.width;
     const aircraft_t *m=&panel.model;
     bool on=panel.demo,free=on && !panel.pending;
-    if (!label(8,6,w-190,36,on ? "Autopilot  /  Demo" : "Autopilot  /  Offline",true) ||
-        !button(w-172,0,164,48,on ? "Go offline" : "Start demo",on ? OFFLINE : DEMO,true,false)) return false;
+    const char *title=panel.package_selection ? "Autopilot" : on ? "Autopilot  /  Demo" : "Autopilot  /  Offline";
+    if (!label(8,6,w-190,36,title,true) ||
+        (!panel.package_selection && !button(w-172,0,164,48,on ? "Go offline" : "Start demo",on ? OFFLINE : DEMO,true,false))) return false;
     if (!label(8,60,100,30,"FMA",true) ||
         !label(110,62,(w-130)/2,28,"Lateral",false) ||
         !label((w+102)/2,62,(w-130)/2,28,"Vertical",false)) return false;
@@ -411,7 +420,7 @@ static bool main_page(void)
         if (!button(120+(int)i*step,modes_y,step-5,50,modes[i],(command_t)(HDG+i),free && m->ap,active)) return false;
     }
     const char *notice=on ? (panel.notice[0] ? panel.notice : "Local demo. Tap a target to edit it.")
-                          : "No simulator connection. Start demo to try the controls.";
+                          : panel.package_selection ? "No simulator connection." : "No simulator connection. Start demo to try the controls.";
     if (!label(8,modes_y+68,w-16,62,notice,false)) return false;
     return !on || button(8,panel.height-64,w-16,52,"Demo controls",OPTIONS,free,false);
 }
@@ -504,12 +513,12 @@ static void deleted(lv_event_t *e)
     if (lv_event_get_target_obj(e)==panel.parent) memset(&panel,0,sizeof(panel));
 }
 
-bool pack_autopilot_view_open(lv_obj_t *parent,int width,int height)
+bool pack_autopilot_view_open(lv_obj_t *parent,int width,int height,bool package_selection)
 {
     if (!parent || panel.parent || width<540 || height<680) return false;
     if (!lv_obj_add_event_cb(parent,deleted,LV_EVENT_DELETE,NULL)) return false;
     lv_obj_set_style_pad_all(parent,0,0);lv_obj_set_style_border_width(parent,0,0);lv_obj_set_scrollable(parent,false);
-    panel.parent=parent;panel.width=width;panel.height=height;
+    panel.parent=parent;panel.width=width;panel.height=height;panel.package_selection=package_selection;
     return true;
 }
 

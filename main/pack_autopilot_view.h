@@ -6,7 +6,8 @@
 #include <stdbool.h>
 
 // LVGL owner only. Open registers one authored viewport. Tick builds only while visible.
-bool pack_autopilot_view_open(lv_obj_t *parent,int width,int height);
+bool pack_autopilot_view_open(lv_obj_t *parent,int width,int height,bool package_selection);
+void pack_autopilot_view_set_demo(bool enabled);
 void pack_autopilot_view_tick(void);
 void pack_autopilot_view_close(void);
 #if CONFIG_KVM_UI_BENCH

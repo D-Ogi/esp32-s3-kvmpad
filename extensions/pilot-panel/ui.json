@@ -23,7 +23,8 @@
         "bounds": {"x": 0, "y": 0, "w": 600, "h": 944},
         "props": {"title": "Autopilot"},
         "children": [
-          {"id": "autopilot_panel", "type": "AutopilotPanel", "bounds": {"x": 8, "y": 8, "w": 584, "h": 928}}
+          {"id": "autopilot_session", "type": "TabStrip", "bounds": {"x": 16, "y": 8, "w": 568, "h": 52}, "props": {"tabs": ["Offline", "Demo"]}, "events": {"change": "select_session"}},
+          {"id": "autopilot_panel", "type": "AutopilotPanel", "bounds": {"x": 8, "y": 68, "w": 584, "h": 868}}
         ]
       },
       {

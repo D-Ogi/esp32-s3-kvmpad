@@ -125,7 +125,7 @@ bool pack_scene_manifest(pack_scene_t *s, const doc_t *d)
         number(d, 0, "schema_version", 1, 1) != 1 || !string(d, 0, "id", s->id, sizeof(s->id)) || !pack_profile_id_valid(s->id) ||
         !string(d, 0, "version", s->version, sizeof(s->version)) || !version(s->version, ver) ||
         !string(d, 0, "min_firmware", minimum, sizeof(minimum)) || !version(minimum, ver) ||
-        ver[0] > 1 || (ver[0] == 1 && (ver[1] > 4 || (ver[1] == 4 && ver[2] > 0))) ||
+        ver[0] > 1 || (ver[0] == 1 && (ver[1] > 5 || (ver[1] == 5 && ver[2] > 0))) ||
         !string(d, 0, "title", s->title, sizeof(s->title)) || !string(d, 0, "description", description, sizeof(description)) ||
         !string(d, 0, "entry_view", s->entry, sizeof(s->entry)) || !name_valid(s->entry, false) ||
         !(equals(d,0,"category","CONTROL") || equals(d,0,"category","COMPOSITE") || equals(d,0,"category","TELEMETRY") || equals(d,0,"category","LIVE_VIEW")) ||
@@ -133,7 +133,7 @@ bool pack_scene_manifest(pack_scene_t *s, const doc_t *d)
         !KEYS(d,usb,"mode","requires") || !KEYS(d,host,"requires") ||
         !KEYS(d,limits,"max_events_per_sec","max_memory_kib") || rate < 1 ||
         number(d,limits,"max_memory_kib",16,512) < 0) return false;
-    s->min_firmware_1_4=ver[0]==1 && ver[1]==4;
+    s->min_api_minor=ver[0]==1 ? ver[1] : 0;
     int hn = array_count(d, hc);
     unsigned host_caps = 0;
     if (hn < 0 || hn > 2) return false;
@@ -693,7 +693,8 @@ static bool compile_connection(pack_scene_t *s, const doc_t *d, int o)
     else if (!strcmp(dot,"value") && (k==PACK_GAUGE_ARC || k==PACK_GAUGE_NEEDLE || k==PACK_VALUE)) field=PACK_BIND_VALUE;
     else if (!strcmp(dot,"pitch") && k==PACK_HORIZON) field=PACK_BIND_PITCH;
     else if (!strcmp(dot,"roll") && k==PACK_HORIZON) field=PACK_BIND_ROLL;
-    else if (!strcmp(dot,"selected") && (k==PACK_TABS || (k==PACK_RADIO && s->min_firmware_1_4))) field=PACK_BIND_SELECTED;
+    else if (!strcmp(dot,"selected") && (k==PACK_TABS || (k==PACK_RADIO && s->min_api_minor>=4) ||
+                                        (k==PACK_AUTOPILOT && s->min_api_minor>=5))) field=PACK_BIND_SELECTED;
     else return false;
     int si=state_id(s,from);
     bool local=si>=0;
@@ -707,11 +708,11 @@ static bool compile_connection(pack_scene_t *s, const doc_t *d, int o)
     if (!compile_transform(s,d,o,b) || (field!=PACK_BIND_TEXT && b->output!=PACK_INTEGER && b->output!=PACK_FLOAT))
         return false;
     if (field==PACK_BIND_SELECTED) {
-        unsigned options=k==PACK_RADIO ? 2u : s->widget[wi].tab_count;
+        unsigned options=k==PACK_TABS ? s->widget[wi].tab_count : 2u;
         if (!local || b->input!=PACK_INTEGER || b->transform!=PACK_IDENTITY ||
             s->state[si].min.integer<0 || s->state[si].max.integer>=(int32_t)options) return false;
-        // A bound radio gets its two choices from the package; legacy radios render their own.
-        if (k==PACK_RADIO) s->widget[wi].tab_count=2;
+        // A bound panel gets its selector from the package.
+        if (k!=PACK_TABS) s->widget[wi].package_selection=true;
     }
     s->bindings++;
     return true;
@@ -809,7 +810,7 @@ static bool compile_action(pack_scene_t *s, const doc_t *d, int o)
         if (w->kind<PACK_TOUCH && equals(d,o,"type","hid.joystick.set_axes") && equals(d,o,"capability","hid.joystick"))
             return joystick_action(s,d,args,a);
         if (a->event!=PACK_TAP && w->kind<PACK_TOUCH) return false;
-        if ((w->kind==PACK_RATE_SLIDER || (s->min_firmware_1_4 && w->kind==PACK_BUTTON && a->event==PACK_TAP)) &&
+        if ((w->kind==PACK_RATE_SLIDER || (s->min_api_minor>=4 && w->kind==PACK_BUTTON && a->event==PACK_TAP)) &&
             equals(d,o,"type","state.adjust") && equals(d,o,"capability","ui.basic")) {
             char name[97];
             int64_t delta;

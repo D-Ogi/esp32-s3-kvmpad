@@ -73,8 +73,8 @@ int main(void)
     lv_test_indev_create_all();assert(ui_theme_init());
     parent=lv_obj_create(lv_screen_active());lv_obj_remove_style_all(parent);lv_obj_set_size(parent,584,864);
     lv_obj_set_pos(parent,8,68);lv_obj_set_hidden(parent,true);
-    assert(pack_autopilot_view_open(parent,584,864));
-    assert(!pack_autopilot_view_open(parent,584,864));
+    assert(pack_autopilot_view_open(parent,584,864,false));
+    assert(!pack_autopilot_view_open(parent,584,864,false));
     pack_autopilot_view_tick();assert(!lv_obj_get_child_count(parent));
     lv_obj_set_hidden(parent,false);lv_obj_update_layout(parent);
     size_t idle=host_lv_live_bytes();
@@ -151,10 +151,19 @@ int main(void)
     printf("LVGL host live increments: offline=%zu B, demo=%zu B, numeric keypad=%zu B, retained demo=%zu B.\n",
            offline-idle,demo-idle,keypad-idle,hidden-idle);
     pack_autopilot_view_close();assert(deleted==1 && !lv_obj_get_child_count(parent));
-    assert(pack_autopilot_view_open(parent,584,864));
+    assert(pack_autopilot_view_open(parent,584,864,false));
     pack_autopilot_view_tick();assert(!lv_obj_get_child_count(parent));
     lv_obj_set_hidden(parent,false);pack_autopilot_view_tick();
     shows("Start demo");assert(!match(parent,"ALT   45000 ft",true));
+    pack_autopilot_view_close();
+    assert(pack_autopilot_view_open(parent,584,864,true));
+    pack_autopilot_view_set_demo(true);pack_autopilot_view_tick();
+    tap("HDG   275 deg");tap("+10");pack_autopilot_view_set_demo(true);
+    shows("285 deg");tap("Apply");pack_autopilot_view_set_demo(true);acknowledge();
+    shows("HDG   285 deg");tap("Demo controls");tap("Reject next request: off");tap("Back");
+    pack_autopilot_view_set_demo(false);pack_autopilot_view_set_demo(true);
+    fma("Active","HDG","VS");fma("Armed","--","ALT");
+    tap("HDG   275 deg");tap("+1");tap("Apply");acknowledge();shows("HDG   276 deg");
     lv_obj_delete(parent);pack_autopilot_view_close();pack_autopilot_view_tick();
     lv_test_indev_delete_all();lv_display_delete(display);ui_theme_deinit();lv_deinit();
     puts("PASS Offline, Demo, editors, cancel, one request, delayed acceptance, rejection, modes, capture, 25 retained returns, close and fresh reopen.");

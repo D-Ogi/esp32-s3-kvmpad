@@ -860,11 +860,9 @@ function draw(node, parent) {
             const chart = chartViewer(el, p.charts);
             view.show = chart.paint;
             view.cancel = chart.cancel;
-        } else if (node.type === "AutopilotPanel") {
-            view.cancel = autopilotPreview(el);
-        } else if (node.type === "RadioPanel") {
+        } else if (node.type === "AutopilotPanel" || node.type === "RadioPanel") {
             const bound=pack.bindings.connections.some(c=>c.to===node.id+".selected");
-            Object.assign(view,radioPreview(el,bound));
+            Object.assign(view,node.type==="RadioPanel" ? radioPreview(el,bound) : autopilotPreview(el,bound));
         } else if (node.type === "StatusChip") {
             const role=p.status || "neutral";
             const tones={neutral:"neutral",capability:"accent",permission:"warn",info:"accent",

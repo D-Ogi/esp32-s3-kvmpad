@@ -2,7 +2,7 @@
 // Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
 // Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
 
-function autopilotPreview(panel) {
+function autopilotPreview(panel, packageSelection) {
     const fields = {
         HDG: {name:"Heading", unit:"°", min:0, max:360, steps:[-10,-1,1,10]},
         ALT: {name:"Altitude", unit:"ft", min:0, max:45000, steps:[-1000,-100,100,1000]},
@@ -15,7 +15,8 @@ function autopilotPreview(panel) {
     let demo = false, reviewed = false, ap = true, lateral = "HDG", vertical = "VS";
     let armNav = false, armAlt = true, reportsArmed = true, reject = false, slow = false;
     let editing = null, settings = false, timer = null, notice = "Offline";
-    const target = {HDG:275, ALT:6000, VS:800}, actual = {HDG:268, ALT:5400, VS:700};
+    const initialTarget = {HDG:275, ALT:6000, VS:800}, initialActual = {HDG:268, ALT:5400, VS:700};
+    const target = {...initialTarget}, actual = {...initialActual};
     function add(parent,tag,caption,className) {
         const node = document.createElement(tag);
         if (caption !== undefined) node.textContent = caption;
@@ -94,6 +95,22 @@ function autopilotPreview(panel) {
         editing = null; settings = false;
         render();
     }
+    function select(index) {
+        if ((index!==0 && index!==1) || demo===(index===1)) return;
+        demo=index===1;
+        const pending=timer!==null;
+        if (pending) {clearTimeout(timer);timer=null;}
+        editing=null;settings=false;
+        if (demo) {
+            if (packageSelection) {
+                ap=true;lateral="HDG";vertical="VS";armNav=false;armAlt=true;
+                reportsArmed=true;reject=false;slow=false;
+                Object.assign(target,initialTarget); Object.assign(actual,initialActual);
+            }
+            reviewed=true;notice="Demo connected";
+        } else notice=pending ? "Request canceled" : "Link lost · last received settings";
+        render();
+    }
     function editor(key) {
         const f = fields[key];
         add(panel,"strong","Set "+f.name.toLowerCase());
@@ -150,18 +167,15 @@ function autopilotPreview(panel) {
         },!ap);
         button(panel,"Capture selected altitude",() => { capture(); render(); },!armAlt);
         button(panel,"Capture NAV",() => { armNav=false; lateral="NAV"; render(); },!armNav);
-        button(panel,"Disconnect demo",() => {demo=false; notice="Link lost · last received settings"; cancel();});
+        if (!packageSelection) button(panel,"Disconnect demo",() => select(0));
         button(panel,"Close",() => {settings=false; render();});
     }
     function render() {
         panel.replaceChildren();
         const heading = add(panel,"div",undefined,"ap-row");
         add(heading,"strong","Autopilot");
-        button(heading,demo ? "Demo simulator" : "Start demo",() => {
-            if (demo) settings = true;
-            else { demo=true; reviewed=true; notice="Demo connected"; }
-            render();
-        });
+        if (demo) button(heading,"Demo simulator",() => {settings=true;render();});
+        else if (!packageSelection) button(heading,"Start demo",() => select(1));
         if (settings) { options(); return; }
         if (editing) { editor(editing); return; }
         const blocked = !demo || timer !== null;
@@ -190,5 +204,5 @@ function autopilotPreview(panel) {
         add(panel,"output",notice).setAttribute("aria-live","polite");
     }
     render();
-    return cancel;
+    return {show:select,cancel};
 }

@@ -96,7 +96,7 @@ LOCAL_CONTROLS = {
     "StatusChip": ({"text", "label", "status"}, set()),
 }
 BINDING_FIELDS = {"Text": ("text",), "StatusChip": ("text",), "ValueTile": ("value",),
-                  "TabStrip": ("selected",), "RadioPanel": ("selected",),
+                  "TabStrip": ("selected",), "RadioPanel": ("selected",), "AutopilotPanel": ("selected",),
                   "GaugeArc": ("value",), "GaugeNeedle": ("value",), "Horizon": ("pitch", "roll")}
 CONTAINERS = {"Column", "Row", "Grid"}
 CHIP_SYMBOLS = {"neutral": "−", "capability": "⚙", "permission": "◉", "info": "i",
@@ -642,9 +642,11 @@ def validate_scene(files, *, editing=False):
         if field == "selected":
             connection = bindings["connections"][index]
             item = state.get(connection["from"], {})
-            if widgets[target]["type"] == "RadioPanel":
-                if tuple(map(int, manifest["min_firmware"].split("."))) < (1, 4, 0):
-                    raise binding_error(index, "to", "BINDING_TARGET", "RadioPanel.selected requires min_firmware 1.4.0 or later")
+            kind = widgets[target]["type"]
+            if kind in ("RadioPanel", "AutopilotPanel"):
+                minor = 4 if kind == "RadioPanel" else 5
+                if tuple(map(int, manifest["min_firmware"].split("."))) < (1, minor, 0):
+                    raise binding_error(index, "to", "BINDING_TARGET", f"{kind}.selected requires min_firmware 1.{minor}.0 or later")
                 count = 2
             else:
                 count = len(widgets[target].get("props", {}).get("tabs", ["Tab 1", "Tab 2"]))

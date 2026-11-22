@@ -157,41 +157,61 @@ class TypedState(unittest.TestCase):
                 subprocess.run([self.native, "reject", self.folder], check=True)
                 shutil.copyfile(source / filename, self.folder / filename)
 
-    def test_radio_package_selection(self):
-        files=kvmpack.read_members(REPO / "extensions/pilot-panel")
-        ui=json.loads(files["ui.json"])
-        radio=next(page for page in ui["root"]["children"] if page["id"]=="radio")
-        ui.pop("screens")
-        ui["root"]["children"]=radio["children"]
-        files["ui.json"]=json.dumps(ui).encode()
-        bindings=json.loads(files["bindings.json"])
-        bindings["state"]=[s for s in bindings["state"] if s["id"]=="selected_radio"]
-        bindings["state"][0]["initial"]=1
-        bindings["connections"]=[c for c in bindings["connections"] if c["from"]=="selected_radio"]
-        bindings["actions"]=[a for a in bindings["actions"] if a["id"]=="select_radio"]
-        files["bindings.json"]=json.dumps(bindings).encode()
-        manifest=json.loads(files["manifest.json"])
-        def native(case):
-            for name in ("manifest.json","ui.json","bindings.json"):
-                (self.folder/name).write_bytes(files[name])
-            if self.has_compiler:
-                subprocess.run([self.native,case,self.folder],check=True)
-        kvmpack.validate_scene(files)
-        native("accept")
-        if os.environ.get("KVM_STATE_VIEWS"):
-            subprocess.run([os.environ["KVM_STATE_VIEWS"],"--radio-selector",self.folder],check=True)
-        manifest["min_firmware"]="1.4.1"
-        files["manifest.json"]=json.dumps(manifest).encode()
-        native("reject")
-        manifest["min_firmware"]="1.3.0"
-        files["manifest.json"]=json.dumps(manifest).encode()
-        with self.assertRaisesRegex(ValueError,"RadioPanel.selected requires min_firmware"):
-            kvmpack.validate_scene(files)
-        native("reject")
-        bindings["connections"]=[c for c in bindings["connections"] if c["to"]!="radio_panel.selected"]
-        files["bindings.json"]=json.dumps(bindings).encode()
-        kvmpack.validate_scene(files)
-        native("accept")
+    def test_panel_package_selection(self):
+        for page, state, action, panel, minimum, older in [
+            ("radio", "selected_radio", "select_radio", "RadioPanel", "1.4.0", "1.3.0"),
+            ("autopilot", "demo_session", "select_session", "AutopilotPanel", "1.5.0", "1.4.0"),
+        ]:
+            with self.subTest(panel=panel):
+                files = kvmpack.read_members(REPO / "extensions/pilot-panel")
+                ui = json.loads(files["ui.json"])
+                ui.pop("screens")
+                ui["root"]["children"] = next(p["children"] for p in ui["root"]["children"] if p["id"] == page)
+                files["ui.json"] = json.dumps(ui).encode()
+                bindings = json.loads(files["bindings.json"])
+                bindings["state"] = [s for s in bindings["state"] if s["id"] == state]
+                bindings["state"][0]["initial"] = 1
+                bindings["connections"] = [c for c in bindings["connections"] if c["from"] == state]
+                bindings["actions"] = [a for a in bindings["actions"] if a["id"] == action]
+                manifest = json.loads(files["manifest.json"])
+
+                def prepare(version):
+                    manifest["min_firmware"] = version
+                    files["manifest.json"] = json.dumps(manifest).encode()
+                    files["bindings.json"] = json.dumps(bindings).encode()
+                    for name in ("manifest.json", "ui.json", "bindings.json"):
+                        (self.folder / name).write_bytes(files[name])
+
+                def native(case):
+                    if self.has_compiler:
+                        subprocess.run([self.native, case, self.folder], check=True)
+
+                prepare(minimum)
+                kvmpack.validate_scene(files)
+                native("accept")
+                if os.environ.get("KVM_STATE_VIEWS"):
+                    subprocess.run([os.environ["KVM_STATE_VIEWS"], f"--{page}-selector", self.folder], check=True)
+                # The panel itself enforces the two choices, even without a tab binding.
+                connections = bindings["connections"]
+                bindings["connections"] = [c for c in connections if c["to"] == page + "_panel.selected"]
+                bindings["state"][0]["max"] = 2
+                prepare(minimum)
+                with self.assertRaisesRegex(ValueError, "bounded to the available options"):
+                    kvmpack.validate_scene(files)
+                native("reject")
+                bindings["state"][0]["max"] = 1
+                bindings["connections"] = connections
+                prepare("1.5.1")
+                native("reject")
+                prepare(older)
+                with self.assertRaisesRegex(ValueError, panel + ".selected requires min_firmware"):
+                    kvmpack.validate_scene(files)
+                native("reject")
+                # Without the external selector, a historical panel remains valid.
+                bindings["connections"] = [c for c in bindings["connections"] if c["to"] != page + "_panel.selected"]
+                prepare(older)
+                kvmpack.validate_scene(files)
+                native("accept")
 
     def test_screen_switcher(self):
         def node(key, kind, x, y, w, h, **rest):
