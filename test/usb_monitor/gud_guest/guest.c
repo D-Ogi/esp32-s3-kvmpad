@@ -28,8 +28,19 @@
             exit(1);                                                                               \
         }                                                                                          \
     } while (0)
-#include "input_probe.h"
+#include "../../hil/usb_input_probe.h"
+
+static void observe_paths(const char *keys, const char *mouse, const char *raw, const char *timeout, bool lcd)
+{
+    int k = open(keys, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    int m = open(mouse, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    int r = raw ? open(raw, O_RDONLY | O_CLOEXEC) : -1;
+    observe_input(k, m, r, atoi(timeout), lcd);
+    REQUIRE(!close(k) && !close(m) && !close(r));
+}
+
 #ifndef GUD_CLIENT_ONLY
+#include "virtual_keyboard.h"
 static uint8_t scratch[GUD_R1_MAX_BYTES], image[GUD_MAX_WIDTH * GUD_MAX_HEIGHT];
 static gud_receiver_t receiver;
 static unsigned completed;
@@ -248,7 +259,8 @@ static void check_console(bool external, bool virtual, const char *fb_node, char
                 }
             hex[j] = 0;
             printf("GUD_VT_BITMAP %s %u %u %u %s\n", name, font.width, font.height, lit, hex);
-            if (input && index == 0) check_input_gate(input);
+            if (input && index == 0)
+                observe_paths(input[0], input[1], getenv("PROBE_KEYBOARD_HIDRAW"), input[2], true);
             else phase(name, NULL, true, false);
         }
     }
@@ -454,6 +466,13 @@ static void draw(const char *device, bool external, bool virtual, enum draw_mode
 int main(int argc, char **argv)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
+    if (argc == 6 && !strcmp(argv[1], "boot-hid-input")) {
+        observe_paths(argv[2], argv[3], argv[4], argv[5], false);
+        return 0;
+    }
+#ifndef GUD_CLIENT_ONLY
+    if (argc == 3 && !strcmp(argv[1], "dummy-keyboard")) return dummy_keyboard(argv[2]);
+#endif
     if (argc == 3 && !strcmp(argv[1], "draw-ack"))
         draw(argv[2], true, false, DRAW_DAMAGE);
     else if (argc == 3 && !strcmp(argv[1], "draw-modes-ack"))

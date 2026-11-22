@@ -52,54 +52,100 @@ def put_bytes(path, data):
 
 def event_test():
     script = r'''
-# All HID writes below go only to this guest's dummy_udc.0 gadget.
+# Only the guest-local dummy controller is present in this VM.
 test "$(ls /sys/class/udc)" = dummy_udc.0
 printf 'ffff ffff ff\n' > /sys/bus/usb/drivers/gud/new_id
 for i in $(seq 1 80); do [ -c /dev/fb0 ] && break; sleep 0.1; done
 test -c /dev/fb0
-keys=$(basename "$D:1.1"/0003:*/input/input*/event*)
-mouse=$(basename "$D:1.2"/0003:*/input/input*/event*)
-for case in bad-key bad-motion good; do
-    /fixture console-ack-input /dev/fb0 "/dev/input/$keys" "/dev/input/$mouse" 15 \
-        < /tmp/probe-commands > "/tmp/events-$case" &
-    observer=$!
-    for i in $(seq 1 80); do grep -q '^GUD_LCD_READY tty1$' "/tmp/events-$case" && break; sleep 0.1; done
-    grep -q '^GUD_INPUT_READY$' "/tmp/events-$case"
-    if [ "$case" = bad-key ]; then
-        # F14 before F13 must fail, and process exit must release both grabs.
-        printf '\000\000\151\000\000\000\000\000' > /dev/hidg0
-        if wait "$observer"; then exit 1; fi
-        grep -qx 'GUD_REJECT input-sequence' /tmp/events-bad-key
-        printf '\000\000\000\000\000\000\000\000' > /dev/hidg0
-        sleep 0.1
-        continue
-    fi
-'''
-    for usage in range(0x68, 0x74):
-        for key in (usage, 0):
-            raw = bytes((0, 0, key, 0, 0, 0, 0, 0))
-            script += put_bytes("/dev/hidg0", raw)
-    script += r'''
-    if [ "$case" = bad-motion ]; then
-        # Starts in the correct direction but reverses before reaching +300.
-        printf '\000\177\000\000\000' > /dev/hidg1
-        printf '\000\201\000\000\000' > /dev/hidg1
-        if wait "$observer"; then exit 1; fi
-        grep -qx 'GUD_REJECT input-sequence' /tmp/events-bad-motion
-        continue
-    fi
+printf 'ACK tty1\nACK tty2\n' > /tmp/probe-commands
+
+exercise() {
+    profile=$1
+    keyboard_if=$2
+    mouse_if=$3
+    /physical-init --check-input "$keyboard_if" keyboard
+    /physical-init --check-input "$mouse_if" mouse
+    keys=/dev/input/$(basename "$keyboard_if"/0003:*/input/input*/event*)
+    mouse=/dev/input/$(basename "$mouse_if"/0003:*/input/input*/event*)
+    set -- "$keyboard_if"/0003:*/hidraw/hidraw*
+    test "$#" -eq 1
+    test -f "$1/dev"
+    raw=/dev/$(basename "$1")
+    test -c "$raw"
+    for scenario in bad-key bad-motion stale-state good; do
+        log=/tmp/$profile-$scenario
+        /fixture dummy-keyboard neutral
+        if [ "$profile" = GUD ]; then
+            PROBE_KEYBOARD_HIDRAW="$raw" /fixture console-ack-input /dev/fb0 "$keys" "$mouse" 20 \
+                < /tmp/probe-commands > "$log" 2>&1 &
+        else
+            /fixture boot-hid-input "$keys" "$mouse" "$raw" 20 </dev/null > "$log" 2>&1 &
+        fi
+        observer=$!
+        for i in $(seq 1 100); do
+            grep -qx "${profile}_INPUT_READY" "$log" && break
+            kill -0 "$observer" 2>/dev/null || break
+            sleep 0.1
+        done
+        grep -qx "${profile}_INPUT_READY" "$log" || { cat "$log"; exit 1; }
+        if [ "$scenario" = bad-key ]; then
+            /fixture dummy-keyboard wrong-key
+        else
+            if [ "$scenario" = stale-state ]; then
+                # Correct interrupt traffic, but EP0 incorrectly stays neutral throughout.
+                /fixture dummy-keyboard stale-state
+            else
+                /fixture dummy-keyboard keys
+            fi
+            if [ "$scenario" = bad-motion ]; then
+                # Reverse direction before completing the first +300 X movement.
+                printf '\000\177\000\000\000' > /dev/hidg1
+                printf '\000\201\000\000\000' > /dev/hidg1
+            else
 '''
     for x, y in [(127, 0), (127, 0), (46, 0), (-127, 0), (-127, 0), (-46, 0),
                  (0, 127), (0, 73), (0, -127), (0, -73)]:
-        script += put_bytes("/dev/hidg1", bytes((0, x & 255, y & 255, 0, 0)))
-    script += r'''
-    wait "$observer" || { cat /tmp/events-good; exit 1; }
-    grep -qx GUD_INPUT_PASS /tmp/events-good
-    grep -qx 'GUD_LCD_READY tty2' /tmp/events-good
+        script += "                " + put_bytes("/dev/hidg1", bytes((0, x & 255, y & 255, 0, 0)))
+    return script + r'''
+            fi
+        fi
+        if [ "$scenario" = good ]; then
+            wait "$observer" || { cat "$log"; exit 1; }
+            grep -qx "${profile}_INPUT_PASS" "$log"
+            if [ "$profile" = GUD ]; then grep -qx 'GUD_LCD_READY tty2' "$log"; fi
+            grep -Ex "${profile}_KEYBOARD_CONTROL held=([1-9]|1[0-2])/12 released=1" "$log"
+        else
+            if wait "$observer"; then cat "$log"; exit 1; fi
+            reason=input-sequence
+            if [ "$scenario" = stale-state ]; then reason=keyboard-live-state; fi
+            grep -qx "${profile}_REJECT $reason" "$log" || { cat "$log"; exit 1; }
+        fi
+        echo "PASS $profile input $scenario"
+    done
+}
+exercise GUD "$D:1.1" "$D:1.2"
+
+kill "$gud_server"
+wait "$gud_server" 2>/dev/null || :
+# Closing FunctionFS can already have unbound this gadget.
+if [ -n "$(cat "$G/UDC")" ]; then printf '\n' > "$G/UDC"; fi
+rm "$G/configs/c.1/gud"
+printf '0x303a\n' > "$G/idVendor"
+printf '0x400c\n' > "$G/idProduct"
+printf '0x0102\n' > "$G/bcdDevice"
+printf '%s\n' dummy_udc.0 > "$G/UDC"
+for i in $(seq 1 100); do
+    [ -f "$D/idProduct" ] && [ "$(cat "$D/idProduct")" = 400c ] && [ -e "$D:1.1" ] && break
+    sleep 0.1
 done
-echo 'PASS guest-only fixed HID sequence and rejection; grabs released'
+test "$(cat "$D/idVendor"):$(cat "$D/idProduct")" = 303a:400c
+test "$(cat "$D/bNumInterfaces")" -eq 2
+test "$(cat "$D:1.0/bInterfaceProtocol")" = 01
+test "$(cat "$D:1.1/bInterfaceProtocol")" = 02
+test ! -e "$D:1.2"
+exercise HID "$D:1.0" "$D:1.1"
+echo 'PASS guest-only fixed HID sequence and rejection for GUD and startup HID'
 '''
-    return "printf 'ACK tty1\\nACK tty2\\n' > /tmp/probe-commands\n" + script
 
 
 def checks(inputs, events):
@@ -123,6 +169,7 @@ def checks(inputs, events):
         script += put_bytes("/tmp/module.part", module[start:start + 3072])
         script += "cat /tmp/module.part >> /tmp/usb_f_hid.ko\n"
     script += """. /virtual-device
+gud_server=$!
 printf '\\n' > "$G/UDC"
 insmod /tmp/usb_f_hid.ko
 """
@@ -170,13 +217,17 @@ def main():
     with log.open("wb") as output:
         result = subprocess.run(cmd, stdout=output, stderr=subprocess.STDOUT, timeout=90)
     text = log.read_text("utf-8", errors="replace")
-    if args.exercise_events and "PASS guest-only fixed HID sequence and rejection" not in text:
-        raise SystemExit(f"Input observer qualification failed. See {log}")
-    for marker in ("PASS exact GUD USB descriptor cases", "GUD_HID keyboard", "GUD_HID mouse",
-                   "PASS virtual composite GUD + two Linux HID input devices"):
-        if result.returncode != 0 or marker not in text:
+    required = ["PASS exact GUD USB descriptor cases", "GUD_HID keyboard", "GUD_HID mouse",
+                "PASS virtual composite GUD + two Linux HID input devices"]
+    if args.exercise_events:
+        required.extend(f"PASS {profile} input {scenario}" for profile in ("GUD", "HID")
+                        for scenario in ("bad-key", "bad-motion", "stale-state", "good"))
+        required.append("PASS guest-only fixed HID sequence and rejection for GUD and startup HID")
+    for marker in required:
+        if result.returncode or marker not in text:
             raise SystemExit(f"Missing {marker}. See {log}")
-    print(f"PASS {len(list(descriptor_cases()))} descriptor cases and two Linux HID registrations. {log}")
+    extra = ", eight GUD and startup HID input cases" if args.exercise_events else ""
+    print(f"PASS {len(list(descriptor_cases()))} descriptor cases, two Linux HID registrations{extra}. {log}")
 
 
 if __name__ == "__main__":

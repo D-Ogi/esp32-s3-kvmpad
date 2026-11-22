@@ -1,10 +1,20 @@
 // SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 // Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
 // Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
-// Test-only observer for the two fixed firmware probes. Never records arbitrary input.
+// Observe the fixed key and mouse sequences on an isolated Linux input target.
+#pragma once
+#include <errno.h>
 #include <linux/input.h>
 #include <linux/hidraw.h>
 #include <poll.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <time.h>
+#include <unistd.h>
 
 struct probe_state {
     unsigned keys, moves;
@@ -13,9 +23,11 @@ struct probe_state {
     int64_t last_key_us;
 };
 
+static const char *probe_prefix;
+
 static _Noreturn void reject_probe(const char *reason)
 {
-    printf("GUD_REJECT %s\n", reason);
+    printf("%s_REJECT %s\n", probe_prefix, reason);
     exit(1); // evdev releases any exclusive grabs when these file descriptions close.
 }
 
@@ -60,32 +72,30 @@ static bool keyboard_state_matches(int fd, uint8_t usage)
     return memcmp(report, expected, sizeof(report)) == 0;
 }
 
-static void check_input_gate(char **paths)
+static void observe_input(int keys, int mouse, int keyboard, int timeout, bool wait_for_lcd)
 {
-    const int timeout = atoi(paths[2]);
+    probe_prefix = wait_for_lcd ? "GUD" : "HID";
     if (timeout < 1 || timeout > 900) reject_probe("input-timeout-range");
-    struct pollfd fds[3] = {{.events=POLLIN}, {.events=POLLIN}, {.fd=STDIN_FILENO,.events=POLLIN}};
+    struct pollfd fds[3] = {{.fd=keys,.events=POLLIN}, {.fd=mouse,.events=POLLIN},
+                            {.fd=wait_for_lcd ? STDIN_FILENO : -1,.events=POLLIN}};
     for (unsigned i = 0; i < 2; i++) {
-        int fd = open(paths[i], O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+        int fd = fds[i].fd;
         int clock_id = CLOCK_MONOTONIC;
         unsigned char held[KEY_MAX / 8 + 1] = {0};
         if (fd < 0 || ioctl(fd, EVIOCGRAB, 1) || ioctl(fd, EVIOCSCLOCKID, &clock_id) ||
             ioctl(fd, EVIOCGKEY(sizeof(held)), held) < 0) reject_probe("input-grab");
         for (size_t k = 0; k < sizeof(held); k++) if (held[k]) reject_probe("input-not-neutral");
-        fds[i].fd = fd;
     }
-    const char *raw = getenv("PROBE_KEYBOARD_HIDRAW");
-    int keyboard = raw ? open(raw, O_RDONLY | O_CLOEXEC) : -1;
     if (keyboard < 0 || !keyboard_state_matches(keyboard, 0)) reject_probe("keyboard-initial-state");
     unsigned matched_holds = 0;
-    puts("GUD_INPUT_READY");
-    puts("GUD_LCD_READY tty1");
+    printf("%s_INPUT_READY\n", probe_prefix);
+    if (wait_for_lcd) puts("GUD_LCD_READY tty1");
     struct timespec start, now;
-    REQUIRE(clock_gettime(CLOCK_MONOTONIC, &start) == 0);
-    bool ack = false, matched = false;
+    if (clock_gettime(CLOCK_MONOTONIC, &start)) reject_probe("clock");
+    bool ack = !wait_for_lcd, matched = false;
     struct probe_state state = {0};
     do {
-        REQUIRE(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+        if (clock_gettime(CLOCK_MONOTONIC, &now)) reject_probe("clock");
         if ((now.tv_sec - start.tv_sec) * 1000 + (now.tv_nsec - start.tv_nsec) / 1000000 >= timeout * 1000)
             reject_probe("input-timeout");
         int n = poll(fds, 3, 100);
@@ -116,10 +126,12 @@ static void check_input_gate(char **paths)
         }
         if (!matched && state.moves == 4 && !state.move_sync) {
             if (!matched_holds || !keyboard_state_matches(keyboard, 0)) reject_probe("keyboard-live-state");
-            printf("GUD_KEYBOARD_CONTROL held=%u/12 released=1\n", matched_holds);
+            printf("%s_KEYBOARD_CONTROL held=%u/12 released=1\n", probe_prefix, matched_holds);
             matched = true;
-            puts("GUD_INPUT_PASS");
+            printf("%s_INPUT_PASS\n", probe_prefix);
         }
     } while (!ack || !matched);
-    REQUIRE(!close(keyboard) && !close(fds[0].fd) && !close(fds[1].fd));
+    // The caller owns all three descriptors. Release the grabs before returning
+    // even when a parent process holds another copy of the same file descriptions.
+    if (ioctl(keys, EVIOCGRAB, 0) || ioctl(mouse, EVIOCGRAB, 0)) reject_probe("input-ungrab");
 }

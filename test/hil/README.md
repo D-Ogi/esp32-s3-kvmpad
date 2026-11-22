@@ -2,6 +2,22 @@
 
 Use the serial port assigned to the board's USB-UART interface. UART tests require Python with pyserial. USB enumeration tests run on the computer attached to the native USB interface.
 
+## Verify keyboard and mouse input on Linux
+
+Start the 7B in ordinary keyboard and mouse mode. On the Linux target, run the following commands from the repository root. Set `BOARD_SERIAL` to the board's USB serial. The observer needs read access to the board's two input event nodes and its keyboard hidraw node.
+
+```sh
+mkdir -p build/hil
+cc -std=gnu11 -O2 -Wall -Wextra test/hil/usb_input_linux.c -o build/hil/usb-input
+python3 test/hil/usb_enum_linux.py --serial "$BOARD_SERIAL" --observe-input build/hil/usb-input
+```
+
+Wait for `HID_INPUT_READY`. The observer takes exclusive input from this board for the test and releases it on exit. Through an approved KVMpad SSH input session, press and release F13 through F24 in order (USB usages `0x68` through `0x73`). Pause briefly between each down and up so Linux can also sample a held key over the control endpoint. Then send `mouse move 300 0`, `mouse move -300 0`, `mouse move 0 200` and `mouse move 0 -200` in order. A pass reports `HID_INPUT_PASS` and `"input_probe_passed": true`. Use `--timeout 120` for a longer observation window. [SSH setup](../../docs/HANDBOOK.md#authorize-ssh-input)
+
+To inspect enumeration and descriptor hashes alone, run `usb_enum_linux.py --serial "$BOARD_SERIAL"`. This check leaves both inputs available to the desktop.
+
+## Other hardware tests
+
 | Script | Use |
 |---|---|
 | `hpe_get_windows.ps1` | Read the enhanced HID feature reports of the board selected by `-Serial <board-usb-serial>` or the `KVMPAD_USB_SERIAL` environment variable. Add `-Inspect` to inspect descriptor fields. `-BuildOnly` builds the probe without a connected board. |
