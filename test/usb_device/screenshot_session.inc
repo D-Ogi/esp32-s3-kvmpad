@@ -151,13 +151,15 @@ static void screenshot_session(const char *path)
     assert(hid_dispatch_local(&key) == ESP_OK);
     service();
     assert(endpoint[0x82].len == 8 && endpoint[0x82].data[2] == 4 && snapshot().keys_down == 1);
+    refuse_alarm = true;
     assert(usb_hid_device_screenshot_end() == ESP_OK && drained == 1 && !manager);
     assert(snapshot().ledger_empty);
     assert(!fseek(image, 63001 * 512, SEEK_SET) && fread(buffer, 1, 512, image) == 512 && !memcmp(sector, buffer, 512));
     assert(!fclose(image));
     assert(stale->ops->read(stale, buffer, 512, 0, 512) != ESP_OK);
     testing_storage = false;
-    wait_for_reconnect(); reset_bus();
+    wait_on_hid_tick(); reset_bus();
+    refuse_alarm = false;
     assert(descriptor(TUSB_DESC_DEVICE, 0, desc) == 18 && !memcmp(initial, desc, 18));
     configure(1); drain();
     image = fopen(path, "rb+");

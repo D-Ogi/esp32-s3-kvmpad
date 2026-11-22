@@ -20,6 +20,7 @@
 
 #include "app_config.h"
 #include "esp_app_desc.h"
+#include "esp_attr.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "hid_core.h"
@@ -51,7 +52,8 @@ static const char *TAG = "ui_shell";
 #define LOCK_MS 200
 #define REMOTE_POLL_MS 100
 
-static ui_app_t s_app;
+// LVGL accesses this state in task context. Keep internal RAM available for DMA.
+EXT_RAM_BSS_ATTR static ui_app_t s_app;
 static bool s_built;
 static bool s_suspending;
 static bool s_tools_active;

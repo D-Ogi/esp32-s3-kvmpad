@@ -94,12 +94,13 @@ static bool accept_storage;
 static atomic_uchar s_wanted;
 static _Atomic uint32_t s_passed_bytes, s_filtered_bytes;
 static _Atomic kvm_usb_state_t s_link = KVM_USB_DETACHED;
-// Only the USB owner changes descriptors or accesses the two state flags.
+// Only the USB owner changes descriptors or the reconnect deadline (zero while attached).
 static uint8_t s_monitor;
-static bool s_disconnected;
+static int64_t s_reconnect_at;
 static bool s_saw_reset;
 static esp_timer_handle_t s_reconnect;
 static void (*s_lost_hid)(void);
+enum { RECONNECT_DELAY_US = 250000 };
 
 static bool with_controls(void)
 {
@@ -114,14 +115,14 @@ static bool with_controls(void)
 
 uint8_t usb_hid_device_interface_count(void)
 {
-    if (s_disconnected) return 0;
+    if (s_reconnect_at) return 0;
     if (with_controls()) return 2;
     return s_monitor == PORT_HID ? KVM_HID_ITF_COUNT : 0;
 }
 
 bool usb_monitor_port_owns_bus(void)
 {
-    return s_monitor || s_disconnected;
+    return s_monitor || s_reconnect_at;
 }
 
 kvm_usb_state_t usb_hid_device_monitor_state(void)
@@ -167,12 +168,12 @@ void usb_monitor_port_unmount(void)
 void usb_monitor_port_reset(void)
 {
     usb_monitor_port_unmount();
-    s_saw_reset = s_monitor && !s_disconnected;
+    s_saw_reset = s_monitor && !s_reconnect_at;
 }
 
 void usb_monitor_port_mount(void)
 {
-    if (!s_saw_reset || s_disconnected || !s_monitor || !tud_mounted()) return;
+    if (!s_saw_reset || s_reconnect_at || !s_monitor || !tud_mounted()) return;
     set_link(KVM_USB_MOUNTED);
 }
 
@@ -241,13 +242,25 @@ const uint16_t *__wrap_tud_descriptor_string_cb(uint8_t index, uint16_t langid)
     return __real_tud_descriptor_string_cb(index, langid);
 }
 
+void usb_monitor_port_poll_reconnect(void)
+{
+    if (!s_reconnect_at || esp_timer_get_time() < s_reconnect_at) return;
+    s_monitor = atomic_load(&s_wanted);
+    s_reconnect_at = 0;
+    s_saw_reset = false;
+    tud_connect();
+}
+
 static void reconnect(void *arg)
 {
     (void)arg;
-    s_monitor = atomic_load(&s_wanted);
-    s_disconnected = false;
-    s_saw_reset = false;
-    tud_connect();
+    if (s_reconnect_at) {
+        // A previously armed alarm can arrive during a newer detach. Keep a wakeup for the
+        // current deadline even in a standalone port without the product's periodic HID pump.
+        int64_t remaining = s_reconnect_at - esp_timer_get_time();
+        if (remaining > 0) (void)esp_timer_start_once(s_reconnect, remaining);
+        else usb_monitor_port_poll_reconnect();
+    }
 }
 
 static void timer_cb(void *arg)
@@ -256,25 +269,17 @@ static void timer_cb(void *arg)
     usbd_defer_func(reconnect, NULL, false);
 }
 
-static bool change_on_bus(void)
+static void change_on_bus(void)
 {
-    if (s_disconnected || atomic_load(&s_wanted) == s_monitor) return true;
-    s_disconnected = true;
+    if (s_reconnect_at || atomic_load(&s_wanted) == s_monitor) return;
     tud_disconnect();
+    s_reconnect_at = esp_timer_get_time() + RECONNECT_DELAY_US;
     s_lost_hid();
     usb_monitor_port_unmount();
-    // Hold the soft-disconnect long enough for Windows to remove the previous device.
-    if (esp_timer_start_once(s_reconnect, 250000) != ESP_OK) {
-        // Preserve the previous identity on an unexpected timer failure.
-#if CONFIG_KVM_USB_SCREENSHOT
-        // A closed storage session may never reconnect to its former image.
-        if (s_monitor == PORT_SCREENSHOT && !accept_storage) s_monitor = PORT_HID;
-#endif
-        s_disconnected = false;
-        tud_connect();
-        return false;
-    }
-    return true;
+    // A failed timer arm must keep the port detached. The product HID dispatcher also
+    // services this deadline every 10 ms, including while the host is disconnected.
+    if (esp_timer_start_once(s_reconnect, RECONNECT_DELAY_US) != ESP_OK)
+        ESP_LOGW("usb_hid", "USB reconnect timer unavailable; keeping detach deadline");
 }
 
 static void select_on_bus(void *arg)
@@ -294,19 +299,17 @@ static void switch_screenshot_on_bus(void *arg)
     screenshot_switch_t *request = arg;
     if (request->enable) {
         uint8_t expected = PORT_HID;
-        if (!s_disconnected && s_monitor == PORT_HID &&
+        if (!s_reconnect_at && s_monitor == PORT_HID &&
             atomic_compare_exchange_strong(&s_wanted, &expected, PORT_SCREENSHOT)) {
             accept_storage = true;
-            request->ok = change_on_bus();
-            if (!request->ok) {
-                accept_storage = false;
-                atomic_store(&s_wanted, PORT_HID);
-            }
+            change_on_bus();
+            request->ok = true;
         }
     } else {
         accept_storage = false; /* No further SCSI callback may obtain the medium. */
         atomic_store(&s_wanted, PORT_HID);
-        request->ok = change_on_bus();
+        change_on_bus();
+        request->ok = true;
     }
     xSemaphoreGive(request->done);
 }
@@ -323,7 +326,7 @@ esp_err_t usb_monitor_port_screenshot(bool enable)
 
 static bool screenshot_mounted(void)
 {
-    return accept_storage && !s_disconnected && s_monitor == PORT_SCREENSHOT &&
+    return accept_storage && !s_reconnect_at && s_monitor == PORT_SCREENSHOT &&
            usb_hid_device_monitor_mounted() && tud_mounted();
 }
 

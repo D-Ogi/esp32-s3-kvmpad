@@ -21,7 +21,8 @@ def main():
     components = repo / "components"
     profiles = [(2, False, False), (2, True, False), (3, False, False), (4, False, False),
                 (4, True, False), (2, True, True), (4, True, True)]
-    for count, monitor, gud, shot in [(*p, False) for p in profiles] + [(2, True, False, True), (4, True, True, True)]:
+    storage_profiles = [(2, True, False, True), (2, True, True, True), (4, True, True, True)]
+    for count, monitor, gud, shot in [(*p, False) for p in profiles] + storage_profiles:
         out = args.out.resolve() / (str(count) + ("-monitor" if monitor else "") + ("-gud" if gud else ""))
         if shot:
             out = out.with_name(out.name + "-screenshot")

@@ -20,6 +20,7 @@ static bool expect_stall;
 static bool sof_enabled;
 static unsigned stalls;
 static uint64_t now = 1000000;
+static esp_timer_handle_t hid_tick;
 #if CONFIG_KVM_USB_SCREENSHOT
 static bool testing_storage;
 #endif
@@ -28,7 +29,12 @@ uint32_t tusb_time_millis_api(void) { return (uint32_t)(now / 1000); }
 int64_t esp_timer_get_time(void) { return (int64_t)now; }
 uint32_t esp_random(void) { static uint32_t nonce; return ++nonce; }
 esp_err_t esp_timer_create(const esp_timer_create_args_t *a, esp_timer_handle_t *t) { *t = a->callback; return ESP_OK; }
-esp_err_t esp_timer_start_periodic(esp_timer_handle_t t, uint64_t us) { assert(t && us); return ESP_OK; }
+esp_err_t esp_timer_start_periodic(esp_timer_handle_t t, uint64_t us)
+{
+    assert(t && us == 10000 && !hid_tick);
+    hid_tick = t;
+    return ESP_OK;
+}
 esp_err_t tinyusb_driver_install(const tinyusb_config_t *cfg)
 {
     config = *cfg;
@@ -280,6 +286,9 @@ static void check_first_led(uint8_t keyboard, bool on)
 #include "usb_monitor_chart.h"
 
 static esp_timer_handle_t reconnect_timer;
+static uint64_t reconnect_alarm_at;
+static bool refuse_alarm;
+static unsigned failed_arms;
 static unsigned disconnects, connects, received;
 static monitor_wire_t wire;
 static uint8_t chart[16 + MONITOR_JPEG_LIMIT], jpeg[MONITOR_JPEG_LIMIT];
@@ -289,8 +298,13 @@ static bool have_picture;
 
 esp_err_t esp_timer_start_once(esp_timer_handle_t t, uint64_t us)
 {
-    assert(!reconnect_timer && us >= 250000);
+    assert(t && us);
+    if (refuse_alarm || reconnect_timer) {
+        ++failed_arms;
+        return ESP_ERR_INVALID_STATE;
+    }
     reconnect_timer = t;
+    reconnect_alarm_at = now + us;
     return ESP_OK;
 }
 esp_err_t esp_timer_delete(esp_timer_handle_t t) { assert(t); return ESP_OK; }
@@ -322,12 +336,25 @@ void usb_monitor_feed(const uint8_t *data, size_t n)
 static void wait_for_reconnect(void)
 {
     assert(disconnects == connects + 1 && reconnect_timer);
-    now += 250000;
+    if (now < reconnect_alarm_at) now = reconnect_alarm_at;
     esp_timer_handle_t fired = reconnect_timer;
     reconnect_timer = NULL;
     fired(NULL);
     service();
     assert(disconnects == connects);
+}
+
+static void wait_on_hid_tick(void)
+{
+    unsigned expected = disconnects;
+    assert(connects + 1 == expected && !usb_hid_device_interface_count());
+    now += 249999;
+    hid_tick(NULL); service();
+    assert(connects + 1 == expected && !usb_hid_device_interface_count());
+    ++now;
+    hid_tick(NULL); service();
+    hid_tick(NULL); service();
+    assert(connects == expected && disconnects == expected);
 }
 static unsigned descriptor(uint8_t type, uint8_t index, uint8_t *out)
 {
@@ -526,10 +553,13 @@ static void composite_session(const uint8_t *hid_device, const uint8_t *serial, 
         assert(snapshot().keys_down == 1 && endpoint[0x82].pending);
         // Leave this key held and its transfer awaiting completion while the profile switches.
     }
+    refuse_alarm = true;
+    unsigned failures_before_home = failed_arms;
     assert(usb_hid_device_set_monitor_controls(false,false) == ESP_OK);
     service();
-    assert(snapshot().ledger_empty && !usb_hid_device_interface_count());
-    wait_for_reconnect();
+    assert(failed_arms == failures_before_home + 1 && snapshot().ledger_empty);
+    wait_on_hid_tick();
+    refuse_alarm = false;
     reset_bus();
     assert(descriptor(TUSB_DESC_DEVICE,0,bytes) == 18 && !memcmp(bytes,hid_device,18));
     assert(descriptor(TUSB_DESC_CONFIGURATION,0,bytes) == config.descriptor.full_speed_config[2]);
@@ -664,6 +694,39 @@ static void monitor_session(void)
     drain();
     assert(usb().state == KVM_USB_MOUNTED && snapshot().ledger_empty);
     composite_session(previous, serial, serial_len);
+    // The owner can service an expired deadline before the original alarm callback arrives.
+    assert(usb_hid_device_set_monitor(true) == ESP_OK);
+    service();
+    esp_timer_handle_t late = reconnect_timer;
+    assert(late);
+    reconnect_timer = NULL;
+    wait_on_hid_tick();
+    reset_bus(); configure(1);
+    refuse_alarm = true;
+    assert(usb_hid_device_set_monitor(false) == ESP_OK);
+    service();
+    unsigned switching = disconnects;
+    assert(usb_hid_device_set_monitor_mode(true, true) == ESP_OK);
+    assert(usb_hid_device_set_monitor_mode(true, true) == ESP_OK);
+    late(NULL); service();
+    assert(disconnects == switching && connects + 1 == switching);
+    wait_on_hid_tick();
+    late(NULL); service();
+    assert(connects == switching && disconnects == switching);
+    reset_bus();
+    unsigned size = descriptor(TUSB_DESC_STRING, 2, bytes);
+    assert(size == 2 + 2 * strlen(native));
+    for (size_t j = 0; native[j]; ++j) assert(bytes[2 + 2*j] == native[j]);
+    assert(usb_hid_device_set_monitor(false) == ESP_OK);
+    service();
+    uint64_t home_deadline = now + 250000;
+    now += 100000;
+    refuse_alarm = false;
+    late(NULL); service();
+    assert(!usb_hid_device_interface_count() && reconnect_alarm_at == home_deadline);
+    wait_for_reconnect(); // The earlier alarm supplied a wakeup without a periodic pump.
+    reset_bus(); configure(1); drain();
+    puts("PASS failed reconnect alarm: 250 ms detached, last requested profile, late alarm and duplicate requests");
     puts("PASS HID -> display-only -> HID: EP0 descriptors and serial, fresh JPEG after deconfiguration/reset, "
          "detached after unplug while suspended, stale OUT and canceled switch.");
 }

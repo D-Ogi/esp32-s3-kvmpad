@@ -629,6 +629,9 @@ static void pump_trampoline(void *param)
     if (s_service.active) service_arrived();
 #endif
     ST_UNLOCK();
+#if CONFIG_KVM_USB_MONITOR_EVAL
+    usb_monitor_port_poll_reconnect();
+#endif
     s_tr.pump(s_tr.ctx);
 }
 
@@ -684,7 +687,7 @@ bool usb_hid_device_send(uint8_t itf, const uint8_t *report, uint8_t len)
 
 uint8_t usb_hid_device_protocol(uint8_t itf)
 {
-    if (itf >= usb_hid_device_interface_count() || s_tusb_task == NULL || xTaskGetCurrentTaskHandle() != s_tusb_task) {
+    if (s_tusb_task == NULL || xTaskGetCurrentTaskHandle() != s_tusb_task || itf >= usb_hid_device_interface_count()) {
         return KVM_HID_PROTOCOL_REPORT;
     }
     return tud_hid_n_get_protocol(itf);

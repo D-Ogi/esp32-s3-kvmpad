@@ -4,7 +4,7 @@ The 7B has a 1024 × 600 RGB565 panel, 16 MiB of flash and 8 MiB of PSRAM. Conne
 
 ## USB startup and display modes
 
-The 7B firmware exposes a boot keyboard and mouse on the native USB port at startup. The USB-UART connector provides a separate development console.
+Use the same 7B firmware image with every target computer. At startup, the native USB port presents a boot keyboard and mouse. To use a display mode, select it on the board after startup. The USB-UART connector provides a separate development console.
 Open **Extensions → USB monitor** on the LCD and select a mode.
 
 - **Choose in Windows** lets Windows Display settings select the resolution. **640 x 480** and **1024 x 600 / Native** select a fixed size. The Windows display path uses the partner USB display driver.

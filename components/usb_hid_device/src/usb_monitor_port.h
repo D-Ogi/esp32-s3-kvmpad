@@ -17,6 +17,7 @@ bool usb_monitor_port_select_gud(bool active);
 esp_err_t usb_monitor_port_screenshot(bool enable);
 #endif
 /* TinyUSB task only. Disconnected intervals also exclude HID callbacks. */
+void usb_monitor_port_poll_reconnect(void);
 bool usb_monitor_port_owns_bus(void);
 void usb_monitor_port_reset(void);
 void usb_monitor_port_mount(void);

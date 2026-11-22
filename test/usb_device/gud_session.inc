@@ -164,11 +164,22 @@ static void gud_session(void)
     assert(gud_frames == 1);
     configure(0);
     gud_stall(0xc1, 1, 0, 30);
+    configure(1); drain();
+    assert(hid_dispatch_local(&key) == ESP_OK);
+    service();
+    assert(snapshot().keys_down == 1);
+    refuse_alarm = true;
+    unsigned failures_before_home = failed_arms;
     assert(usb_hid_device_set_gud(false) == ESP_OK);
-    service(); wait_for_reconnect(); reset_bus();
+    service();
+    assert(failed_arms == failures_before_home + 1 && snapshot().ledger_empty);
+    assert(usb_hid_device_set_gud(false) == ESP_OK);
+    service(); wait_on_hid_tick(); reset_bus();
+    refuse_alarm = false;
     assert(descriptor(TUSB_DESC_DEVICE, 0, desc) == 18 && !memcmp(normal, desc, 18));
     configure(1); drain();
     assert(usb_hid_device_interface_count() == KVM_HID_ITF_COUNT && snapshot().ledger_empty);
+    check_input_report(0, 8, (const uint8_t[8]){0}, 8);
     gud_stall(0xc1, 1, 0, 30);
     puts("PASS GUD + boot keyboard/mouse: dispatched HID during fragmented video, neutral on suspend, resumed frame, reset and HID return");
 }
