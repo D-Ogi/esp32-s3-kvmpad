@@ -101,6 +101,8 @@ def verify(archive, workspace):
     console = sdk / "extensions/usb-monitor-console"
     assert "valid desktop source" in cli("validate", console)
     cli("build", console, "-o", workspace / "usb-monitor-console.kvmpack")
+    cli("build", sdk / "tools/kvmpack/samples/rate-slider", "-o", workspace / "altitude-selector.kvmpack")
+    cli("build", sdk / "extensions/pilot-panel", "-o", workspace / "pilot-panel.kvmpack")
     built = workspace / "departure-v1.kvmpack"
     cli("build", workspace / "departure", "-o", built)
     assert built.read_bytes() == (workspace / "departure.kvmpack").read_bytes()

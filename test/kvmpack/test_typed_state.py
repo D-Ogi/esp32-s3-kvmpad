@@ -96,6 +96,42 @@ class TypedState(unittest.TestCase):
                 with self.assertRaises(ValueError): kvmpack.validate_scene(files)
                 if self.has_compiler: subprocess.run([self.native,"reject",self.folder],check=True)
 
+    def test_button_adjust_requires_tap_and_version(self):
+        source = REPO / "tools/kvmpack/samples/rate-slider"
+        for version, event, buttons, valid in [
+            ("1.4.0", "tap", True, True),
+            ("1.4.0", "press", True, False),
+            ("1.3.0", "tap", True, False),
+            ("1.3.0", "tap", False, True),
+        ]:
+            with self.subTest(version=version, event=event, buttons=buttons):
+                files = kvmpack.read_members(source)
+                manifest = json.loads(files["manifest.json"])
+                ui = json.loads(files["ui.json"])
+                bindings = json.loads(files["bindings.json"])
+                manifest["min_firmware"] = version
+                nodes = ui["root"]["children"]
+                actions = bindings["actions"]
+                if buttons:
+                    button = next(node for node in nodes if node["type"] == "Button")
+                    action_id = button["events"].pop("tap")
+                    button["events"][event] = action_id
+                    action = next(action for action in actions if action["id"] == action_id)
+                    action["trigger"] = f"{button['id']}.{event}"
+                else:
+                    nodes[:] = [node for node in nodes if node["type"] != "Button"]
+                    actions[:] = [action for action in actions if not action["trigger"].endswith(".tap")]
+                for name, doc in (("manifest.json", manifest), ("ui.json", ui), ("bindings.json", bindings)):
+                    files[name] = json.dumps(doc).encode()
+                    (self.folder / name).write_bytes(files[name])
+                if valid:
+                    kvmpack.validate_scene(files)
+                else:
+                    with self.assertRaises(ValueError):
+                        kvmpack.validate_scene(files)
+                if self.has_compiler:
+                    subprocess.run([self.native, "accept" if valid else "reject", self.folder], check=True)
+
     def test_composite_usb_scene_contract(self):
         if not self.has_compiler:
             self.skipTest("A native compiler is required")
@@ -120,6 +156,42 @@ class TypedState(unittest.TestCase):
                 (self.folder / filename).write_text(json.dumps(document), encoding="utf-8")
                 subprocess.run([self.native, "reject", self.folder], check=True)
                 shutil.copyfile(source / filename, self.folder / filename)
+
+    def test_radio_package_selection(self):
+        files=kvmpack.read_members(REPO / "extensions/pilot-panel")
+        ui=json.loads(files["ui.json"])
+        radio=next(page for page in ui["root"]["children"] if page["id"]=="radio")
+        ui.pop("screens")
+        ui["root"]["children"]=radio["children"]
+        files["ui.json"]=json.dumps(ui).encode()
+        bindings=json.loads(files["bindings.json"])
+        bindings["state"]=[s for s in bindings["state"] if s["id"]=="selected_radio"]
+        bindings["state"][0]["initial"]=1
+        bindings["connections"]=[c for c in bindings["connections"] if c["from"]=="selected_radio"]
+        bindings["actions"]=[a for a in bindings["actions"] if a["id"]=="select_radio"]
+        files["bindings.json"]=json.dumps(bindings).encode()
+        manifest=json.loads(files["manifest.json"])
+        def native(case):
+            for name in ("manifest.json","ui.json","bindings.json"):
+                (self.folder/name).write_bytes(files[name])
+            if self.has_compiler:
+                subprocess.run([self.native,case,self.folder],check=True)
+        kvmpack.validate_scene(files)
+        native("accept")
+        if os.environ.get("KVM_STATE_VIEWS"):
+            subprocess.run([os.environ["KVM_STATE_VIEWS"],"--radio-selector",self.folder],check=True)
+        manifest["min_firmware"]="1.4.1"
+        files["manifest.json"]=json.dumps(manifest).encode()
+        native("reject")
+        manifest["min_firmware"]="1.3.0"
+        files["manifest.json"]=json.dumps(manifest).encode()
+        with self.assertRaisesRegex(ValueError,"RadioPanel.selected requires min_firmware"):
+            kvmpack.validate_scene(files)
+        native("reject")
+        bindings["connections"]=[c for c in bindings["connections"] if c["to"]!="radio_panel.selected"]
+        files["bindings.json"]=json.dumps(bindings).encode()
+        kvmpack.validate_scene(files)
+        native("accept")
 
     def test_screen_switcher(self):
         def node(key, kind, x, y, w, h, **rest):

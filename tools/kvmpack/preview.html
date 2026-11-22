@@ -639,7 +639,7 @@ function chartViewer(el, charts) {
 
 __KVM_AUTOPILOT_PREVIEW__
 
-function radioPreview(el) {
+function radioPreview(el,packageSelection) {
     let model=null, com=0, edit=null, draft="", message="No simulator connection.", timer=null;
     el.replaceChildren();
     function add(parent,tag,text="",css="") {
@@ -652,14 +652,21 @@ function radioPreview(el) {
         return b;
     }
     function endEdit(){edit=null;draft="";}
+    function select(index) {
+        if ((index!==0 && index!==1) || index===com) return;
+        com=index;endEdit();
+        if (model && timer===null) message="";
+        paint();
+    }
     function cancel() {
         if(timer!==null){clearTimeout(timer);timer=null;message="Edit closed.";}
         if(edit){endEdit();message="Edit closed.";}
         paint();
     }
     function apply(update) {
+        const bank=com;
         endEdit();message="Applying local demo change.";
-        timer=setTimeout(()=>{timer=null;update();message="Applied in local demo.";paint();},200);
+        timer=setTimeout(()=>{timer=null;update(bank);message="Applied in local demo.";paint();},200);
     }
     const header=add(el,"div","","radio-header"), titles=add(header,"div");
     add(titles,"strong","Radio and transponder");const status=add(titles,"span","","radio-caption");
@@ -668,15 +675,15 @@ function radioPreview(el) {
         model={active:[118100,123450],standby:[121900,124850],code:"7000",mode:"ALT"};
         message="Local demo. Tap Standby or the transponder code.";
     });
-    const tabs=add(el,"div","","radio-row");
-    const banks=[0,1].map(i=>button(tabs,"COM "+(i+1),()=>{if(i!==com){com=i;endEdit();message="";}}));
+    const tabs=packageSelection ? null : add(el,"div","","radio-row");
+    const banks=tabs ? [0,1].map(i=>button(tabs,"COM "+(i+1),()=>select(i))) : [];
     const fields=add(el,"div","","radio-fields"), active=add(fields,"div","","radio-field");
     add(active,"span","ACTIVE","radio-caption");const primary=add(active,"strong","","radio-reading");
     function begin(field){if(edit!==field){draft="";edit=field;}}
     const standby=button(fields,"",()=>begin("frequency"),"radio-field");
     add(standby,"span","STANDBY","radio-caption");const secondary=add(standby,"strong","","radio-reading");
-    const swap=button(fields,"Swap",()=>apply(()=>{
-        [model.active[com],model.standby[com]]=[model.standby[com],model.active[com]];
+    const swap=button(fields,"Swap",()=>apply(bank=>{
+        [model.active[bank],model.standby[bank]]=[model.standby[bank],model.active[bank]];
     }),"radio-swap");
     const info=add(el,"div","","radio-notice"), notice=add(info,"span");
     const undo=button(info,"Cancel",()=>{endEdit();message="Edit cancelled.";});
@@ -690,7 +697,7 @@ function radioPreview(el) {
     back.setAttribute("aria-label","Backspace");digit(0);
     const ok=button(keys,"OK",()=>{
         const value=draft,field=edit;
-        apply(()=>{if(field==="code")model.code=value;else model.standby[com]=Number(value);});
+        apply(bank=>{if(field==="code")model.code=value;else model.standby[bank]=Number(value);});
     });
     add(el,"span","TRANSPONDER","radio-caption");
     const transponder=add(el,"div","","radio-row");
@@ -717,7 +724,7 @@ function radioPreview(el) {
         Object.entries(numbers).forEach(([i,b])=>{b.disabled=!edit || (edit==="code" && Number(i)>7);});
         modes.forEach(b=>{b.disabled=!ready || !!edit;b.setAttribute("aria-selected",String(!!model && model.mode===b.textContent));});
     }
-    paint();return cancel;
+    paint();return {show:select,cancel};
 }
 
 function draw(node, parent) {
@@ -856,7 +863,8 @@ function draw(node, parent) {
         } else if (node.type === "AutopilotPanel") {
             view.cancel = autopilotPreview(el);
         } else if (node.type === "RadioPanel") {
-            view.cancel = radioPreview(el);
+            const bound=pack.bindings.connections.some(c=>c.to===node.id+".selected");
+            Object.assign(view,radioPreview(el,bound));
         } else if (node.type === "StatusChip") {
             const role=p.status || "neutral";
             const tones={neutral:"neutral",capability:"accent",permission:"warn",info:"accent",

@@ -326,6 +326,10 @@ class Editor:
                 )
         file_menu.add_cascade(label="New from template", menu=templates)
         file_menu.add_command(label="Open USB Monitor Console example", command=lambda: self.run(lambda: self.open(USB_CONSOLE)))
+        file_menu.add_command(label="Open Pilot Panel", command=lambda: self.run(
+            lambda: self.open(Path(__file__).resolve().parents[2] / "extensions" / "pilot-panel")))
+        file_menu.add_command(label="Open altitude selector example", command=lambda: self.run(
+            lambda: self.open(EXAMPLES.parent / "samples" / "rate-slider")))
         file_menu.add_command(label="Open source folder…", command=lambda: self.run(self.open_folder))
         file_menu.add_command(label="Open package…", command=lambda: self.run(self.open_archive))
         file_menu.add_command(label="Save source as…", command=lambda: self.run(self.save_source))

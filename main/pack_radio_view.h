@@ -22,7 +22,9 @@ typedef struct {
 // A sender copies the request before returning true. That only acknowledges dispatch.
 typedef bool (*pack_radio_sender_t)(const pack_radio_request_t *request,void *ctx);
 
-bool pack_radio_view_open(lv_obj_t *parent,int width,int height);
+bool pack_radio_view_open(lv_obj_t *parent,int width,int height,bool package_selection);
+// A changed package selection closes the draft. Requests already sent keep their original bank.
+void pack_radio_view_select(unsigned index);
 void pack_radio_view_tick(void);
 void pack_radio_view_close(void);
 // UI-thread adapter. Rebind on transport changes. NULL disconnects and clears the panel.

@@ -30,6 +30,13 @@ const panel=mock.widget("autopilot_panel");
 function walk(node) { return [node,...node.children.flatMap(walk)]; }
 {
     const radio=mock.widget("radio_panel");
+    const tabs=mock.widget("radio_selector");
+    assert.equal(tabs.role,"tablist");
+    assert.ok(!walk(radio).some(el=>el.textContent==="COM 1" || el.textContent==="COM 2"));
+    function bank(i) {
+        tabs.children[i].fire("click");
+        assert.equal(tabs.children[i]["aria-selected"],"true");
+    }
     function read(text) {
         const node=walk(radio).find(el=>el.textContent===text);
         assert.ok(node,text);return node;
@@ -46,16 +53,22 @@ function walk(node) { return [node,...node.children.flatMap(walk)]; }
     clickRadio("⌫");clickRadio("⌫");enter("05");clickRadio("OK");
     read("121.900 MHz");assert.equal(read("Swap").disabled,true);elapsed();read("118.005 MHz");
     clickRadio("Swap");elapsed();assert.equal(read("STANDBY").parent.children[1].textContent,"118.100 MHz");
-    clickRadio("COM 2");clickRadio("STANDBY");enter("136990");clickRadio("OK");elapsed();
-    clickRadio("COM 1");read("118.005 MHz");clickRadio("7000");
+    clickRadio("STANDBY");enter("120");bank(1);read("124.850 MHz");assert.ok(read("OK").disabled);
+    clickRadio("STANDBY");enter("136990");clickRadio("OK");bank(0);elapsed();
+    read("118.005 MHz");read("118.100 MHz");clickRadio("7000");
     assert.ok(read("8").disabled && read("9").disabled);enter("007");assert.ok(read("OK").disabled);
     enter("3");clickRadio("OK");elapsed();read("0073");clickRadio("ON");elapsed();
     assert.equal(read("ON")["aria-selected"],"true");
     clickRadio("STANDBY");enter("120");mock.run('widgets.get("radio_panel").cancel()');
     read("118.100 MHz");assert.ok(read("OK").disabled);
-    clickRadio("COM 2");read("136.990 MHz");clickRadio("Swap");
+    bank(1);read("136.990 MHz");clickRadio("Swap");
     mock.run('widgets.get("radio_panel").cancel()');assert.equal(elapsed,null);read("123.450 MHz");
     clickRadio("Go offline");read("Offline");read("----");assert.ok(read("Swap").disabled);
+    bank(0);clickRadio("Start demo");read("118.100 MHz");bank(1);read("123.450 MHz");
+    const legacy=fixture(process.argv[2],undefined,pack=>{
+        pack.bindings.connections=pack.bindings.connections.filter(c=>c.to!=="radio_panel.selected");
+    }).widget("radio_panel");
+    for(const name of ["COM 1","COM 2"])assert.ok(walk(legacy).some(el=>el.textContent===name));
     console.log("PASS radio offline, independent COM channels, keypad validation, swap, octal code, modes and navigation");
 }
 function find(text) {

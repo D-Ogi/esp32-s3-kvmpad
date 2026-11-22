@@ -32,7 +32,8 @@
         "bounds": {"x": 0, "y": 0, "w": 600, "h": 944},
         "props": {"title": "Radio and transponder"},
         "children": [
-          {"id": "radio_panel", "type": "RadioPanel", "bounds": {"x": 8, "y": 8, "w": 584, "h": 928}}
+          {"id": "radio_selector", "type": "TabStrip", "bounds": {"x": 16, "y": 8, "w": 568, "h": 52}, "props": {"tabs": ["COM 1", "COM 2"]}, "events": {"change": "select_radio"}},
+          {"id": "radio_panel", "type": "RadioPanel", "bounds": {"x": 8, "y": 68, "w": 584, "h": 868}}
         ]
       },
       {

@@ -49,6 +49,70 @@
           "step_up": "increase",
           "step_down": "decrease"
         }
+      },
+      {
+        "id": "down_large",
+        "type": "Button",
+        "bounds": {
+          "x": 8,
+          "y": 184,
+          "w": 80,
+          "h": 52
+        },
+        "props": {
+          "label": "-1000"
+        },
+        "events": {
+          "tap": "down_large"
+        }
+      },
+      {
+        "id": "down_small",
+        "type": "Button",
+        "bounds": {
+          "x": 94,
+          "y": 184,
+          "w": 80,
+          "h": 52
+        },
+        "props": {
+          "label": "-100"
+        },
+        "events": {
+          "tap": "down_small"
+        }
+      },
+      {
+        "id": "up_small",
+        "type": "Button",
+        "bounds": {
+          "x": 180,
+          "y": 184,
+          "w": 80,
+          "h": 52
+        },
+        "props": {
+          "label": "+100"
+        },
+        "events": {
+          "tap": "up_small"
+        }
+      },
+      {
+        "id": "up_large",
+        "type": "Button",
+        "bounds": {
+          "x": 266,
+          "y": 184,
+          "w": 80,
+          "h": 52
+        },
+        "props": {
+          "label": "+1000"
+        },
+        "events": {
+          "tap": "up_large"
+        }
       }
     ]
   }

@@ -97,6 +97,10 @@ static void update_binding(pack_binding_t *b, const pack_value_t *input, kvmbrid
     pack_value_t value;
     bool valid=pack_binding_apply(scene,b,input,now,&value);
     if (b->field==PACK_BIND_SELECTED) {
+        if (scene->widget[b->widget].kind==PACK_RADIO) {
+            if (valid && value.integer>=0 && value.integer<2) pack_radio_view_select((unsigned)value.integer);
+            return;
+        }
         if (valid && value.integer>=0 && value.integer<scene->widget[b->widget].tab_count &&
             c->selected!=value.integer) {
             c->selected=(int16_t)value.integer;
@@ -656,7 +660,7 @@ static bool create_control(unsigned idx)
 #endif
     if (w->kind==PACK_CHART) return pack_chart_view_open(c->obj,scene,w,chart_storage);
     if (w->kind==PACK_AUTOPILOT) return pack_autopilot_view_open(c->obj,w->w,w->h);
-    if (w->kind==PACK_RADIO) return pack_radio_view_open(c->obj,w->w,w->h);
+    if (w->kind==PACK_RADIO) return pack_radio_view_open(c->obj,w->w,w->h,w->tab_count!=0);
     c->label=lv_label_create(c->obj);
     if (!c->label) return false;
     if (w->kind==PACK_BUTTON || w->kind==PACK_TEXT) lv_obj_remove_style_all(c->label);

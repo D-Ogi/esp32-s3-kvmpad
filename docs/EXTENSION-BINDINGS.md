@@ -60,7 +60,7 @@ For a local setpoint, add a `RateSlider` in Studio and bind its two events to se
 ]
 ```
 
-`state.adjust` reads the current local integer, adds a nonzero signed 32-bit `delta` and stops at the state's `min` or `max`. An omitted bound uses the corresponding signed 64-bit limit. Either direction may also invoke `state.set`. Both actions work offline and use the package's event budget. The sample opens in Extension Studio, displays the selected altitude and needs only `ui.basic`. It requires SDK and firmware support for `RateSlider`. [Altitude selector sample](../tools/kvmpack/samples/rate-slider)
+`state.adjust` adds a nonzero signed 32-bit `delta` to a local integer. Use it with a `RateSlider` step or a `Button` tap. For button taps, set `min_firmware` to 1.4.0 or later. The value stops at the state's `min` or `max`. An omitted bound uses the corresponding signed 64-bit limit. The altitude selector uses four buttons and a wheel to adjust the same value. The package sets the step size for each control. [Altitude selector sample](../tools/kvmpack/samples/rate-slider)
 
 ```json
 {"id":"set_trim","type":"state.set","capability":"ui.basic","trigger":"trim.rotate",
@@ -84,6 +84,8 @@ Drag the chart with one finger. Place two fingers on the map and spread or pinch
 An `AutopilotPanel` needs 540 × 680 pixels and accepts empty properties. It opens offline. **Start demo** enables a local aircraft simulation for the HDG, ALT and VS selectors and the AP, HDG, NAV, VS and ALT buttons. Values under **Actual** come from the demo aircraft. Submitted settings change after acknowledgment. The demo can reject a request and separately capture NAV or the selected altitude.
 
 A `RadioPanel` uses the same minimum dimensions and empty properties. In **Start demo**, select COM 1 or COM 2, tap the standby frequency, enter six digits, and confirm with **OK**. **Swap** exchanges the active and standby channels for the selected radio. Tap the four-digit transponder code to enter an octal code, including leading zeroes. The STBY, ON and ALT controls request a mode change. The panel shows confirmed values after readback. The shipped package uses the local demo.
+
+To supply your own radio selector, set `min_firmware` to 1.4.0 or later. Bind a local integer (0 or 1) to `RadioPanel.selected` with the `identity` transform. Pilot Panel binds the same integer to its tab strip. Changing tabs discards unfinished input. A command that already left the panel keeps its original radio index.
 
 These instruments use the local UI permission. A package can contain one widget of each kind.
 

@@ -68,6 +68,8 @@ def build(output):
     sources.extend(STUDIO.joinpath("schemas").glob("*.json"))
     sources.extend(p for p in STUDIO.joinpath("examples").rglob("*") if p.suffix.lower() in {".json", ".png"})
     sources.extend(REPO.joinpath("extensions", "usb-monitor-console").glob("*.json"))
+    sources.extend(STUDIO.joinpath("samples", "rate-slider").glob("*.json"))
+    sources.extend(p for p in REPO.joinpath("extensions", "pilot-panel").rglob("*") if p.suffix.lower() in {".json", ".png"})
     for source in sources:
         files[source.relative_to(REPO).as_posix()] = source.read_bytes()
     files["docs/EXTENSION-BINDINGS.md"] = (REPO / "docs/EXTENSION-BINDINGS.md").read_bytes()

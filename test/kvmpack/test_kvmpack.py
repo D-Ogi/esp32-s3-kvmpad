@@ -39,7 +39,8 @@ class PackTests(unittest.TestCase):
             with self.subTest(field=field, value=value):
                 name = "bindings.json" if kind == "action" else "ui.json"
                 doc = json.loads(files[name])
-                node = doc["actions"][0]["args"] if kind == "action" else doc["root"]["children"][-1]
+                node = doc["actions"][0]["args"] if kind == "action" else next(
+                    child for child in doc["root"]["children"] if child["id"] == "wheel")
                 node[field] = value
                 with self.assertRaises(ValueError):
                     pack.validate_scene({**files, name: json.dumps(doc).encode()})
@@ -145,7 +146,7 @@ class PackTests(unittest.TestCase):
         for field, value in (("max", 2), ("min", -1), ("type", "float")):
             with self.subTest(field=field):
                 bindings = json.loads(files["bindings.json"])
-                bindings["state"][0][field] = value
+                next(item for item in bindings["state"] if item["id"] == "aircraft")[field] = value
                 with self.assertRaises(ValueError):
                     pack.validate_scene({**files, "bindings.json": json.dumps(bindings).encode()})
         for key, value in (("bounds", {"x": 0, "y": 0, "w": 539, "h": 680}),
@@ -153,7 +154,7 @@ class PackTests(unittest.TestCase):
             with self.subTest(key=key):
                 ui = json.loads(files["ui.json"])
                 radio = next(page for page in ui["root"]["children"] if page["id"] == "radio")
-                radio["children"][0][key] = value
+                next(node for node in radio["children"] if node["type"] == "RadioPanel")[key] = value
                 with self.assertRaises(ValueError):
                     pack.validate_scene({**files, "ui.json": json.dumps(ui).encode()})
 

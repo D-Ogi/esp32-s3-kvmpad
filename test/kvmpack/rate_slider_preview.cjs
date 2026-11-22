@@ -10,6 +10,11 @@ const sim=fixture(process.argv[2],{
     clearTimeout() { pending=null; }
 });
 const wheel=sim.widget("wheel"), reading=()=>sim.widget("altitude_value").children[0].textContent;
+for (const [button, value] of [["down_large","0"],["down_small","0"],["up_large","1000"],
+                               ["up_small","1100"],["down_small","1000"]]) {
+    sim.widget(button).fire("click");
+    assert.equal(reading(),value);
+}
 function touch(type,y,x=44) { wheel.fire(type,{pointerId:1, clientX:x, clientY:y}); }
 touch("pointerdown",124); assert.equal(reading(),"1000"); assert.equal(pending,null);
 touch("pointermove",106); assert.equal(reading(),"1100");

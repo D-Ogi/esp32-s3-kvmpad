@@ -23,6 +23,7 @@ static struct {
     int width,height;
     link_t source;
     unsigned com_index;
+    bool package_selection;
     edit_t edit;
     char input[7],message[84];
     pack_radio_readback_t confirmed;
@@ -57,6 +58,15 @@ static void end_edit(void)
 {
     panel.edit=NO_EDIT;
     panel.input[0]=0;
+}
+
+void pack_radio_view_select(unsigned index)
+{
+    if (!panel.parent || index>=2 || panel.com_index==index) return;
+    panel.com_index=index;
+    end_edit();
+    if (panel.source!=OFFLINE && !panel.pending.id) message("");
+    project();
 }
 
 void pack_radio_view_bind(pack_radio_sender_t sender,void *ctx)
@@ -136,9 +146,8 @@ static void click(lv_event_t *e)
         message("Local demo. Tap Standby or the transponder code.");
     } else if (key==COM1 || key==COM2) {
         if (panel.pending.id) return;
-        unsigned c=(unsigned)(key-COM1);
-        if (panel.com_index==c) return;
-        panel.com_index=c;end_edit();message("");
+        pack_radio_view_select((unsigned)(key-COM1));
+        return;
     } else if (panel.source==OFFLINE || panel.pending.id) return;
     else if (key==STANDBY || key==SQUAWK) {
         edit_t next=key==STANDBY ? FREQUENCY : CODE;
@@ -200,10 +209,10 @@ static bool build(void)
     lv_obj_set_pos(panel.body,0,0);lv_obj_set_size(panel.body,w,h);lv_obj_set_scrollable(panel.body,false);
     if (!label(panel.body,"Radio and transponder",pad,0,w-158,ui_theme_font(UI_FONT_TITLE))) return false;
     panel.status=label(panel.body,"",pad,32,w-158,ui_theme_font(UI_FONT_BODY));
-    if (!panel.status || !button(&panel.link,LINK_BUTTON,"",w-148,3,140,48) ||
-        !button(&panel.com[0],COM1,"COM 1",pad,59,half,50) ||
-        !button(&panel.com[1],COM2,"COM 2",16+half,59,half,50)) return false;
-    const int field=70+(h-680)/12, base=117, fw=w-122;
+    if (!panel.status || !button(&panel.link,LINK_BUTTON,"",w-148,3,140,48)) return false;
+    if (!panel.package_selection && (!button(&panel.com[0],COM1,"COM 1",pad,59,half,50) ||
+        !button(&panel.com[1],COM2,"COM 2",16+half,59,half,50))) return false;
+    const int field=70+(h-680)/12, base=panel.package_selection ? 59 : 117, fw=w-122;
     lv_obj_t *active=lv_obj_create(panel.body);
     if (!active) return false;
     lv_obj_remove_style_all(active);ui_theme_apply(active,UI_STYLE_CONTROL_BUTTON,0);
@@ -260,7 +269,7 @@ static void project(void)
     const pack_radio_readback_t *s=&panel.confirmed;
     set(panel.status,panel.source==DEMO ? "Demo" : panel.source==LIVE ? "Simulator online" : "Offline");
     set(panel.link.label,panel.source==DEMO ? "Go offline" : "Start demo");lv_obj_set_hidden(panel.link.obj,panel.send!=NULL);
-    for(unsigned i=0;i<2;i++){
+    for(unsigned i=0;!panel.package_selection && i<2;i++){
         lv_obj_set_checked(panel.com[i].obj,c==i);lv_obj_set_disabled(panel.com[i].obj,panel.pending.id!=0);
     }
     char a[24]="---.--- MHz",b[24]="---.--- MHz",xpdr[12]="----",notice[84];
@@ -294,12 +303,13 @@ static void deleted(lv_event_t *e)
     if (lv_event_get_target_obj(e)==panel.parent) memset(&panel,0,sizeof(panel));
 }
 
-bool pack_radio_view_open(lv_obj_t *parent,int width,int height)
+bool pack_radio_view_open(lv_obj_t *parent,int width,int height,bool package_selection)
 {
     if (!parent || panel.parent || width<540 || height<680) return false;
     if (!lv_obj_add_event_cb(parent,deleted,LV_EVENT_DELETE,NULL)) return false;
     lv_obj_set_style_pad_all(parent,0,0);lv_obj_set_style_border_width(parent,0,0);lv_obj_set_scrollable(parent,false);
-    panel.parent=parent;panel.width=width;panel.height=height;message("No simulator connection.");
+    panel.parent=parent;panel.width=width;panel.height=height;panel.package_selection=package_selection;
+    message("No simulator connection.");
     return true;
 }
 

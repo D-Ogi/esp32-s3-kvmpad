@@ -96,7 +96,7 @@ LOCAL_CONTROLS = {
     "StatusChip": ({"text", "label", "status"}, set()),
 }
 BINDING_FIELDS = {"Text": ("text",), "StatusChip": ("text",), "ValueTile": ("value",),
-                  "TabStrip": ("selected",),
+                  "TabStrip": ("selected",), "RadioPanel": ("selected",),
                   "GaugeArc": ("value",), "GaugeNeedle": ("value",), "Horizon": ("pitch", "roll")}
 CONTAINERS = {"Column", "Row", "Grid"}
 CHIP_SYMBOLS = {"neutral": "−", "capability": "⚙", "permission": "◉", "info": "i",
@@ -169,11 +169,13 @@ def check_action(kind, args, state, widgets, source, event):
                      mode.startswith("$state.") and state.get(mode[7:], {}).get("type") == "string"),
                     "invalid capture mode or consent")
     elif kind == "state.adjust":
-        require(source["type"] == "RateSlider" and event in ("step_up", "step_down") and
+        step = source["type"] == "RateSlider" and event in ("step_up", "step_down")
+        tap = source["type"] == "Button" and event == "tap"
+        require((step or tap) and
                 args.keys() == {"name", "delta"} and isinstance(args["name"], str) and
                 args["name"] in state and state[args["name"]]["type"] == "int" and
                 type(args["delta"]) is int and -(1 << 31) <= args["delta"] < (1 << 31) and args["delta"] != 0,
-                "state.adjust requires a RateSlider step, an integer state and a nonzero int32 delta")
+                "state.adjust requires a Button tap or RateSlider step, an integer state and a nonzero int32 delta")
     elif kind == "state.set":
         require(args.keys() == {"name", "value"} and isinstance(args["name"], str) and
                 args["name"] in state, "unknown state target or argument")
@@ -640,10 +642,15 @@ def validate_scene(files, *, editing=False):
         if field == "selected":
             connection = bindings["connections"][index]
             item = state.get(connection["from"], {})
-            count = len(widgets[target].get("props", {}).get("tabs", ["Tab 1", "Tab 2"]))
+            if widgets[target]["type"] == "RadioPanel":
+                if tuple(map(int, manifest["min_firmware"].split("."))) < (1, 4, 0):
+                    raise binding_error(index, "to", "BINDING_TARGET", "RadioPanel.selected requires min_firmware 1.4.0 or later")
+                count = 2
+            else:
+                count = len(widgets[target].get("props", {}).get("tabs", ["Tab 1", "Tab 2"]))
             if (item.get("type") != "int" or connection["transform"] != "identity" or
                     item.get("min", -1) < 0 or item.get("max", count) >= count):
-                raise binding_error(index, "to", "BINDING_TYPE", "Tab selection requires a local integer bounded to the available tabs")
+                raise binding_error(index, "to", "BINDING_TYPE", "Selection requires a local integer bounded to the available options")
     actions = {}
     for action in bindings["actions"]:
         key, trigger, kind = action["id"], action["trigger"], action["type"]
@@ -656,6 +663,9 @@ def validate_scene(files, *, editing=False):
         if kind.startswith("stream."):
             require("capture.windows" in manifest["host"]["requires"], "missing capture provider")
         widget, event = trigger.rsplit(".", 1)
+        if kind == "state.adjust" and widgets[widget]["type"] == "Button":
+            require(tuple(map(int, manifest["min_firmware"].split("."))) >= (1, 4, 0),
+                    "Button state.adjust requires min_firmware 1.4.0 or later")
         check_action(kind, action["args"], state, widgets, widgets[widget], event)
         actions[key] = trigger
     require(all(actions.get(key) == trigger for trigger, key in events.items()), "unresolved UI event")

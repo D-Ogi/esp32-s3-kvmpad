@@ -40,6 +40,46 @@
         "name": "altitude",
         "delta": -100
       }
+    },
+    {
+      "id": "down_large",
+      "trigger": "down_large.tap",
+      "type": "state.adjust",
+      "capability": "ui.basic",
+      "args": {
+        "name": "altitude",
+        "delta": -1000
+      }
+    },
+    {
+      "id": "down_small",
+      "trigger": "down_small.tap",
+      "type": "state.adjust",
+      "capability": "ui.basic",
+      "args": {
+        "name": "altitude",
+        "delta": -100
+      }
+    },
+    {
+      "id": "up_small",
+      "trigger": "up_small.tap",
+      "type": "state.adjust",
+      "capability": "ui.basic",
+      "args": {
+        "name": "altitude",
+        "delta": 100
+      }
+    },
+    {
+      "id": "up_large",
+      "trigger": "up_large.tap",
+      "type": "state.adjust",
+      "capability": "ui.basic",
+      "args": {
+        "name": "altitude",
+        "delta": 1000
+      }
     }
   ]
 }

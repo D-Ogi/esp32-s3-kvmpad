@@ -903,9 +903,11 @@ static void rate_slider_view(const char *folder)
         scene.portrait=portrait; // Identical local coordinates in both orientations.
         lv_obj_t *screen=lv_obj_create(NULL);
         lv_obj_remove_style_all(screen);
+        lv_obj_set_scrollable(screen,false);
         lv_obj_t *frame=pack_view_frame(screen,portrait);
         lv_obj_t *content=lv_obj_create(frame);
         lv_obj_remove_style_all(content);
+        lv_obj_set_scrollable(content,false);
         lv_obj_set_pos(content,0,32);
         lv_obj_set_size(content,portrait ? 600 : 1024,portrait ? 992 : 568);
         assert(pack_view_open(content,&scene,PACK_PERM_UI));
@@ -915,6 +917,11 @@ static void rate_slider_view(const char *folder)
         lv_obj_t *meter=lv_obj_get_child_by_type(lv_obj_get_parent(up),0,&lv_slider_class);
         assert(meter && lv_obj_is_visible(meter) && lv_slider_get_value(meter)==0);
         pack_state_t *value=&scene.state[0];
+        screen_tap(portrait,48,242);  assert(value->value.integer==0 && shows(content,"0"));
+        screen_tap(portrait,134,242); assert(value->value.integer==0);
+        screen_tap(portrait,306,242); assert(value->value.integer==1000);
+        screen_tap(portrait,220,242); assert(value->value.integer==1100);
+        screen_tap(portrait,134,242); assert(value->value.integer==1000 && shows(content,"1000"));
         screen_tap(portrait,44,124);
         assert(value->value.integer==1000);
         screen_press(portrait,44,54);
@@ -1627,6 +1634,25 @@ static void switcher_view(const char *folder,bool portrait)
            portrait ? "portrait" : "landscape");
 }
 
+static void radio_package_selection(const char *folder)
+{
+    load_at(folder);
+    assert(scene.states==1 && scene.state[0].value.integer==1);
+    lv_obj_t *screen=lv_obj_create(NULL), *frame=pack_view_frame(screen,true);
+    lv_obj_t *content=lv_obj_create(frame);
+    lv_obj_remove_style_all(content); lv_obj_set_pos(content,0,32); lv_obj_set_size(content,600,992);
+    assert(pack_view_open(content,&scene,scene.permissions));
+    lv_screen_load(screen); sim_settle(); pack_view_tick();
+    assert(visible_caption(content,"Offline") && visible_caption(content,"COM 2"));
+    screen_tap(true,510,32+68+24);
+    assert(visible_caption(content,"123.450 MHz"));
+    screen_tap(true,140,32+34);
+    assert(scene.state[0].value.integer==0 && visible_caption(content,"118.100 MHz"));
+    screen_tap(true,440,32+34);
+    assert(scene.state[0].value.integer==1 && visible_caption(content,"123.450 MHz"));
+    home(); pack_view_close(); lv_obj_delete(screen);
+}
+
 static void switch_to_autopilot(void)
 {
     memset(&scene,0,sizeof(scene));
@@ -1877,6 +1903,10 @@ int main(int argc, char **argv)
 {
     size_t baseline=sim_env_start();
     home_screen=lv_screen_active();
+    if (argc==3 && !strcmp(argv[1],"--radio-selector")) {
+        assert(ui_theme_init()); radio_package_selection(argv[2]);
+        ui_theme_deinit(); sim_env_stop(baseline); return 0;
+    }
     if (argc==1 || (argc==2 && !strcmp(argv[1],"--rate-slider"))) {
         rate_slider_view(KVM_EXAMPLES "/../samples/rate-slider");
         if (argc==2) { sim_env_stop(baseline); return 0; }

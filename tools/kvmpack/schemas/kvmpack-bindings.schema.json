@@ -77,7 +77,7 @@
         "if": {"properties": {"type": {"const": "state.adjust"}}},
         "then": {"properties": {
           "capability": {"const": "ui.basic"},
-          "trigger": {"pattern": "\\.(step_up|step_down)$"},
+            "trigger": {"pattern": "\\.(tap|step_up|step_down)$"},
           "args": {"required": ["name", "delta"], "additionalProperties": false,
                    "properties": {"name": {"$ref": "#/$defs/name"},
                                   "delta": {"type": "integer", "minimum": -2147483648, "maximum": 2147483647, "not": {"const": 0}}}}

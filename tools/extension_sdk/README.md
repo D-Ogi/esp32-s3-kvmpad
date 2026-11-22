@@ -1,6 +1,6 @@
 # KVMpad Extension SDK
 
-Create a local checklist, preview it at the panel's 1024 × 600 resolution and prepare a microSD installer. The ZIP includes Extension Studio, the command-line packager, the package schemas, four editable examples and their Python dependencies. Install Python with Tk for the operating system, architecture and Python version in `runtime.json`. The commands below use the matching interpreter as `python`. Run them in the extracted SDK directory.
+Use Extension Studio to create a checklist, preview it and prepare a microSD installer. The ZIP includes the packager, schemas, templates, example extensions and Python dependencies. Install Python with Tk for the operating system, architecture and Python version in `runtime.json`. Run the commands below in the extracted SDK directory with that Python interpreter.
 
 ## Make a checklist
 
@@ -18,6 +18,8 @@ When opening a signed package, select the publisher's public Ed25519 PEM file fr
 To extend the layout, choose a widget type below the canvas, select a **Parent** and click **Add widget**. Choose a Column, Row or Grid to group children. Drag a child or enter its coordinates relative to its parent in the Widget inspector. The Flight Yoke template shows the declarations for joystick controls in the test harness. The Cursor Magnifier template includes the declarations for a native stream viewport.
 
 Choose **File → Open USB Monitor Console example** for a portrait USB desktop with a touchpad and keyboard. The **Screens** handle opens a second page with a larger touchpad. The browser preview shows the disconnected layout. On firmware supporting the composite USB profile, start the desktop on KVMpad after connecting the computer. The source is in `extensions/usb-monitor-console`.
+
+Choose **File → Open altitude selector example** to edit a wheel and four buttons that share one value. Each button sets its own step in `bindings.json`. For a multi-screen extension, choose **File → Open Pilot Panel**. Its Radio screen uses a tab strip to select the active radio.
 
 On the panel the keyboard uses the configured host layout. Tap **123** for numbers and punctuation, then **ABC** to return to letters. Tap **Shift**, **Ctrl**, **Alt** or **AltGr** to apply it to the next key. Hold an ordinary key to keep it pressed until you lift your finger.
 
