@@ -38,6 +38,8 @@ internal static class HostCompanion
         }
         string? python = Environment.GetEnvironmentVariable("KVMPAD_HOST_PYTHON");
         string? bundled = workspace == null ? null : Path.Combine(workspace, ".tools", "venv", "Scripts", "python.exe");
+        string installed = Path.Combine(AppContext.BaseDirectory, "runtime", "python.exe");
+        if (File.Exists(installed)) bundled = installed;
         if (string.IsNullOrWhiteSpace(python)) python = File.Exists(bundled) ? bundled : "py.exe";
         var options = new ProcessStartInfo(python!) {
             UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true,

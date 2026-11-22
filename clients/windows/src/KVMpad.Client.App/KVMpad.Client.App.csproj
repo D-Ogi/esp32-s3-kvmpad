@@ -5,7 +5,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net9.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>KVMpad.Client</AssemblyName>
     <RootNamespace>KVMpad.Client.App</RootNamespace>
@@ -26,6 +26,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Include="..\..\firmware\firmware*.py;..\..\..\..\hosts\windows\appearance.py"
+          Link="firmware\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
     <ProjectReference Include="..\KVMpad.Client.Core\KVMpad.Client.Core.csproj" />
     <None Include="..\..\..\..\design\assets\control-icons\*.png"
           Link="assets\control-icons\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest"

@@ -1,5 +1,7 @@
 # 7B firmware handbook
 
+For a new board, open **Tools → Board firmware** in Windows CLIENT. [Install the 7B firmware](INSTALL.md#first-installation-on-a-7b)
+
 The 7B has a 1024 × 600 RGB565 panel, 16 MiB of flash and 8 MiB of PSRAM. Connect the target PC to the native USB port. Connect a development PC to the CH343 USB-UART port for flashing, logs and framebuffer captures. [Board identification](../hardware/boards.md)
 
 ## USB startup and display modes

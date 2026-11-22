@@ -1,0 +1,29 @@
+<!-- SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+     Copyright 2026 D-Ogi. Noncommercial use only; see LICENSE.md.
+     Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad) -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="KVMpad Client" Manufacturer="D-Ogi" Version="$(var.Version)"
+           ProductCode="$(var.ProductCode)" UpgradeCode="3161A019-B502-47BD-9336-8C000D6CFFEA"
+           Scope="perMachine" InstallerVersion="500" Language="1033">
+    <MajorUpgrade Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="A newer version of KVMpad Client is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="medium" />
+    <Icon Id="ClientIcon.exe" SourceFile="!(bindpath.payload)\KVMpad.Client.exe" />
+    <Property Id="ARPPRODUCTICON" Value="ClientIcon.exe" />
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="KVMpad Client">
+        <Component Id="ClientApp" Guid="*" Bitness="always64">
+          <File Id="ClientExecutable" Source="!(bindpath.payload)\KVMpad.Client.exe" KeyPath="yes">
+            <Shortcut Id="StartMenuClient" Name="KVMpad Client" Directory="ProgramMenuFolder"
+                      Advertise="yes" WorkingDirectory="INSTALLFOLDER" Icon="ClientIcon.exe" />
+          </File>
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder" />
+    <Feature Id="Complete" Title="KVMpad Client" Level="1">
+      <ComponentRef Id="ClientApp" />
+      <ComponentGroupRef Id="PublishedPayload" />
+    </Feature>
+  </Package>
+</Wix>

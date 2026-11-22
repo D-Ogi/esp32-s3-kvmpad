@@ -4,7 +4,7 @@ KVMpad HOST shares a monitor or connects a simulator or OBS session from the Win
 
 ## Start the HOST
 
-Use Python with Tk, `websockets==17.4` and `cryptography==50.0.2`. The CLIENT finds the workspace Python environment or uses `py.exe -3`. Set `KVMPAD_HOST_PYTHON` before starting the CLIENT to select another interpreter. The native picker requires Visual Studio C++ x64 build tools and Windows SDK 10.0.26100.0 or later. Windows must implement the capture picker's monitor-identity interface. WIC encodes JPEG and the picker encodes Cinepak. For H.264, put FFmpeg with the `libx264` encoder on the CLIENT process's `PATH`.
+The Windows MSI supplies Python, Tk and the native monitor picker. For a source build, use Python with Tk, `websockets==17.4` and `cryptography==50.0.2`. Set `KVMPAD_HOST_PYTHON` before starting CLIENT to select another interpreter. Building the native picker requires Visual Studio C++ x64 build tools and Windows SDK 10.0.26100.0 or later. Windows must implement the capture picker's monitor-identity interface. WIC encodes JPEG and the picker encodes Cinepak. For H.264, put FFmpeg with the `libx264` encoder on the CLIENT process's `PATH`.
 
 From the workspace above the repository, build the picker and run its physical-coordinate tests.
 

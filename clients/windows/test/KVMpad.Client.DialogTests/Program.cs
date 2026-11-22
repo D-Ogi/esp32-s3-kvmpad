@@ -241,7 +241,7 @@ internal static class Program
                 string[] actions = page.Text switch {
                     "Devices" => ["Discover", "Pair…", "Connect", "Disconnect", "Start HOST", "Advanced…"],
                     "Host input" => ["Request control", "Release control", "Start capture", "Send shortcut", "Type text", "Cancel typing", "SSH command…"],
-                    _ => ["USB display…", "Extension Studio…", "Prepare card video…", "About"]
+                    _ => ["Board firmware…", "USB display…", "Extension Studio…", "Prepare card video…", "About"]
                 };
                 var buttons = Descendants(page).OfType<Button>().ToArray();
                 Require(buttons.Select(button => button.Text).SequenceEqual(actions), "Client action order");

@@ -4,7 +4,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <AssemblyName>KVMpad.Client.Core</AssemblyName>
     <RootNamespace>KVMpad.Client.Core</RootNamespace>
     <!-- No UI and no NuGet dependency: everything here must be unit-testable on a plain .NET host

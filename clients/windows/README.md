@@ -1,5 +1,7 @@
 # KVMpad Windows CLIENT
 
+The Windows x64 MSI includes the desktop runtime and board firmware tool. Open **Tools → Board firmware** for first installation, recovery or a signed update. [Installation and deployment](../../docs/INSTALL.md)
+
 Run KVMpad CLIENT on the operator PC to send input over Wi-Fi. The KVMpad board forwards the keystrokes and mouse movements to the **target computer** over USB. The target uses its built-in keyboard and mouse drivers. [Pairing screenshots](../../README.md#pair-a-windows-client) · [Remote input example](../../README.md#send-keyboard-and-mouse-input)
 
 The protocol specification calls the USB target the **HOST** and the board the **DEVICE**. The Windows application named **KVMpad HOST** is a companion that CLIENT starts on its own PC. Screen sharing captures a monitor on that PC. [Windows HOST guide](../../hosts/windows/README.md)
@@ -29,11 +31,11 @@ key up 0x28
 
 | Path | Target | Contents |
 |---|---|---|
-| `src/KVMpad.Client.Core` | `net9.0` | Protocol v1 codec and session state machine, input rate limiter and coalescing, certificate pinning, scan-code → HID usage map, capture ledger, type text, mDNS discovery, the pairing run. No UI and no NuGet dependency; its one native dependency is the pairing library below, loaded by name. |
+| `src/KVMpad.Client.Core` | `net10.0` | Protocol v1 codec and session state machine, input rate limiter and coalescing, certificate pinning, scan-code → HID usage map, capture ledger, type text, mDNS discovery, the pairing run. No UI and no NuGet dependency; its one native dependency is the pairing library below, loaded by name. |
 | `layouts/kbd_layouts.json` | data | The generated host layouts of ADR-024 (581 layouts, about 4.5 MB), produced by `tools/kbd_layouts/gen_layouts.py` — the same file the device compiles into its firmware. Read-only here: never edited by hand, and regenerated only by that tool. Both the application and the test project copy it to `layouts/kbd_layouts.json` beside their binary, which is where `HostLayoutCatalog` looks for it. |
 | `native/` | Windows x64 | `kvmpad_pairing.dll`: the pairing core of ADR-029 — `components/secure_remote/pairing/**` — compiled against the TF-PSA-Crypto of the pinned ESP-IDF v6.1 tree, plus a flat C ABI for P/Invoke. Also `kvmpad_pairing_test.dll`, a test fixture that is never shipped. |
-| `src/KVMpad.Client.App` | `net9.0-windows` | WinForms window, tray icon, dialogs, and the Win32 layer: `WH_KEYBOARD_LL`, Raw Input, session/power notifications, Credential Manager. |
-| `test/KVMpad.Client.Core.Tests` | `net9.0` | xUnit tests for everything in Core. No test contacts a device or any network service; the TLS tests complete a real handshake on the loopback interface against a certificate the test itself creates. |
+| `src/KVMpad.Client.App` | `net10.0-windows` | WinForms window, tray icon, dialogs, and the Win32 layer: `WH_KEYBOARD_LL`, Raw Input, session/power notifications, Credential Manager. |
+| `test/KVMpad.Client.Core.Tests` | `net10.0` | xUnit tests for everything in Core. No test contacts a device or any network service; the TLS tests complete a real handshake on the loopback interface against a certificate the test itself creates. |
 
 ## Build and test
 
@@ -85,13 +87,12 @@ dotnet build clients/windows/KVMpad.Client.sln -c Release
 dotnet test  clients/windows/KVMpad.Client.sln -c Release
 ```
 
-Both commands run from the repository root. Required: the .NET SDK 9.0 (built and tested with 9.0.308) and
-the `Microsoft.WindowsDesktop.App` 9.0 runtime, which the Windows SDK installer already provides.
+Run both commands from the repository root with the .NET 10 SDK for Windows x64.
 
 A single test class, while narrowing something down:
 
 ```powershell
-dotnet test clients/windows/test/KVMpad.Client.Core.Tests/bin/Release/net9.0/KVMpad.Client.Core.Tests.dll `
+dotnet test clients/windows/test/KVMpad.Client.Core.Tests/bin/Release/net10.0/KVMpad.Client.Core.Tests.dll `
   --filter "FullyQualifiedName~PairingTests"
 ```
 

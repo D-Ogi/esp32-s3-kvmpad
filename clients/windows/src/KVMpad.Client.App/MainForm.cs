@@ -124,6 +124,8 @@ internal sealed class MainForm : Form
             "studio", "extension_studio.py", "Extension Studio requires Python 3 with Tk, jsonschema and Pillow."));
         var video = MakeButton("Prepare card video…", async (_, _) => await LaunchToolAsync(
             "media", "card_video_import.py", "Card video preparation requires Python 3.11 or newer with Tk."));
+        var firmware = MakeButton("Board firmware…", async (_, _) => await LaunchToolAsync(
+            "firmware", "firmware_ui.py", "Install the complete Windows CLIENT package to use the firmware tool."));
         var display = MakeButton("USB display…", (_, _) =>
         {
             using var dialog = new UsbDisplayDialog(_controller.Logic);
@@ -179,6 +181,7 @@ internal sealed class MainForm : Form
         _icons.Add(_disconnect, "disconnect", IconRole.Client);
         _icons.Add(_host, "host", IconRole.Host);
         _icons.Add(_advanced, "settings", IconRole.Neutral);
+        _icons.Add(firmware, "settings", IconRole.Neutral);
         _icons.Add(studio, "extensions", IconRole.Neutral);
         _icons.Add(video, "video", IconRole.Neutral);
         _icons.Add(display, "host", IconRole.Neutral);
@@ -208,7 +211,7 @@ internal sealed class MainForm : Form
         input.Controls.Add(ActionRow(_typeSend, _typeCancel, _ssh), 0, 4);
 
         var tools = AddPage(_pages, "Tools");
-        tools.Controls.Add(ActionRow(display, studio, video, about), 0, 0);
+        tools.Controls.Add(ActionRow(firmware, display, studio, video, about), 0, 0);
 
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, Padding = new Padding(10) };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -581,16 +584,18 @@ internal sealed class MainForm : Form
     private async Task LaunchToolAsync(string folder, string script, string requirement)
     {
         string directory = Path.Combine(AppContext.BaseDirectory, folder);
-        string launcher = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "py.exe");
-        if (!File.Exists(launcher))
-            launcher = "py.exe";
+        string bundled = Path.Combine(AppContext.BaseDirectory, "runtime", "python.exe");
+        bool installedRuntime = File.Exists(bundled);
+        string launcher = installedRuntime ? bundled : "py.exe";
         var start = new ProcessStartInfo(launcher)
         {
             UseShellExecute = false,
             CreateNoWindow = true,
             WorkingDirectory = directory
         };
-        start.ArgumentList.Add("-3");
+        if (!installedRuntime) start.ArgumentList.Add("-3");
+        start.ArgumentList.Add("-E");
+        start.ArgumentList.Add("-s");
         start.ArgumentList.Add("-B");
         start.ArgumentList.Add(Path.Combine(directory, script));
         try
@@ -605,7 +610,7 @@ internal sealed class MainForm : Form
         {
             if (IsDisposed) return;
         }
-        ShowNotice("The desktop tool could not start. Check the Python Windows launcher. " + requirement);
+        ShowNotice("The desktop tool could not start. " + requirement);
     }
 
     private void ShowNotice(string message)

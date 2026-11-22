@@ -2,6 +2,8 @@
 
 KVMpad turns the **Waveshare ESP32-S3-Touch-LCD-7B** into a touchscreen keyboard and touchpad. Plug its native USB port into the computer you want to control. Type on the 7-inch screen or send input over Wi-Fi from another PC using the Windows CLIENT or SSH.
 
+**Get started.** Install Windows CLIENT on the operator PC. Open **Tools → Board firmware** to prepare the signed 7B image or install it over USB-UART. [Windows x64 test release](https://github.com/D-Ogi/esp32-s3-kvmpad/releases/tag/v0.1.0-preview.1) · [Installation guide](docs/INSTALL.md)
+
 ## Screen gallery
 
 These touchscreen views come from the board in the Day theme. The portrait autopilot shows Demo mode. For the Windows CLIENT, see [pairing](#pair-a-windows-client) and [remote keyboard and mouse control](#send-keyboard-and-mouse-input).

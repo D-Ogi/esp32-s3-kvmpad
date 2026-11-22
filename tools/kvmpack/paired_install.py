@@ -29,7 +29,7 @@ def client_path():
         return Path(found)
     checkout = here.parents[2] / "clients/windows/src/KVMpad.Client.App/bin"
     for config in ("Release", "Debug"):
-        exe = checkout / config / "net9.0-windows/win-x64/KVMpad.Client.exe"
+        exe = checkout / config / "net10.0-windows/win-x64/KVMpad.Client.exe"
         if exe.is_file():
             return exe
     raise ValueError("Install the Windows CLIENT or build its Release configuration first.")
