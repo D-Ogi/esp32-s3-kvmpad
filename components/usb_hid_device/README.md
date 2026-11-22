@@ -70,7 +70,7 @@ The 7B starts with a boot keyboard and mouse. See [USB startup and display modes
 **Home** restores HID with the same board serial. Both switches take place in
 RAM and preserve the saved CLIENT pairing.
 
-We do not recommend the xfz1986 Windows display driver. [USB and firmware compatibility](../../docs/COMPATIBILITY.md)
+We do not recommend the xfz1986 Windows display driver (1.2.25.2). The package uses an untrusted test certificate, and we cannot verify which source code produced the binary. [USB and firmware compatibility](../../docs/COMPATIBILITY.md)
 
 The fixed-size JPEG modes advertise either 640×480 or 1024×600, a 10 fps request and a 96 KiB compressed frame limit in both their product and interface strings. Interface 0 has 64-byte
 full-speed bulk OUT and IN endpoints. This profile uses the example identity

@@ -5,7 +5,7 @@ Connect the **native USB** port on KVMpad to the target computer. Use the **USB-
 | Function | Support and requirements |
 | --- | --- |
 | USB keyboard and mouse | Windows and Linux use their built-in USB drivers. KVMpad starts in this mode. |
-| Windows extended desktop (640 × 480 or 1024 × 600) | We do not recommend the xfz1986 driver (1.2.25.2). We cannot match the binary to public source code. The driver uses an untrusted test certificate. |
+| Windows extended desktop (640 × 480 or 1024 × 600) | We do not recommend the xfz1986 Windows display driver (1.2.25.2). The package uses an untrusted test certificate, and we cannot verify which source code produced the binary. |
 | Linux USB monitor | The GUD driver supports 640 × 480 and 800 × 600 in monochrome. Register the KVMpad USB ID with the driver. The keyboard and mouse remain available in this mode. |
 | BIOS and UEFI | KVMpad provides a USB boot keyboard and mouse for firmware that supports these devices. The USB monitor requires an operating system with a compatible display driver. |
 
