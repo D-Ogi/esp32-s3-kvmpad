@@ -10,4 +10,4 @@
 | [ime_glue.c](ime_glue.c) | Loads keyboard language resources. |
 | [kvm_console.c](kvm_console.c) | Registers development commands for the USB-UART console. |
 
-[7B build and USB profiles](../docs/HANDBOOK.md) · [Component layout](../docs/REPO-LAYOUT.md)
+[Build the 7B firmware and switch USB modes](../docs/HANDBOOK.md) · [Component layout](../docs/REPO-LAYOUT.md)
