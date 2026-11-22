@@ -66,11 +66,13 @@ internal static partial class NativeMethods
     // ---- raw input -------------------------------------------------------------------------------
     internal const ushort HID_USAGE_PAGE_GENERIC = 0x01;
     internal const ushort HID_USAGE_GENERIC_MOUSE = 0x02;
+    internal const ushort HID_USAGE_GENERIC_KEYBOARD = 0x06;
 
     internal const uint RIDEV_INPUTSINK = 0x00000100;
     internal const uint RIDEV_REMOVE = 0x00000001;
     internal const uint RID_INPUT = 0x10000003;
     internal const uint RIM_TYPEMOUSE = 0;
+    internal const uint RIM_TYPEKEYBOARD = 1;
 
     internal const ushort RI_MOUSE_LEFT_BUTTON_DOWN = 0x0001;
     internal const ushort RI_MOUSE_LEFT_BUTTON_UP = 0x0002;

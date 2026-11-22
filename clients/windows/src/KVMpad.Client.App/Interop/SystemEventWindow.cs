@@ -3,7 +3,6 @@
 // Required Notice: Copyright 2026 D-Ogi (https://github.com/D-Ogi/esp32-s3-kvmpad)
 
 using System;
-using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using KVMpad.Client.Core.Input;
 using System.Windows.Forms;
@@ -52,18 +51,18 @@ internal sealed class SystemEventWindow : NativeWindow, IDisposable
     private readonly Action<RawMouseEvent> _onMouse;
     private readonly Action _onSessionChanged;
     private readonly Action _onSuspend;
-    private readonly Action _onKvmpadArrived;
-    private readonly Dictionary<IntPtr, bool> _isKvmpad = new();
+    private readonly Action<bool> _onLoopGuard;
+    private readonly RawInputIdentityCache _devices = new(RawInputIdentity.Resolve);
     private bool _rawInputRegistered;
     private bool _sessionRegistered;
 
     public SystemEventWindow(
-        Action<RawMouseEvent> onMouse, Action onSessionChanged, Action onSuspend, Action onKvmpadArrived)
+        Action<RawMouseEvent> onMouse, Action onSessionChanged, Action onSuspend, Action<bool> onLoopGuard)
     {
         _onMouse = onMouse ?? throw new ArgumentNullException(nameof(onMouse));
         _onSessionChanged = onSessionChanged ?? throw new ArgumentNullException(nameof(onSessionChanged));
         _onSuspend = onSuspend ?? throw new ArgumentNullException(nameof(onSuspend));
-        _onKvmpadArrived = onKvmpadArrived ?? throw new ArgumentNullException(nameof(onKvmpadArrived));
+        _onLoopGuard = onLoopGuard ?? throw new ArgumentNullException(nameof(onLoopGuard));
 
         CreateHandle(new CreateParams
         {
@@ -78,51 +77,32 @@ internal sealed class SystemEventWindow : NativeWindow, IDisposable
         _sessionRegistered = NativeMethods.WTSRegisterSessionNotification(Handle, NativeMethods.NOTIFY_FOR_THIS_SESSION);
     }
 
-    /// <summary>Starts delivering Raw Input mouse events. Called when capture begins.</summary>
-    public bool EnableRawMouse()
+    /// <summary>Registers for mouse motion and local keyboard/mouse device notifications.</summary>
+    public bool EnableRawInput()
     {
         if (_rawInputRegistered)
             return true;
 
-        var devices = new[]
-        {
-            new NativeMethods.RAWINPUTDEVICE
-            {
-                usUsagePage = NativeMethods.HID_USAGE_PAGE_GENERIC,
-                usUsage = NativeMethods.HID_USAGE_GENERIC_MOUSE,
-                // INPUTSINK: deliver even when this window is not in the foreground, which is the whole point
-                // — the user's focus is wherever they left it, not on the client. DEVNOTIFY: report mice that
-                // arrive meanwhile (WM_INPUT_DEVICE_CHANGE), so a KVMpad plugged in during capture stops it.
-                dwFlags = NativeMethods.RIDEV_INPUTSINK | NativeMethods.RIDEV_DEVNOTIFY,
-                hwndTarget = Handle,
-            },
-        };
-
-        _rawInputRegistered = NativeMethods.RegisterRawInputDevices(
-            devices, (uint)devices.Length, (uint)Marshal.SizeOf<NativeMethods.RAWINPUTDEVICE>());
+        _devices.Clear(); // a user retry must see properties that PnP has published since the last attempt
+        _rawInputRegistered = RegisterInput(NativeMethods.RIDEV_INPUTSINK | NativeMethods.RIDEV_DEVNOTIFY, Handle);
         return _rawInputRegistered;
     }
 
-    /// <summary>Stops delivering Raw Input mouse events. Called when capture ends.</summary>
-    public void DisableRawMouse()
+    public void DisableRawInput()
     {
-        if (!_rawInputRegistered)
-            return;
-
-        var devices = new[]
-        {
-            new NativeMethods.RAWINPUTDEVICE
-            {
-                usUsagePage = NativeMethods.HID_USAGE_PAGE_GENERIC,
-                usUsage = NativeMethods.HID_USAGE_GENERIC_MOUSE,
-                dwFlags = NativeMethods.RIDEV_REMOVE,
-                hwndTarget = IntPtr.Zero,
-            },
-        };
-
-        NativeMethods.RegisterRawInputDevices(
-            devices, (uint)devices.Length, (uint)Marshal.SizeOf<NativeMethods.RAWINPUTDEVICE>());
+        if (_rawInputRegistered) RegisterInput(NativeMethods.RIDEV_REMOVE, IntPtr.Zero);
         _rawInputRegistered = false;
+    }
+
+    private static bool RegisterInput(uint flags, nint target)
+    {
+        // Raw keyboard notifications identify the first collection to arrive. The low-level hook
+        // still handles keyboard capture. No NOLEGACY flag is set on either registration.
+        var devices = new[] {
+            new NativeMethods.RAWINPUTDEVICE { usUsagePage = NativeMethods.HID_USAGE_PAGE_GENERIC, usUsage = NativeMethods.HID_USAGE_GENERIC_MOUSE, dwFlags = flags, hwndTarget = target },
+            new NativeMethods.RAWINPUTDEVICE { usUsagePage = NativeMethods.HID_USAGE_PAGE_GENERIC, usUsage = NativeMethods.HID_USAGE_GENERIC_KEYBOARD, dwFlags = flags, hwndTarget = target },
+        };
+        return NativeMethods.RegisterRawInputDevices(devices, (uint)devices.Length, (uint)Marshal.SizeOf<NativeMethods.RAWINPUTDEVICE>());
     }
 
     protected override void WndProc(ref Message m)
@@ -134,8 +114,9 @@ internal sealed class SystemEventWindow : NativeWindow, IDisposable
                 break;
 
             case NativeMethods.WM_INPUT_DEVICE_CHANGE:
-                if ((int)m.WParam == NativeMethods.GIDC_ARRIVAL && IsKvmpad(m.LParam))
-                    _onKvmpadArrived();
+                _devices.Forget(m.LParam); // both removal and arrival invalidate a reused handle
+                if (_rawInputRegistered && (int)m.WParam == NativeMethods.GIDC_ARRIVAL)
+                    RawInputIdentityCache.AllowCapture(_devices.IsKvmpad(m.LParam), _onLoopGuard);
                 break;
 
             case NativeMethods.WM_WTSSESSION_CHANGE:
@@ -158,27 +139,26 @@ internal sealed class SystemEventWindow : NativeWindow, IDisposable
 
     private void HandleRawInput(IntPtr handle)
     {
+        if (!_rawInputRegistered) return;
         uint size = 0;
         uint headerSize = (uint)Marshal.SizeOf<NativeMethods.RAWINPUTHEADER>();
         if (NativeMethods.GetRawInputData(handle, NativeMethods.RID_INPUT, IntPtr.Zero, ref size, headerSize) != 0)
             return;
-        if (size == 0 || size > 1024)
+        if (size < headerSize || size > 1024)
             return;
 
         IntPtr buffer = Marshal.AllocHGlobal((int)size);
         try
         {
             uint read = NativeMethods.GetRawInputData(handle, NativeMethods.RID_INPUT, buffer, ref size, headerSize);
-            if (read != size)
+            if (read == uint.MaxValue || read != size || read < headerSize)
                 return;
 
+            var header = Marshal.PtrToStructure<NativeMethods.RAWINPUTHEADER>(buffer);
+            if (!RawInputIdentityCache.AllowCapture(_devices.IsKvmpad(header.hDevice), _onLoopGuard)) return;
+            if (header.dwType != NativeMethods.RIM_TYPEMOUSE || size < Marshal.SizeOf<NativeMethods.RAWINPUTMOUSE>())
+                return;
             var input = Marshal.PtrToStructure<NativeMethods.RAWINPUTMOUSE>(buffer);
-            if (input.header.dwType != NativeMethods.RIM_TYPEMOUSE)
-                return;
-
-            // The KVMpad's own mouse: forwarding it would loop (KvmpadUsbIdentity).
-            if (IsKvmpad(input.header.hDevice))
-                return;
 
             // An absolute-coordinate device (a tablet or a remote-desktop pointer) reports positions, not
             // deltas, so its motion is skipped rather than reinterpreted as a delta of thousands of counts.
@@ -198,59 +178,11 @@ internal sealed class SystemEventWindow : NativeWindow, IDisposable
         }
     }
 
-    private bool IsKvmpad(IntPtr device)
-    {
-        if (device == IntPtr.Zero)
-            return false; // injected input has no device
-        if (!_isKvmpad.TryGetValue(device, out bool known))
-        {
-            known = KvmpadUsbIdentity.IsKvmpadDevicePath(DeviceName(device));
-            _isKvmpad[device] = known;
-        }
-        return known;
-    }
-
-    /// <summary>True when a KVMpad (any of its HID interfaces) is attached to this machine.</summary>
-    public static bool IsKvmpadAttached()
-    {
-        uint count = 0;
-        uint itemSize = (uint)Marshal.SizeOf<NativeMethods.RAWINPUTDEVICELIST>();
-        if (NativeMethods.GetRawInputDeviceList(null, ref count, itemSize) != 0 || count == 0)
-            return false;
-        var list = new NativeMethods.RAWINPUTDEVICELIST[count + 4]; // room for a device that arrives meanwhile
-        count = (uint)list.Length;
-        uint got = NativeMethods.GetRawInputDeviceList(list, ref count, itemSize);
-        if (got == uint.MaxValue)
-            return false;
-        for (int i = 0; i < (int)got; i++)
-        {
-            if (KvmpadUsbIdentity.IsKvmpadDevicePath(DeviceName(list[i].hDevice)))
-                return true;
-        }
-        return false;
-    }
-
-    private static string? DeviceName(IntPtr device)
-    {
-        uint chars = 0;
-        if (NativeMethods.GetRawInputDeviceInfo(device, NativeMethods.RIDI_DEVICENAME, IntPtr.Zero, ref chars) != 0
-            || chars == 0 || chars > 1024)
-            return null;
-        IntPtr buffer = Marshal.AllocHGlobal((int)chars * 2);
-        try
-        {
-            uint got = NativeMethods.GetRawInputDeviceInfo(device, NativeMethods.RIDI_DEVICENAME, buffer, ref chars);
-            return got == uint.MaxValue || got == 0 ? null : Marshal.PtrToStringUni(buffer);
-        }
-        finally
-        {
-            Marshal.FreeHGlobal(buffer);
-        }
-    }
+    public bool? IsKvmpadAttached() => RawInputIdentity.IsKvmpadAttached(_devices);
 
     public void Dispose()
     {
-        DisableRawMouse();
+        DisableRawInput();
         if (_sessionRegistered && Handle != IntPtr.Zero)
         {
             NativeMethods.WTSUnRegisterSessionNotification(Handle);

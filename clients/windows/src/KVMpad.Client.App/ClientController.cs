@@ -43,7 +43,7 @@ internal sealed class ClientController : IDisposable
     {
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _store = store ?? throw new ArgumentNullException(nameof(store));
-        _events = new SystemEventWindow(OnRawMouse, OnSessionChanged, OnSuspend, OnKvmpadArrived);
+        _events = new SystemEventWindow(OnRawMouse, OnSessionChanged, OnSuspend, OnLoopGuard);
         _hook = new LowLevelKeyboardHook(OnHookedKey);
     }
 
@@ -442,6 +442,8 @@ internal sealed class ClientController : IDisposable
         "A KVMpad is plugged into this computer by USB. Controlling it from the same computer would send its own keys "
         + "and mouse movements back to it in a loop, so capture stays off. Use the client on another computer, or "
         + "unplug the KVMpad from this one.";
+    private const string PendingInputNotice =
+        "Windows could not identify a local input device yet. Try capture again after Windows finishes connecting it.";
 
     private void OnCaptureChanged(bool capturing)
     {
@@ -450,12 +452,14 @@ internal sealed class ClientController : IDisposable
             // Feedback-loop guard (KvmpadUsbIdentity): a keystroke the KVMpad types on this machine would reach the
             // keyboard hook as local input and be forwarded again. The hook cannot tell devices apart, so capture is
             // refused while any KVMpad is attached here.
-            if (SystemEventWindow.IsKvmpadAttached())
+            if (!_events.EnableRawInput())
             {
-                Notice?.Invoke(LoopGuardNotice);
-                _capture?.ExitCapture(ReleaseReason.LoopGuard);
+                Notice?.Invoke("Could not register for local keyboard and mouse changes. Capture stays off.");
+                _capture?.ExitCapture(ReleaseReason.Shutdown);
                 return;
             }
+            bool? attached = _events.IsKvmpadAttached();
+            if (!RawInputIdentityCache.AllowCapture(attached, OnLoopGuard)) return;
 
             try
             {
@@ -467,14 +471,11 @@ internal sealed class ClientController : IDisposable
                 _capture?.ExitCapture(ReleaseReason.Shutdown);
                 return;
             }
-
-            if (!_events.EnableRawMouse())
-                Notice?.Invoke("Could not register for raw mouse input; mouse control is unavailable this session.");
         }
         else
         {
             _hook.Remove();
-            _events.DisableRawMouse();
+            _events.DisableRawInput();
         }
 
         SetStatus();
@@ -499,14 +500,13 @@ internal sealed class ClientController : IDisposable
 
     private void OnSuspend() => _capture?.OnSuspend();
 
-    /// <summary>A KVMpad was plugged into this machine while capturing: stop before the first key loops.</summary>
-    private void OnKvmpadArrived()
+    private void OnLoopGuard(bool confirmed)
     {
         CaptureController? capture = _capture;
         if (capture is null || !capture.IsCapturing)
             return;
-        Notice?.Invoke(LoopGuardNotice);
         capture.ExitCapture(ReleaseReason.LoopGuard);
+        Notice?.Invoke(confirmed ? LoopGuardNotice : PendingInputNotice);
     }
 
     /// <summary>The client's own window gained or lost activation.</summary>
