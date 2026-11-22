@@ -1,13 +1,14 @@
-# USB and firmware compatibility
+# USB compatibility
 
-Use the native USB connector for the host computer. The separate UART connector provides a development console. All host computers use the same 7B firmware. At startup, it presents a USB boot keyboard and mouse. Open **Extensions → USB monitor** on the LCD to select a display mode. **Home** restores keyboard and mouse mode.
+Connect the **native USB** port on KVMpad to the target computer. Use the **USB-UART** port for the development console. The same firmware supports all the functions below.
 
-| Function | Verified behavior |
+| Function | Support and requirements |
 | --- | --- |
-| Keyboard and mouse | Both interfaces enumerated on Windows and Debian 13. Linux exposed relative X, Y and wheel input and sent Caps Lock LED changes to the board. The device, configuration and both report descriptors read by Linux matched the qualified firmware. |
-| Windows extended desktop | The LCD displayed full-color test patterns at 640 × 480 and 1024 × 600 with the external USB display driver. Returning to VGA through Windows restarted the driver during testing and the desktop reverted to native resolution. The installed package failed signature verification. An in-box Windows display path has not been demonstrated. |
-| Linux GUD monitor | The Linux GUD driver switched the 7B from 640 × 480 to 800 × 600 and back. Linux also detected the keyboard and mouse while the display was active. Full images and partial updates matched the board's LCD framebuffer at both resolutions. Leaving display mode restored the USB keyboard and mouse without a board restart. The tested kernel required a runtime match for the prototype USB ID. |
-| UEFI | OVMF enumerated the board as an input device. Live UEFI Setup video from a physical PC over this cable has not been demonstrated. |
-| Paired SSH input | Windows OpenSSH authenticated on all six attempts after startup and all 12 attempts after a Linux GUD display session. The latter used two operator keys after the board returned to keyboard and mouse mode. Disconnecting CLIENT while approval was pending canceled the request, ended the SSH connection and closed the listener. Both cancellation and expiry delivered zero input commands. |
+| USB keyboard and mouse | Windows and Linux use their built-in USB drivers. KVMpad starts in this mode. |
+| Windows extended desktop | The external xfz1986 driver supports 640 × 480 and 1024 × 600. We do not recommend version 1.2.25.2 because its signature fails verification. |
+| Linux USB monitor | The GUD driver supports 640 × 480 and 800 × 600 in monochrome. Register the KVMpad USB ID with the driver. The keyboard and mouse remain available in this mode. |
+| BIOS and UEFI | KVMpad provides a USB boot keyboard and mouse for firmware that supports these devices. The USB monitor requires an operating system with a compatible display driver. |
 
-For setup and operation, see the [firmware build instructions](HANDBOOK.md#build-the-7b-firmware), [USB modes](HANDBOOK.md#usb-startup-and-display-modes) and [SSH authorization](HANDBOOK.md#authorize-ssh-input). To check a connected board, use the [Windows enumeration test](../test/hil/usb_enum_windows.ps1), [Linux keyboard and mouse input test](../test/hil/README.md#verify-keyboard-and-mouse-input-on-linux) or [GUD display fixture](../test/usb_monitor/gud_guest/).
+Select a display mode under **Extensions → USB monitor**. Tap **Home** to return to keyboard and mouse mode. [USB modes](HANDBOOK.md#usb-startup-and-display-modes) · [Linux GUD setup](../test/usb_monitor/gud_guest/)
+
+For remote keyboard and mouse input, connect the paired Windows CLIENT to KVMpad. Keep CLIENT connected during an SSH session. [SSH setup](../clients/windows/README.md#direct-ssh-input)

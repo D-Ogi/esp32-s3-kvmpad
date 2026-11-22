@@ -6,9 +6,13 @@ The protocol specification calls the USB target the **HOST** and the board the *
 
 ## Direct SSH input
 
-The standard 7B firmware supports SSH input. Enable remote access on the board and pair the Windows CLIENT. In **Devices**, connect to the board and open **Host input → SSH command…**. Select your OpenSSH public key (`.pub`). CLIENT binds that key to the current connection, verifies the board's SSH host key against the fingerprint received over paired TLS and shows a PowerShell command.
+The 7B firmware includes the SSH server. Enable remote access on KVMpad. Pair the Windows CLIENT with the board.
 
-Keep CLIENT connected. Run the generated command in PowerShell, then tap **Allow** on the board when it requests SSH control. Windows OpenSSH uses the private file next to the selected public key or a matching key loaded in your SSH agent. The command connects to the same device on TCP port 22 as user `kvmpad`, using the `kvmpad` subsystem. Each command is one line. Disconnecting CLIENT ends the binding.
+1. In **Devices**, connect to KVMpad.
+2. Select **Host input → SSH command…**. Select your OpenSSH public key (`.pub`).
+3. Run the command from CLIENT in PowerShell. Tap **Allow** on KVMpad. Keep CLIENT connected during the session.
+
+CLIENT binds the public key to the current connection. It checks the board's SSH host key against the fingerprint from the paired TLS connection. OpenSSH uses the matching private key from your SSH agent or the file next to your public key. The command connects to TCP port 22 as user `kvmpad` and requests the `kvmpad` subsystem. Send one command per line.
 
 Windows OpenSSH Client supplies `ssh.exe` and `ssh-keyscan.exe`. On first use, CLIENT checks the SSH host key against the fingerprint from the paired connection and saves it under `~/.ssh/kvmpad/`. On later connections, CLIENT verifies the saved key against the current fingerprint. The generated command uses that file for strict host verification even if the board's IP address changes.
 

@@ -26,17 +26,24 @@ With the board connected, open **Mouse** to move the pointer, click or scroll. T
 
 The **operator PC** is the computer you sit at. The **target** is the computer plugged into KVMpad. Its built-in USB keyboard and mouse drivers handle remote input, so there is nothing to install on the target.
 
-1. On KVMpad, enable remote access and tap **Pair a client**.
-2. On the operator PC, open **KVMpad CLIENT**, choose **Discover → Pair**, enter the six-digit PIN and confirm on the touchscreen.
-3. Select **Connect → Host input** in CLIENT to send keystrokes, mouse movements or shortcuts. [Windows CLIENT guide](clients/windows/README.md)
+1. Enable remote access on KVMpad. Tap **Pair a client**.
+2. Open **KVMpad CLIENT** on the operator PC. Select **Discover → Pair**. Enter the six-digit PIN in CLIENT.
+3. Confirm the pairing on the KVMpad touchscreen.
+4. Select **Connect → Host input** in CLIENT to send keystrokes, mouse movements or shortcuts. [Windows CLIENT guide](clients/windows/README.md)
 
-For **SSH**, choose **Host input → SSH command…** in the paired CLIENT and select your public key. Run the generated command on the operator PC, approve control on the touchscreen and keep CLIENT connected. The SSH server runs on KVMpad. It translates commands such as `mouse move 20 0` into USB input for the target. [SSH setup](clients/windows/README.md#direct-ssh-input) · [Command syntax](components/ssh_control/include/ssh_control.h)
+The **SSH server** runs on KVMpad. It translates commands such as `mouse move 20 0` into USB input for the target. [Command syntax](components/ssh_control/include/ssh_control.h)
+
+1. Select **Host input → SSH command…** in the paired CLIENT.
+2. Select your public key. Run the generated command on the operator PC.
+3. Approve control on the KVMpad touchscreen. Keep CLIENT connected during the SSH session. [SSH setup](clients/windows/README.md#direct-ssh-input)
 
 ## What can I see on the KVMpad screen?
 
-**A magnified Windows desktop.** Open **Cursor Magnifier** on KVMpad. The Windows CLIENT starts a companion called **KVMpad HOST** on the same PC as CLIENT. Choose a monitor on that PC and approve it on the board. HOST sends the area around its pointer to the LCD over Wi-Fi. If CLIENT is on your operator PC, the magnifier shows your operator PC’s screen. To magnify the target’s desktop, the Windows capture software must run on the target itself. [Cursor Magnifier setup](hosts/windows/README.md)
+**Cursor Magnifier.** Open the extension on KVMpad. The Windows CLIENT starts **KVMpad HOST** on the PC that runs CLIENT. Select a monitor on that PC. Confirm the selection on KVMpad. HOST sends the area around the pointer to KVMpad over Wi-Fi.
 
-**An extra USB display (experimental).** The computer plugged into KVMpad can send a desktop to the LCD through its USB display driver. The portrait USB Monitor Console combines that desktop with a keyboard and touchpad. Linux requires GUD and manual device setup. The tested Windows display driver failed signature verification, so we do not recommend installing it. BIOS/UEFI video over this cable is unverified. [USB compatibility](docs/COMPATIBILITY.md)
+If CLIENT runs on the operator PC, the image comes from the operator PC. To magnify the target computer's desktop, run CLIENT and HOST on that Windows computer. [Cursor Magnifier setup](hosts/windows/README.md)
+
+**An extra USB display (experimental).** The target computer can send a desktop to KVMpad through its USB display driver. The portrait USB Monitor Console combines that desktop with a keyboard and touchpad. Linux requires the GUD driver and manual device setup. The external Windows driver fails signature verification. This feature requires a running operating system. [USB compatibility](docs/COMPATIBILITY.md)
 
 **A video from microSD.** Play H.264 clips under **Extensions → Video files**. Playback runs on the board. The Windows CLIENT can prepare clips that exceed the decoder’s available memory. [Prepare a video](clients/windows/README.md#prepare-an-h264-video-for-offline-playback)
 
